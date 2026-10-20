@@ -1,40 +1,43 @@
 # Patchwork
 
-**A multiplayer game engine for the browser that you own line by line, built to be written with an AI agent.**
+A multiplayer game engine for the browser, written in TypeScript, for building games with an AI
+agent.
 
-Server-authoritative multiplayer with client-side prediction and rollback, deterministic WebAssembly
-physics, 2D and 3D, and 57 plugins from FFT oceans to ragdolls, shipped as plain TypeScript you
-clone, read and change. No npm package, no black box, no build step between you and the code that
-runs.
+- Server-authoritative multiplayer, client-side prediction, server-side rollback
+- Deterministic physics: Box2D v3 and Box3D compiled to WebAssembly
+- 2D with PixiJS, 3D with three.js
+- 57 plugins and 13 addons
+- Rules and skills for Claude Code in `.claude/`
+- Static site export for GitHub Pages and itch.io
+
+## Quickstart
 
 ```
 git clone --origin upstream https://github.com/outsidedata/patchwork.git mygame
-cd mygame && yarn install && yarn new-game mygame && yarn vite
+cd mygame
+yarn install
+yarn new-game mygame
+yarn vite
 ```
 
-Then open `http://localhost:5173/games/mygame/index.html`: a game of your own, playing.
+Open `http://localhost:5173/games/mygame/index.html`.
 
-## Why Patchwork
+## Features
 
-- **Multiplayer is the default, not a port.** Every game runs on a server that holds the truth. A
-  player's page runs the scene ahead of the server, so a key press is drawn on the next frame at any
-  latency, and the server puts a late press back on the step it was made on (rollback). The same
-  game plays in one tab, against a WebSocket server, or on a simulated bad network, without a line
-  changed.
-- **Deterministic down to the last bit.** Physics is Box2D v3 and Box3D compiled to WebAssembly, the
-  same bytes on the server and in every browser. `sin`, `cos`, `pow` and the rest are rewritten to
-  return identical doubles on Node and every browser engine, so a predicted frame never drifts from
-  the server's.
-- **The source is the product.** The engine, every plugin and every addon are folders in your repo.
-  Each file opens with a header that says what it does, what it is handed and what it hands back,
-  and is proven by the tests beside it. Change anything; it is yours.
-- **Made for agents.** `.claude/` holds the rules and a skill for each kind of work, which an agent
-  such as Claude Code reads before it writes a line: where every new thing goes, how a kind, a level, a HUD or a plugin is
-  built, and how it is proven. Say what the game should do, and it gets built in the right place.
-- **Ships anywhere.** `yarn produce_static_site <game>` turns a game into a static site for GitHub
-  Pages, itch.io or any web server. The server for players together is one Node process.
+- **Multiplayer.** The server runs the game. Each player's page runs the scene ahead of the server,
+  so input shows on the next frame. The server applies late input on the step it was made. A game
+  runs in one tab, against a WebSocket server, or on a simulated bad network.
+- **Determinism.** Physics runs the same WebAssembly on the server and in the browser. The `math`
+  plugin gives `sin`, `cos`, `pow` and the rest identical results on Node and every browser, so
+  prediction matches the server.
+- **Source.** The engine, plugins and addons are folders in your repo. Each file starts with a
+  header describing it, and has tests beside it.
+- **Agents.** `.claude/` holds the rules and a skill per kind of work: kinds, levels, HUDs, plugins,
+  multiplayer, testing, publishing.
+- **Publishing.** `yarn produce_static_site <game>` writes a static site. The multiplayer server is
+  one Node process.
 
-## What you can build with it
+## Plugins and addons
 
 ### 3D rendering
 
@@ -56,14 +59,13 @@ Then open `http://localhost:5173/games/mygame/index.html`: a game of your own, p
 
 - [`terrain3d`](plugins/terrain3d/): infinite procedural terrain from a field of noise nodes with
   domain warp, biomes, texture layers placed by rules, sea and flooding, geometry rings that follow
-  the camera, baked ground textures and web workers. A rule on the server asks the same ground the
-  page draws, byte for byte.
+  the camera, baked ground textures and web workers. Server and client compute identical heights.
 - [`scatter3d`](plugins/scatter3d/): procedural forests, grass and boulders as instanced meshes,
   streamed round the camera, trunks and rocks solid to bodies and bullets.
 - [`skydome3d`](plugins/skydome3d/): a day-night cycle, sun and moon, clouds and their shadows, fog,
   rain, snow, dust, wind and lightning, the same on every seat.
-- [`ocean3d`](plugins/ocean3d/): an FFT ocean from a JONSWAP spectrum with foam and shoaling, so a
-  boat floats the same on the server and every client.
+- [`ocean3d`](plugins/ocean3d/): an FFT ocean from a JONSWAP spectrum with foam and shoaling,
+  deterministic on server and client, with wave-height queries for buoyancy.
 
 ### Physics and vehicles
 
@@ -72,7 +74,7 @@ Then open `http://localhost:5173/games/mygame/index.html`: a game of your own, p
 - [`box3dvehicle`](plugins/box3dvehicle/): drivable cars from one description, wheel joints, a
   spring-damper suspension, throttle, brake and steering.
 - [`flight3d`](plugins/flight3d/): fixed-wing flight from stability-derivative aerodynamics with
-  stall, ailerons, elevator and rudder, replayable to the bit.
+  stall, ailerons, elevator and rudder, deterministic.
 - [`walker`](plugins/walker/): a kinematic character controller on any terrain, round trees and
   rocks.
 
@@ -94,8 +96,8 @@ Then open `http://localhost:5173/games/mygame/index.html`: a game of your own, p
   the world as the shooter saw it.
 - [`volley3d`](plugins/volley3d/): rockets, shells, grenades and missiles with splash damage, trails
   and explosions.
-- [`volley2d`](plugins/volley2d/): bullet-hell patterns, every bullet a closed-form function of
-  time, hundreds on screen for the network cost of the volleys that fired them.
+- [`volley2d`](plugins/volley2d/): bullet-hell patterns, each bullet computed from its volley's age;
+  the network sends only the volleys.
 - [`cover3d`](plugins/cover3d/): cover finding for AI, the spots behind trees and rocks out of a
   threat's sight.
 - [`nav`](plugins/nav/): windowed A*, distance fields, line of sight and string-pulled routes.
@@ -105,27 +107,26 @@ Then open `http://localhost:5173/games/mygame/index.html`: a game of your own, p
 - [`render2d`](plugins/render2d/): PixiJS with world layers, a zooming camera, pixel-perfect integer
   scaling and sharp HiDPI.
 - [`sprite2d`](plugins/sprite2d/), [`particle2d`](plugins/particle2d/),
-  [`light2d`](plugins/light2d/): sprite-sheet animation with shadows, particle effects, and darkness
-  with lights cut through it.
+  [`light2d`](plugins/light2d/): sprite-sheet animation with shadows, particle effects, and 2D
+  lighting.
 - [`tilemap`](plugins/tilemap/): Tiled `.tmj` maps with Box2D colliders and live edits.
-- [`grid`](plugins/grid/): huge editable tile maps for city builders and sims, chunked for cheap
-  network sync.
+- [`grid`](plugins/grid/): large editable tile maps for city builders and sims, synced in chunks.
 - [`mapgen`](plugins/mapgen/): procedural levels from a recipe and a seed, rooms, set pieces and
   actors.
-- [`vision`](plugins/vision/): fog of war, seen, explored and never seen.
+- [`vision`](plugins/vision/): fog of war with visible, explored and unexplored cells.
 - [`pancamera`](plugins/pancamera/) and [`roomcamera`](plugins/roomcamera/): an RTS camera with edge
   scrolling and zoom, and a room-by-room adventure camera.
 
 ### Multiplayer and networking
 
 - [`predict`](addons/predict/): client-side prediction, the page runs its scene ahead of the server.
-- [`rewind`](addons/rewind/): server-side rollback, a late press put back on the step it was made.
+- [`rewind`](addons/rewind/): server-side rollback, late input applied on the step it was made.
 - [`interest`](addons/interest/) and [`vision`](addons/vision/): interest management and server-side
   fog of war, each seat sent only the rows near it or the rows its team sees.
 - [`socket`](addons/socket/) and [`loopback`](addons/loopback/): WebSocket with binary frames, and an
-  in-memory wire with a bad network of any shape.
-- [`simulator`](addons/simulator/): pages and server under any latency and loss with no wall-clock
-  time, every frame and packet logged as JSONL.
+  in-memory transport with simulated latency and packet loss.
+- [`simulator`](addons/simulator/): pages and server under any latency and packet loss, run faster
+  than real time, every frame and packet logged as JSONL.
 - [`recorder`](addons/recorder/): deterministic record and replay, any step rebuilt from the inputs.
 - [`accounts`](addons/accounts/), [`persist`](addons/persist/), [`party`](plugins/party/),
   [`chat`](plugins/chat/): logins, saved characters, parties with invites and member frames, and
@@ -150,27 +151,28 @@ Then open `http://localhost:5173/games/mygame/index.html`: a game of your own, p
   getting in and out of vehicles, mounts and turrets.
 - [`cutscene`](plugins/cutscene/): in-engine cinematics from a cue file, shots, follows, letterbox,
   fades, subtitles and camera shake.
-- [`particle3d`](plugins/particle3d/): sparks, smoke, blood and trails, no network cost per particle.
+- [`particle3d`](plugins/particle3d/): sparks, smoke, blood and trails; the network sends each effect
+  once.
 - [`store`](plugins/store/): settings that stay in the browser, volume, brightness, rebound keys.
 
 ### Tools
 
 - [`loader`](plugins/loader/): one catalogue of glTF models, textures, sprite sheets, Tiled maps,
-  fonts, sounds and JSON, decoded once, and sealed wads for art that may not be handed on.
+  fonts, sounds and JSON, decoded once, and encrypted wads for licensed art.
 - [`playtester`](plugins/playtester/): bots that play the game through the same input a person uses.
 - [`math`](plugins/math/): deterministic `sin`, `cos`, `atan2`, `exp`, `log` and `pow`.
 - [`local`](plugins/local/), [`shipped`](plugins/shipped/), [`heard`](addons/heard/),
-  [`player`](addons/player/): page-only actors, a game's own plugins, a log of what each step
-  answered, and the seats a scene declares.
+  [`player`](addons/player/): client-only actors, a game's own plugins, a message log for tests, and
+  player seats.
 
 <details>
 <summary><b>What each plugin is built on, and the plugins it trades with</b></summary>
 
 A plugin lives in the world (rows, the step), in the player's browser (drawing, input, camera,
 sound, UI), or both: a server half, `<p>.sim.ts`, and a browser half, `<p>.plugin.ts`. A **mod** is
-how one plugin hands another what it knows without either importing the other: terrain3d hands
-walker the height of the ground. "for" names the plugins this one hands a mod, "from" the ones that
-hand it one.
+a file one plugin writes for another, so the two share data through the scene file: terrain3d's mod
+for walker gives walker the height of the ground. "for" lists the plugins this one writes a mod for,
+"from" the plugins that write one for it.
 
 | plugin | built on | mods |
 |---|---|---|
@@ -286,9 +288,9 @@ git clone https://github.com/outsidedata/patchwork-games.git games
 - Node 22.6 or later (it runs TypeScript with `--experimental-strip-types`).
 - Yarn 1.
 - To bake art: Blender, the library of raw parts the bakes read, the native gltfpack 1.3 or later
-  (it packs WebP textures; the npm one cannot), and ImageMagick built with libwebp. Copy
+  (the native build packs WebP textures), and ImageMagick built with libwebp. Copy
   `.env.example` to `.env` and set `BLENDER`, `PATCHWORK_LIBRARY`, `GLTFPACK` and `MAGICK` where
-  yours differ from the defaults it lists. Playing a game needs none of them.
+  yours differ from the defaults it lists. Playing a game needs only Node and Yarn.
 
 `yarn health` checks all of it: it runs each tool and prints what passes, what fails and how to fix
 it.
