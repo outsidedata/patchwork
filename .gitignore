@@ -1,0 +1,5 @@
+node_modules
+dist
+.DS_Store
+addons/simulator/runs
+__pycache__
