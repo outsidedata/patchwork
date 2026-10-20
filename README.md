@@ -1,116 +1,259 @@
 # Patchwork
 
-Patchwork is a multiplayer game engine shipped as source, made to be built with an agent. A game is
-made by cloning this repo: the engine and every plugin and addon built on it are folders you can
-read, change and commit, and nothing is published to npm. Each piece is documented in the header of
-its own file and proven by the tests beside it, and `.claude/` holds the rules and the skills an
-agent such as Claude Code reads before it writes a line, so you can say what the game should do and
-have it built in the right place.
+**A multiplayer game engine for the browser that you own line by line, built to be written with an AI agent.**
 
-## What you get
+Server-authoritative multiplayer with client-side prediction and rollback, deterministic WebAssembly
+physics, 2D and 3D, and 57 plugins from FFT oceans to ragdolls, shipped as plain TypeScript you
+clone, read and change. No npm package, no black box, no build step between you and the code that
+runs.
 
-- **2D and 3D.** 2D draws with PixiJS (`render2d`), 3D with three.js (`render3d`). Core's three is
-  `outsidedata/three.js`, whose math hands back the same bits on every engine.
-- **Physics.** Box2D v3 and Box3D, Erin Catto's engines, as WebAssembly (`box2d.js`, `box3d.js`),
-  the same bytes on the server and in every page.
-- **Multiplayer.** The server holds the truth and sends each seat its rows every step. A page across
-  a network runs its scene ahead of the server, so a press answers on the next frame, and the server
-  puts a late press back on the step it was made on. One scene runs in one tab, over a WebSocket on
-  node, or on a simulated bad network, with the same code.
-- **57 plugins and 13 addons**, below, each name a link to its folder.
-- **A game on any static host.** `yarn produce_static_site <game>` writes a game's one-tab page as a
-  folder GitHub Pages, itch.io or any web server serves as it is.
+```
+git clone --origin upstream https://github.com/outsidedata/patchwork.git mygame
+cd mygame && yarn install && yarn new-game mygame && yarn vite
+```
 
-### Plugins
+Then open `http://localhost:5173/games/mygame/index.html`: a game of your own, playing.
 
-A plugin lives in the world (rows, the step) or in the player's browser (drawing, input, camera,
-sound, UI): a server half, `<p>.sim.ts`, a browser half, `<p>.plugin.ts`, or both. A **mod** is how
-one plugin hands another what it knows without either importing the other (terrain3d hands walker
-the height of the ground): "for" names the plugins this one hands a mod, "from" the ones that hand it
-one.
+## Why Patchwork
 
-| plugin | what it does | built on | mods |
-|---|---|---|---|
-| [`anim`](plugins/anim/) | Mixamo skeletal animation from a rig file: gaits picked from ground speed, jumps and landings, one-shot clips with root-motion travel, animation-event markers, and an upper-body layer blended over the legs, the same on every seat. | three.js, loader | for ik3d, interact, ragdoll3d |
-| [`audio`](plugins/audio/) | Positional 3D and 2D sound (Web Audio panners with distance rolloff) for the sounds the rules raise, each played once on every page through a ledger, and loops. | Web Audio | for box3dvehicle, cutscene |
-| [`audiodaw`](plugins/audiodaw/) | A DAW in the browser: a rack of Tone.js instruments and drum kits, effect chains, sends and buses, tracks of MIDI patterns placed as clips, mute and solo, edits heard while the song plays. | Tone.js | |
-| [`box2d`](plugins/box2d/) | Box2D v3 rigid-body physics as WebAssembly, deterministic and bit-identical on the server and in every browser: bodies, joints, sensors, ray casts and shape queries, rewound for late input. | box2d.js, loader, rewind | from tilemap |
-| [`box3d`](plugins/box3d/) | Box3D 3D rigid-body physics as WebAssembly, the same bytes on the server and in the browser: bodies, joints, sensors and queries, rewound for late input. | box3d.js, loader, rewind | for box3dvehicle · from box3dvehicle, ragdoll3d, scatter3d, terrain3d |
-| [`box3dvehicle`](plugins/box3dvehicle/) | Drivable cars from one description: chassis and wheel joints in box3d, a spring-damper suspension of its own, throttle, brake and steering, per-wheel compression for effects, and the body, cabin or open jeep drawn from its sizes. | box3d, three.js, particle3d, scatter3d | for box3d, interact, scatter3d · from audio, box3d, dismember3d, hitscan3d, terrain3d |
-| [`cel3d`](plugins/cel3d/) | Toon (cel) shading on every three.js material: stepped light bands, a shadow tint and ink outlines. | three.js, render3d | |
-| [`chasecamera3d`](plugins/chasecamera3d/) | A third-person chase and over-the-shoulder camera locked to a row: yaw, pitch, distance and shoulder offset, no easing, no drift. | three.js, render3d | |
-| [`chat`](plugins/chat/) | Multiplayer chat: zone, global, party and whisper channels in ring buffers on rows, private lines kept from other seats, with tabs and text entry. | PixiJS, ui | for party |
-| [`cover3d`](plugins/cover3d/) | Cover finding for AI: the spots behind trees and rocks out of a threat's line of sight, nearest first. | | from scatter3d |
-| [`cull3d`](plugins/cull3d/) | Frustum culling and distance LOD for instanced crowds of buildings or trees, binned on a grid and drawn front to back. | three.js, render3d | |
-| [`cutscene`](plugins/cutscene/) | Scripted in-engine cinematics from a cue file: camera shots, follows and look-ats, letterbox bars, fades, subtitles, camera shake, a directed cast and skipping, the same on every seat. | PixiJS, three.js, loader, ui | from audio, terrain3d |
-| [`dismember3d`](plugins/dismember3d/) | Dismemberment and gore on Mixamo characters: hits per limb on the skeleton, severed limbs as physics pieces with blood bursts and drips, and cars that run bodies over. | three.js, anim, hitscan3d, ragdoll3d, particle3d | for box3dvehicle, hitscan3d · from terrain3d |
-| [`dither3d`](plugins/dither3d/) | The PS1 look: 15-bit colour, 4×4 ordered dithering and chunky low-resolution pixels. | three.js, render3d | |
-| [`environment3d`](plugins/environment3d/) | A 3D lighting rig: a sun with shadow maps, hemisphere, ambient and fill lights, and a floor. | three.js, render3d | |
-| [`flight3d`](plugins/flight3d/) | Flight physics for fixed-wing aircraft: stability-derivative aerodynamics with stall, ailerons, elevator and rudder, deterministic and replayable, control surfaces animated on the model. | render3d, loader | from terrain3d |
-| [`grid`](plugins/grid/) | Large tile maps that change while the game runs, for city builders and sims: chunked cells packed for cheap network sync, drawn from sprite sheets, a cell redrawn only when it changes. | render2d, loader | |
-| [`hitscan3d`](plugins/hitscan3d/) | Hitscan weapons with lag compensation: rays against the terrain, trees and bodies as they stood on the step the shooter saw, with damage. | rewind | for box3dvehicle, volley3d · from dismember3d, ragdoll3d, scatter3d, terrain3d, walker |
-| [`ik3d`](plugins/ik3d/) | Inverse kinematics for characters: hands and feet that reach the points of what a body holds or uses, and held props set against the body. | three.js | from anim, interact |
-| [`interact`](plugins/interact/) | Entering and using vehicles and machines: boarding, sitting, climbing in and driving, as sequences of clips parented to the machine, with IK hands and feet. | three.js, anim, loader | for ik3d · from anim, box3dvehicle |
-| [`light2d`](plugins/light2d/) | 2D lighting: an ambient darkness over the world and radial lights that cut through it. | render2d | |
-| [`lights3d`](plugins/lights3d/) | Clustered Forward+ shading: as many point lights as a scene likes, each pixel lit only by the lights that reach it. | three.js, render3d | |
-| [`loader`](plugins/loader/) | The asset pipeline: a catalogue of glTF models, textures, sprite sheets, Tiled maps, bitmap fonts, palettes, sounds and JSON, fetched and decoded once, preloaded, and sealed wads (AES-GCM) for art that may not be handed on. | three.js, fflate, fzstd | |
-| [`local`](plugins/local/) | Client-only actors spawned from prefabs: effects and props with no row and no network cost. | | |
-| [`mapgen`](plugins/mapgen/) | Procedural level generation from a recipe and a seed: rooms carved into a Tiled map, set pieces and actors placed, the same level for the same seed. | math | |
-| [`math`](plugins/math/) | Deterministic math: `sin`, `cos`, `atan2`, `exp`, `log`, `pow` and the rest, bit-identical on Node and every browser, so prediction never drifts. | | |
-| [`nav`](plugins/nav/) | Pathfinding on grids: windowed A*, distance fields, line of sight and string-pulled routes. | math | |
-| [`ocean3d`](plugins/ocean3d/) | An FFT ocean from a JONSWAP spectrum, with foam and shoaling over the seabed, deterministic so a boat floats the same on the server and every client, and the wave height anywhere. | three.js, render3d | from skydome3d, terrain3d |
-| [`pancamera`](plugins/pancamera/) | An RTS camera in 2D: edge scrolling, keyboard panning and mouse-wheel zoom inside bounds. | render2d | |
-| [`particle2d`](plugins/particle2d/) | 2D particle effects spawned by the rules or the page, synced on a ledger, no network cost per particle. | render2d, loader | |
-| [`particle3d`](plugins/particle3d/) | 3D particle effects (sparks, smoke, blood, trails) spawned by the rules or the page, synced on a ledger, no network cost per particle. | render3d, loader | |
-| [`party`](plugins/party/) | A party system: invites, a leader, kick and promote, member frames with health, kept in the hub and mirrored into every scene a member is in. | PixiJS, ui | from chat |
-| [`persist`](plugins/persist/) | Saved games and persistent characters: a rule claims its records and gets them as rows. | persist addon | |
-| [`player`](plugins/player/) | Input and possession: keyboard, mouse, drag and gamepad sent as acts on the seat's row, rebindable actions, and getting in and out of vehicles, mounts and turrets. | player addon | |
-| [`playtester`](plugins/playtester/) | Bots that play the game through the same input path a person uses, for automated playtests. | player | |
-| [`ragdoll3d`](plugins/ragdoll3d/) | Ragdolls on Mixamo skeletons, physics in box3d, deterministic on every seat: death from the blow's direction, lying where it fell, and getting up. | three.js, anim, box3d, hitscan3d | for box3d, hitscan3d · from anim, scatter3d, terrain3d, walker |
-| [`render2d`](plugins/render2d/) | The PixiJS 2D renderer: world layers, a camera with zoom, pixel-perfect integer scaling and sharp HiDPI. | PixiJS | |
-| [`render3d`](plugins/render3d/) | The three.js renderer: shadow maps, GTAO ambient occlusion, bloom, neutral tone mapping and exposure, and a camera other plugins claim. | three.js | |
-| [`renderdom`](plugins/renderdom/) | An HTML and CSS layer scaled over the game canvas, for menus and text as real DOM elements. | | |
-| [`roomcamera`](plugins/roomcamera/) | A room-by-room camera for top-down adventures: held inside the room, sliding to the next as the player walks through. | render2d | |
-| [`scatter3d`](plugins/scatter3d/) | Procedural vegetation and rocks: forests, grass and boulders as instanced meshes, each placed by a pure function of its cell, streamed round the camera, trunks and rocks solid to bodies and bullets, the same on the server and every client. | three.js, box3d | for box3d, cover3d, hitscan3d, ragdoll3d, terrain3d, walker · from box3dvehicle, terrain3d |
-| [`scenemanager`](plugins/scenemanager/) | Scenes and levels: title screens, menus and levels as scenes of one game, a seat moved between them. | scenemanager addon | |
-| [`shipped`](plugins/shipped/) | A game's own plugins, loaded from its folder. | | |
-| [`skydome3d`](plugins/skydome3d/) | Dynamic sky and weather: a day-night cycle, sun and moon, clouds and their shadows, fog, rain, snow, dust, wind and lightning, the same on every seat. | three.js, loader, render3d | for ocean3d · from terrain3d |
-| [`solids`](plugins/solids/) | Low-poly models made of solids in JSON: procedural meshes for machines and props, and static props stood on the ground. | render3d, loader | from terrain3d |
-| [`sprite2d`](plugins/sprite2d/) | Sprite-sheet animation in 2D: animated frames, facing, drop shadows, per layer. | render2d, loader | |
-| [`sprite3d`](plugins/sprite3d/) | Billboard sprites in 3D: sprite-sheet characters that turn to face the camera and stand on the floor. | render3d, loader | |
-| [`stats`](plugins/stats/) | An FPS, frame-time and heap panel (three.js's stats). | three.js | |
-| [`store`](plugins/store/) | Client-side settings: volume, brightness, rebound keys, kept across scenes and never sent to the server. | | |
-| [`synthaudio`](plugins/synthaudio/) | Music as notes on Tone.js: a song as one JSON file in sixteenths, a compressor and limiter on the master, echo sends, played live from keys. | Tone.js, loader | |
-| [`terrain3d`](plugins/terrain3d/) | Infinite procedural terrain: heights from a field of noise nodes with domain warp, biomes, texture layers placed by rules, sea and flooding, geometry rings that follow the camera, baked ground textures, web workers, and height and ray queries the same on the server and every client. | three.js, loader, box3d, scatter3d | for box3d, box3dvehicle, cutscene, dismember3d, flight3d, hitscan3d, ocean3d, ragdoll3d, scatter3d, skydome3d, solids, walker · from scatter3d |
-| [`tilemap`](plugins/tilemap/) | Tiled maps (`.tmj`): queries for the rules, layered drawing, edits while the game runs, and Box2D colliders. | render2d, loader, box2d | for box2d |
-| [`ui`](plugins/ui/) | The HUD and menus on PixiJS: anchored panels, buttons, bars, text styles, modals, keyboard and gamepad focus, sharp at any scale. | PixiJS, player | |
-| [`vision`](plugins/vision/) | Fog of war over a 2D map: what the team sees now, what it has seen, what it never has. | render2d, vision addon | |
-| [`volley2d`](plugins/volley2d/) | Bullet-hell patterns: every bullet a closed-form function of its volley's age, no rows, hits checked on the server, hundreds on screen at the network cost of the volleys that fired them. | render2d, loader | |
-| [`volley3d`](plugins/volley3d/) | Projectiles in 3D: rockets, shells, grenades and missiles in flight, splash damage, trails and explosions. | loader, particle3d | from hitscan3d |
-| [`walker`](plugins/walker/) | A kinematic character controller: walking, sliding and seeking on any terrain, round trees and rocks. | hitscan3d | for hitscan3d, ragdoll3d · from scatter3d, terrain3d |
+- **Multiplayer is the default, not a port.** Every game runs on a server that holds the truth. A
+  player's page runs the scene ahead of the server, so a key press is drawn on the next frame at any
+  latency, and the server puts a late press back on the step it was made on (rollback). The same
+  game plays in one tab, against a WebSocket server, or on a simulated bad network, without a line
+  changed.
+- **Deterministic down to the last bit.** Physics is Box2D v3 and Box3D compiled to WebAssembly, the
+  same bytes on the server and in every browser. `sin`, `cos`, `pow` and the rest are rewritten to
+  return identical doubles on Node and every browser engine, so a predicted frame never drifts from
+  the server's.
+- **The source is the product.** The engine, every plugin and every addon are folders in your repo.
+  Each file opens with a header that says what it does, what it is handed and what it hands back,
+  and is proven by the tests beside it. Change anything; it is yours.
+- **Made for agents.** `.claude/` holds the rules and a skill for each kind of work, which an agent
+  such as Claude Code reads before it writes a line: where every new thing goes, how a kind, a level, a HUD or a plugin is
+  built, and how it is proven. Say what the game should do, and it gets built in the right place.
+- **Ships anywhere.** `yarn produce_static_site <game>` turns a game into a static site for GitHub
+  Pages, itch.io or any web server. The server for players together is one Node process.
 
-### Addons
+## What you can build with it
 
-An addon holds a truth: seats, connections, sockets, files, timers, more than one truth, what a
-packet carries. It runs where the truth is.
+### 3D rendering
 
-| addon | what it does | built on |
+- [`render3d`](plugins/render3d/): three.js with shadow maps, GTAO ambient occlusion, bloom, neutral
+  tone mapping and exposure.
+- [`lights3d`](plugins/lights3d/): clustered Forward+ shading, as many point lights as a scene
+  likes, each pixel lit only by the lights that reach it.
+- [`cel3d`](plugins/cel3d/): toon shading on every material, stepped light bands and ink outlines.
+- [`dither3d`](plugins/dither3d/): the PS1 look, 15-bit colour, 4×4 ordered dithering and chunky
+  low-resolution pixels.
+- [`cull3d`](plugins/cull3d/): frustum culling and distance LOD for instanced cities and forests,
+  drawn front to back.
+- [`sprite3d`](plugins/sprite3d/): billboard sprite-sheet characters standing in a 3D world.
+- [`solids`](plugins/solids/): low-poly models built from solids in JSON.
+- [`environment3d`](plugins/environment3d/), [`chasecamera3d`](plugins/chasecamera3d/),
+  [`stats`](plugins/stats/): a lighting rig, a third-person over-the-shoulder camera, an FPS panel.
+
+### Open worlds
+
+- [`terrain3d`](plugins/terrain3d/): infinite procedural terrain from a field of noise nodes with
+  domain warp, biomes, texture layers placed by rules, sea and flooding, geometry rings that follow
+  the camera, baked ground textures and web workers. A rule on the server asks the same ground the
+  page draws, byte for byte.
+- [`scatter3d`](plugins/scatter3d/): procedural forests, grass and boulders as instanced meshes,
+  streamed round the camera, trunks and rocks solid to bodies and bullets.
+- [`skydome3d`](plugins/skydome3d/): a day-night cycle, sun and moon, clouds and their shadows, fog,
+  rain, snow, dust, wind and lightning, the same on every seat.
+- [`ocean3d`](plugins/ocean3d/): an FFT ocean from a JONSWAP spectrum with foam and shoaling, so a
+  boat floats the same on the server and every client.
+
+### Physics and vehicles
+
+- [`box3d`](plugins/box3d/) and [`box2d`](plugins/box2d/): Box3D and Box2D v3 rigid bodies, joints,
+  sensors, ray casts and shape queries, deterministic WebAssembly, rewound for late input.
+- [`box3dvehicle`](plugins/box3dvehicle/): drivable cars from one description, wheel joints, a
+  spring-damper suspension, throttle, brake and steering.
+- [`flight3d`](plugins/flight3d/): fixed-wing flight from stability-derivative aerodynamics with
+  stall, ailerons, elevator and rudder, replayable to the bit.
+- [`walker`](plugins/walker/): a kinematic character controller on any terrain, round trees and
+  rocks.
+
+### Characters and animation
+
+- [`anim`](plugins/anim/): Mixamo skeletal animation, gaits from ground speed, jumps and landings,
+  root-motion one-shots, animation events and an upper-body layer over the legs.
+- [`ik3d`](plugins/ik3d/): inverse kinematics, hands and feet that reach what a body holds or uses.
+- [`interact`](plugins/interact/): getting into a car and driving it, boarding, sitting, climbing
+  in, as clips parented to the machine with IK hands and feet.
+- [`ragdoll3d`](plugins/ragdoll3d/): physics ragdolls on Mixamo skeletons, deterministic on every
+  seat, and getting up again.
+- [`dismember3d`](plugins/dismember3d/): per-limb hits, severed limbs as physics pieces, blood, and
+  cars that run bodies over.
+
+### Combat and AI
+
+- [`hitscan3d`](plugins/hitscan3d/): hitscan weapons with lag compensation, each shot tested against
+  the world as the shooter saw it.
+- [`volley3d`](plugins/volley3d/): rockets, shells, grenades and missiles with splash damage, trails
+  and explosions.
+- [`volley2d`](plugins/volley2d/): bullet-hell patterns, every bullet a closed-form function of
+  time, hundreds on screen for the network cost of the volleys that fired them.
+- [`cover3d`](plugins/cover3d/): cover finding for AI, the spots behind trees and rocks out of a
+  threat's sight.
+- [`nav`](plugins/nav/): windowed A*, distance fields, line of sight and string-pulled routes.
+
+### 2D games
+
+- [`render2d`](plugins/render2d/): PixiJS with world layers, a zooming camera, pixel-perfect integer
+  scaling and sharp HiDPI.
+- [`sprite2d`](plugins/sprite2d/), [`particle2d`](plugins/particle2d/),
+  [`light2d`](plugins/light2d/): sprite-sheet animation with shadows, particle effects, and darkness
+  with lights cut through it.
+- [`tilemap`](plugins/tilemap/): Tiled `.tmj` maps with Box2D colliders and live edits.
+- [`grid`](plugins/grid/): huge editable tile maps for city builders and sims, chunked for cheap
+  network sync.
+- [`mapgen`](plugins/mapgen/): procedural levels from a recipe and a seed, rooms, set pieces and
+  actors.
+- [`vision`](plugins/vision/): fog of war, seen, explored and never seen.
+- [`pancamera`](plugins/pancamera/) and [`roomcamera`](plugins/roomcamera/): an RTS camera with edge
+  scrolling and zoom, and a room-by-room adventure camera.
+
+### Multiplayer and networking
+
+- [`predict`](addons/predict/): client-side prediction, the page runs its scene ahead of the server.
+- [`rewind`](addons/rewind/): server-side rollback, a late press put back on the step it was made.
+- [`interest`](addons/interest/) and [`vision`](addons/vision/): interest management and server-side
+  fog of war, each seat sent only the rows near it or the rows its team sees.
+- [`socket`](addons/socket/) and [`loopback`](addons/loopback/): WebSocket with binary frames, and an
+  in-memory wire with a bad network of any shape.
+- [`simulator`](addons/simulator/): pages and server under any latency and loss with no wall-clock
+  time, every frame and packet logged as JSONL.
+- [`recorder`](addons/recorder/): deterministic record and replay, any step rebuilt from the inputs.
+- [`accounts`](addons/accounts/), [`persist`](addons/persist/), [`party`](plugins/party/),
+  [`chat`](plugins/chat/): logins, saved characters, parties with invites and member frames, and
+  zone, global, party and whisper chat.
+- [`scenemanager`](addons/scenemanager/): many scenes in one server, title, menus and levels, seats
+  moved between them.
+
+### Audio and music
+
+- [`audio`](plugins/audio/): positional 3D and 2D sound with distance rolloff, and loops.
+- [`audiodaw`](plugins/audiodaw/): a DAW in the browser on Tone.js, instrument rack, effect chains,
+  sends, MIDI patterns and clips.
+- [`synthaudio`](plugins/synthaudio/): procedural music as notes, a song in one JSON file, played
+  live from keys.
+
+### HUD, input and cinematics
+
+- [`ui`](plugins/ui/): HUD and menus on PixiJS, anchored panels, buttons, bars, modals, keyboard and
+  gamepad focus.
+- [`renderdom`](plugins/renderdom/): an HTML and CSS layer scaled over the game canvas.
+- [`player`](plugins/player/): keyboard, mouse, drag and gamepad input, rebindable actions, and
+  getting in and out of vehicles, mounts and turrets.
+- [`cutscene`](plugins/cutscene/): in-engine cinematics from a cue file, shots, follows, letterbox,
+  fades, subtitles and camera shake.
+- [`particle3d`](plugins/particle3d/): sparks, smoke, blood and trails, no network cost per particle.
+- [`store`](plugins/store/): settings that stay in the browser, volume, brightness, rebound keys.
+
+### Tools
+
+- [`loader`](plugins/loader/): one catalogue of glTF models, textures, sprite sheets, Tiled maps,
+  fonts, sounds and JSON, decoded once, and sealed wads for art that may not be handed on.
+- [`playtester`](plugins/playtester/): bots that play the game through the same input a person uses.
+- [`math`](plugins/math/): deterministic `sin`, `cos`, `atan2`, `exp`, `log` and `pow`.
+- [`local`](plugins/local/), [`shipped`](plugins/shipped/), [`heard`](addons/heard/),
+  [`player`](addons/player/): page-only actors, a game's own plugins, a log of what each step
+  answered, and the seats a scene declares.
+
+<details>
+<summary><b>What each plugin is built on, and the plugins it trades with</b></summary>
+
+A plugin lives in the world (rows, the step), in the player's browser (drawing, input, camera,
+sound, UI), or both: a server half, `<p>.sim.ts`, and a browser half, `<p>.plugin.ts`. A **mod** is
+how one plugin hands another what it knows without either importing the other: terrain3d hands
+walker the height of the ground. "for" names the plugins this one hands a mod, "from" the ones that
+hand it one.
+
+| plugin | built on | mods |
 |---|---|---|
-| [`accounts`](addons/accounts/) | Login: a connection is signed in before anything it sends reaches the game. | persist, loopback |
-| [`heard`](addons/heard/) | A log of the messages each step answered, for tests and the simulator. | rewind |
-| [`interest`](addons/interest/) | Interest management: each seat sent only the rows within a radius of it. | |
-| [`loopback`](addons/loopback/) | An in-memory transport, with a bad network of any shape when given one. | |
-| [`persist`](addons/persist/) | Persistence: records loaded into a game as rows and saved as they change. | rewind |
-| [`player`](addons/player/) | Seats: a connection takes a slot and gets its `player` row; server-authoritative input. | rewind, vision |
-| [`predict`](addons/predict/) | Client-side prediction: the page runs its scene ahead of the server, so a press is drawn on the next frame at any latency. | player, rewind |
-| [`recorder`](addons/recorder/) | Deterministic record and replay: any step rebuilt by booting again and replaying the inputs. | loopback |
-| [`rewind`](addons/rewind/) | Server-side rollback: a late press put back on the step it was made on. | |
-| [`scenemanager`](addons/scenemanager/) | Many scenes running in one server process, and seats moved between them. | loopback, player, rewind |
-| [`simulator`](addons/simulator/) | A network simulator: pages and server under any latency and loss, with no wall-clock time, every frame and packet logged as JSONL. | heard, loopback, player, predict, socket |
-| [`socket`](addons/socket/) | The WebSocket transport, with binary frames for physics snapshots. | ws, loopback |
-| [`vision`](addons/vision/) | Server-side fog of war: each team sent only the rows it sees, so a hacked client sees nothing more. | |
+| [`anim`](plugins/anim/) | three.js, loader | for ik3d, interact, ragdoll3d |
+| [`audio`](plugins/audio/) | Web Audio | for box3dvehicle, cutscene |
+| [`audiodaw`](plugins/audiodaw/) | Tone.js | |
+| [`box2d`](plugins/box2d/) | box2d.js, loader, rewind | from tilemap |
+| [`box3d`](plugins/box3d/) | box3d.js, loader, rewind | for box3dvehicle · from box3dvehicle, ragdoll3d, scatter3d, terrain3d |
+| [`box3dvehicle`](plugins/box3dvehicle/) | box3d, three.js, particle3d, scatter3d | for box3d, interact, scatter3d · from audio, box3d, dismember3d, hitscan3d, terrain3d |
+| [`cel3d`](plugins/cel3d/) | three.js, render3d | |
+| [`chasecamera3d`](plugins/chasecamera3d/) | three.js, render3d | |
+| [`chat`](plugins/chat/) | PixiJS, ui | for party |
+| [`cover3d`](plugins/cover3d/) | | from scatter3d |
+| [`cull3d`](plugins/cull3d/) | three.js, render3d | |
+| [`cutscene`](plugins/cutscene/) | PixiJS, three.js, loader, ui | from audio, terrain3d |
+| [`dismember3d`](plugins/dismember3d/) | three.js, anim, hitscan3d, ragdoll3d, particle3d | for box3dvehicle, hitscan3d · from terrain3d |
+| [`dither3d`](plugins/dither3d/) | three.js, render3d | |
+| [`environment3d`](plugins/environment3d/) | three.js, render3d | |
+| [`flight3d`](plugins/flight3d/) | render3d, loader | from terrain3d |
+| [`grid`](plugins/grid/) | render2d, loader | |
+| [`hitscan3d`](plugins/hitscan3d/) | rewind | for box3dvehicle, volley3d · from dismember3d, ragdoll3d, scatter3d, terrain3d, walker |
+| [`ik3d`](plugins/ik3d/) | three.js | from anim, interact |
+| [`interact`](plugins/interact/) | three.js, anim, loader | for ik3d · from anim, box3dvehicle |
+| [`light2d`](plugins/light2d/) | render2d | |
+| [`lights3d`](plugins/lights3d/) | three.js, render3d | |
+| [`loader`](plugins/loader/) | three.js, fflate, fzstd | |
+| [`local`](plugins/local/) | | |
+| [`mapgen`](plugins/mapgen/) | math | |
+| [`math`](plugins/math/) | | |
+| [`nav`](plugins/nav/) | math | |
+| [`ocean3d`](plugins/ocean3d/) | three.js, render3d | from skydome3d, terrain3d |
+| [`pancamera`](plugins/pancamera/) | render2d | |
+| [`particle2d`](plugins/particle2d/) | render2d, loader | |
+| [`particle3d`](plugins/particle3d/) | render3d, loader | |
+| [`party`](plugins/party/) | PixiJS, ui | from chat |
+| [`persist`](plugins/persist/) | persist addon | |
+| [`player`](plugins/player/) | player addon | |
+| [`playtester`](plugins/playtester/) | player | |
+| [`ragdoll3d`](plugins/ragdoll3d/) | three.js, anim, box3d, hitscan3d | for box3d, hitscan3d · from anim, scatter3d, terrain3d, walker |
+| [`render2d`](plugins/render2d/) | PixiJS | |
+| [`render3d`](plugins/render3d/) | three.js | |
+| [`renderdom`](plugins/renderdom/) | | |
+| [`roomcamera`](plugins/roomcamera/) | render2d | |
+| [`scatter3d`](plugins/scatter3d/) | three.js, box3d | for box3d, cover3d, hitscan3d, ragdoll3d, terrain3d, walker · from box3dvehicle, terrain3d |
+| [`scenemanager`](plugins/scenemanager/) | scenemanager addon | |
+| [`shipped`](plugins/shipped/) | | |
+| [`skydome3d`](plugins/skydome3d/) | three.js, loader, render3d | for ocean3d · from terrain3d |
+| [`solids`](plugins/solids/) | render3d, loader | from terrain3d |
+| [`sprite2d`](plugins/sprite2d/) | render2d, loader | |
+| [`sprite3d`](plugins/sprite3d/) | render3d, loader | |
+| [`stats`](plugins/stats/) | three.js | |
+| [`store`](plugins/store/) | | |
+| [`synthaudio`](plugins/synthaudio/) | Tone.js, loader | |
+| [`terrain3d`](plugins/terrain3d/) | three.js, loader, box3d, scatter3d | for box3d, box3dvehicle, cutscene, dismember3d, flight3d, hitscan3d, ocean3d, ragdoll3d, scatter3d, skydome3d, solids, walker · from scatter3d |
+| [`tilemap`](plugins/tilemap/) | render2d, loader, box2d | for box2d |
+| [`ui`](plugins/ui/) | PixiJS, player | |
+| [`vision`](plugins/vision/) | render2d, vision addon | |
+| [`volley2d`](plugins/volley2d/) | render2d, loader | |
+| [`volley3d`](plugins/volley3d/) | loader, particle3d | from hitscan3d |
+| [`walker`](plugins/walker/) | hitscan3d | for hitscan3d, ragdoll3d · from scatter3d, terrain3d |
 
-## The model
+An addon holds a truth (seats, connections, sockets, files, timers, more than one truth) and runs
+where the truth is.
+
+| addon | built on |
+|---|---|
+| [`accounts`](addons/accounts/) | persist, loopback |
+| [`heard`](addons/heard/) | rewind |
+| [`interest`](addons/interest/) | |
+| [`loopback`](addons/loopback/) | |
+| [`persist`](addons/persist/) | rewind |
+| [`player`](addons/player/) | rewind, vision |
+| [`predict`](addons/predict/) | player, rewind |
+| [`recorder`](addons/recorder/) | loopback |
+| [`rewind`](addons/rewind/) | |
+| [`scenemanager`](addons/scenemanager/) | loopback, player, rewind |
+| [`simulator`](addons/simulator/) | heard, loopback, player, predict, socket |
+| [`socket`](addons/socket/) | ws, loopback |
+| [`vision`](addons/vision/) | |
+
+</details>
+
+## How a game is made
 
 - A **scene** is a file: how a world starts and which plugins it uses. Its `world` holds its fixed
   numbers, its `prefabs` what a new row of each kind starts as, and its `actors` the rows it starts
@@ -120,10 +263,23 @@ packet carries. It runs where the truth is.
   the page.
 - A running world is a **truth**, and one tick of its time a **step**. Every step it sends each
   seat a packet of the rows it may see.
-- A **seat** is a player's place in a truth. What it plays as is its own `player` row, and a
-  press is a message asking that row to act.
+- A **seat** is a player's place in a truth. What it plays as is its own `player` row, and a press
+  is a message asking that row to act.
 - A **plugin** lives in the world or in the browser; an **addon** holds a truth. The engine,
   [`engine/`](engine/), is frozen; everything new is a plugin, an addon, or a game's own kind.
+
+`yarn new-game <name>` writes `games/<name>/`: one scene, `main`, on render2d, with a seat that
+starts at a `start` actor and moves a square with the arrow keys. `index.html` plays the whole game
+in one tab. For players together, run its server from the repo's root with
+`node --experimental-strip-types games/<name>/<name>.server.ts` and open `client.html`, one window
+a player.
+
+The example games are their own repo. Clone it as `games/` and open any of them as
+`games/<game>/index.html`:
+
+```
+git clone https://github.com/outsidedata/patchwork-games.git games
+```
 
 ## Requirements
 
@@ -134,44 +290,18 @@ packet carries. It runs where the truth is.
   `.env.example` to `.env` and set `BLENDER`, `PATCHWORK_LIBRARY`, `GLTFPACK` and `MAGICK` where
   yours differ from the defaults it lists. Playing a game needs none of them.
 
-`yarn health` checks all of it: it runs each tool and prints what passes, what fails and how to fix it.
-
-## Getting started
-
-```
-git clone --origin upstream https://github.com/outsidedata/patchwork.git mygame
-cd mygame
-yarn install
-yarn new-game mygame
-yarn vite --port 5173
-```
-
-Then open `http://localhost:5173/games/mygame/index.html`.
-
-`--origin upstream` names Patchwork's remote `upstream`, leaving `origin` for your own repo.
-
-`yarn new-game <name>` writes `games/<name>/`: one scene, `main`, on render2d, with a seat that
-starts at a `start` actor and moves a square with the arrow keys. `index.html` plays the whole game
-in one tab. For players together, run its server with
-`node --experimental-strip-types games/<name>/<name>.server.ts` from the repo's root and open
-`client.html`, one window a player. Run `yarn new-game` again to make a second game.
-
-The example games are in their own repo, `outsidedata/patchwork-games`. Clone it as `games/`:
-
-```
-git clone https://github.com/outsidedata/patchwork-games.git games
-```
-
-and open any of them as `games/<game>/index.html`.
+`yarn health` checks all of it: it runs each tool and prints what passes, what fails and how to fix
+it.
 
 ## Commands
 
 | command | what it does |
 |---|---|
-| `yarn health` | Whether this machine has what core needs: node, the packages, and for baking, Blender, the library, gltfpack and ImageMagick. |
+| `yarn health` | Whether this machine has what Patchwork needs: Node, the packages, and for baking, Blender, the library, gltfpack and ImageMagick. |
 | `yarn new-game <name>` | `games/<name>/`: a game of one scene and a seat. |
-| `yarn bake <game>` | The game's art made again from the library: every glb its scripts build, packed, and its cc0 texture maps cut. |
-| `yarn produce_static_site <game> [--base /<path>/]` | The game's `index.html` as a static site in `dist/`, its page at the site's root. `--base` is the path the host serves it under, `/<repo>/` on GitHub Pages. |
+| `yarn vite` | Serves the repo, so `games/<name>/index.html` plays. |
+| `yarn bake <game>` | The game's art made again from the library: every glb its scripts build, packed, and its texture maps cut. |
+| `yarn produce_static_site <game> [--base /<path>/]` | The game as a static site in `dist/`, its page at the site's root. `--base` is the path the host serves it under: `/<repo>/` on GitHub Pages. |
 | `yarn test` | Every test but the ones that draw a game in a page. |
 | `yarn test:view [<file>]` | The tests that draw a game in a page (`.view.test.tsx`). |
 | `yarn vitest run <file>` | One test file. |
@@ -180,12 +310,12 @@ and open any of them as `games/<game>/index.html`.
 
 ## Putting a game online
 
-`yarn produce_static_site <game> --base /<repo>/` writes `dist/`, the game's `index.html` with
-every file it reaches, compiled to JavaScript, so any static host serves it. For GitHub Pages, a repo
-of your game with a workflow that runs it on every push and uploads `dist/` puts the game at
+`yarn produce_static_site <game> --base /<repo>/` writes `dist/`: the game's `index.html` with every
+file it reaches, compiled to JavaScript, ready for any static host. A repo of your game with a
+GitHub Actions workflow that runs it on every push and uploads `dist/` to Pages puts the game at
 `https://<owner>.github.io/<repo>/`. How the site is laid out is the header of
-[`scripts/produce_static_site.ts`](scripts/produce_static_site.ts); serving the game's own server for
-players together is [`publishing-a-game`](.claude/skills/publishing-a-game/SKILL.md).
+[`scripts/produce_static_site.ts`](scripts/produce_static_site.ts). Running the server for players
+together is [`publishing-a-game`](.claude/skills/publishing-a-game/SKILL.md).
 
 ## For agents
 
@@ -196,7 +326,7 @@ thing goes, and which phase skill carries each kind of work. Beside it in
 `auditing-a-game`) and distributing it (`going-multiplayer`, `persisting-players`,
 `committing-a-game`, `publishing-a-game`).
 
-Whether a game can be built on Patchwork is answered from the tables above and the headers of those
+Whether a game can be built on Patchwork is answered from the lists above and the headers of those
 files: each says what the piece does, what it is handed and what it hands back.
 
 ## Your repo
