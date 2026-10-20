@@ -28,9 +28,14 @@
 //             and nothing here reads them.
 //
 // The rig file:
-//   bodies   `{ <model>: "<fbx>" }`, the rigged characters under ~/troupe-collection the rig's clips
-//            are baked onto, each written to the loader `model` entry of its name (the extension's
-//            Export Models, `anim.export.py`). Nothing plays by it.
+//   bodies   `{ <model>: "<fbx>" }`, the rigged characters the rig's clips are baked onto, paths
+//            under the library (`PATCHWORK_LIBRARY`, else ~/patchwork-library), each written, packed by
+//            gltfpack, to the loader `model` entry of its name (`anim.export.py`). Nothing plays by it.
+//   spread   `{ <model>: <degrees> }`, how far the bake swings that body's upper arms out from its
+//            sides on every frame of every clip, for a body broader than the one the clips were
+//            pulled on, whose arms would pass through it. Nothing plays by it.
+//   size     times, 1 when left out: every body of the rig baked that many times its own size, its
+//            `table` and `ends` measured on it (`anim.export.py`). Nothing plays by it.
 //   clips    name to a file string, or to `{ file, loop, gear, markers, scale, rate, stance, mirror,
 //            rebase }`. `file` is the clip's FBX under ~/troupe-collection and `rebase` `{ from, onto }`
 //            moves it from the pose it was authored around (the first frame of the FBX `from`) to the
@@ -50,7 +55,7 @@
 //            `still`; `jump` and `leap`, leaving the ground rising slower and faster than its
 //            `leap`; `fall`, in the air, and after a `jump` or `leap` that ends there; `land`,
 //            touching down faster than its `landFall`. A moment a body comes to that the rig names
-//            no role for throws, so a rig whose bodies never leave the ground names `still` alone.
+//            no role for changes no clip: the body plays on in the clip it had.
 //   stances  stance name to `{ role: clip }`, for the roles `roles` names and any other a game
 //            plays itself; a role a stance does not name is the clip named after the role, so a
 //            stance names only the roles it plays differently.
@@ -58,6 +63,9 @@
 //   table    per clip, measured: `dur` (seconds), `forward` and `left` (metres at its end), `yaw`
 //            (degrees at its end, positive left), `rise`, `height`, `low`, `peak` (seconds), and
 //            `travel`, rows `[t, fwd, left, yawDeg]` every tenth of a second and at `dur`.
+//   ends     per body, per clip, measured: `fps` and each segment's two ends on every frame, in the
+//            body's frame (`anim.export.py`). `ends(w, me, segment, at?)` reads it (below); ragdoll3d
+//            and dismember3d ask it, and nothing here draws by it.
 //   meshes   role to a regular expression matched against a mesh's name (the browser half's).
 //   show     stance to the roles it draws (the browser half's).
 //
@@ -144,6 +152,7 @@
 import type { Row, W } from '#engine/engine.ts'
 import type { Wire } from '#engine/browser.ts'
 import { json } from '#plugins/loader/loader.sim.ts'
+import * as math from '#plugins/math/math.sim.ts'
 
 export type Entry = string | {
   file?: string; loop?: boolean; gear?: number; markers?: Record<string, number | string>
@@ -161,11 +170,14 @@ export type Reads = { pos: string; yaw: string; vel: string; grounded: string; l
 export type Prop = { model: string; bone: string; at: number[]; turn: number[] }
 export type Rig = {
   bodies?: Record<string, string>
+  spread?: Record<string, number>
+  size?: number
   clips: Record<string, Entry>
   roles: Partial<Record<Moment, string>>
   stances?: Record<string, Record<string, string>>
   mask?: string
   table: Record<string, Measure>
+  ends?: Record<string, Record<string, { fps: number } & Record<string, number[][]>>>
   meshes?: Record<string, string>
   show?: Record<string, string[]>
 }
@@ -249,7 +261,7 @@ export function clipOf(rig: Rig, name: string): Clip {
   if (!(measure.dur > 0)) throw new Error(`anim: ${name} lasts ${measure.dur} s`)
   const rate = e.rate ?? 1
   const loop = e.loop ?? false
-  const speed = (Math.hypot(measure.forward, measure.left) / measure.dur) * rate
+  const speed = (math.hypot(measure.forward, measure.left) / measure.dur) * rate
   if (loop && gear !== undefined && !(speed > 0)) throw new Error(`anim: the gear ${name} travels nowhere`)
   const clip: Clip = {
     name,
@@ -286,9 +298,9 @@ export const stanceOf = (rig: Rig, d: { rig?: string }) => d.rig ?? Object.keys(
 
 export const roleOf = (rig: Rig, stance: string | undefined, role: string) => (stance === undefined ? undefined : rig.stances?.[stance]?.[role]) ?? role
 
-export function momentOf(rig: Rig, stance: string | undefined, moment: Moment): string {
+export function momentOf(rig: Rig, stance: string | undefined, moment: Moment): string | undefined {
   const role = rig.roles?.[moment]
-  if (role === undefined) throw new Error(`anim: the rig's roles name no role for ${moment}`)
+  if (role === undefined) return undefined
   return roleOf(rig, stance, role)
 }
 
@@ -310,7 +322,7 @@ export function at(m: Measure, t: number): number[] {
 export function carries(c: Clip, a: Pick<Numbers, 'moves' | 'turns'>): { carries: boolean; turns: boolean } {
   if (c.loop) return { carries: false, turns: false }
   const turns = Math.abs(wrap(c.measure.yaw)) >= a.turns
-  return { carries: turns || Math.hypot(c.measure.forward, c.measure.left) > a.moves, turns }
+  return { carries: turns || math.hypot(c.measure.forward, c.measure.left) > a.moves, turns }
 }
 
 // `world.anim`, off a rule's `w` or the browser half's `plugins.wire`.
@@ -352,7 +364,8 @@ export function rest(me: Row) {
 }
 
 // The base clip becomes `clip`: the one at full weight is kept as `from`, and the new one fades in.
-function change(d: any, clip: string) {
+function change(d: any, clip: string | undefined) {
+  if (clip === undefined) return
   if (d.clip == null) d.blend = 1
   else {
     if (d.blend >= 1) {
@@ -393,14 +406,31 @@ export function gesture(me: Row, clip: string) {
   d.upperW = 0
 }
 
+// The kind whose entry of `kinds` a row is animated by: the kind its `as` names, or its own. A seat's
+// `player` row that is one of several bodies, an `xbot` or a `ybot`, names it in `as`.
+export const animKind = (me: Row): string => (typeof me.data.as === 'string' ? me.data.as : me.kind)
+
+// A segment's two ends in the body's frame (x its left, y up, z ahead), at `at`, a clip and its
+// playhead, the row's own `clip` and `clipT` unless given: [ax, ay, az, bx, by, bz], off the rig's
+// `ends` for the kind's `model`, the frame the playhead falls on, held within the clip's frames.
+export function ends(w: W | Wire, me: Row, segment: string, at: { clip: string; clipT: number } = me.data as any): number[] {
+  const kind = animKind(me)
+  const body = numbersOf(w).kinds[kind].model
+  const measured = rigOf(w, kind).ends?.[body]
+  if (!measured) throw new Error(`anim: ${kind}'s rig has no ends for ${body}; bake it (anim.export.py)`)
+  const clip = measured[at.clip]
+  const rows = clip[segment] as number[][]
+  return rows[Math.min(rows.length - 1, Math.max(0, Math.round(at.clipT * clip.fps)))]
+}
+
 export function stop(me: Row, w: W) {
   const d = me.data
   if (d.state !== 'act') return
-  const rig = rigOf(w, me.kind)
+  const rig = rigOf(w, animKind(me))
   const a = numbersOf(w)
   d.state = 'loco'
   d.holds = false
-  gear(d, rig, stanceOf(rig, d), a, bodyOf(d, readsIn(a, me.kind)), false)
+  gear(d, rig, stanceOf(rig, d), a, bodyOf(d, readsIn(a, animKind(me))), false)
   d.cancel = 0
 }
 
@@ -412,14 +442,14 @@ export const committed = (me: Row) => {
 // The body's clip in its gears, and its rate. A new clip takes the fraction of the last one's playhead
 // when `carry`; otherwise the clip starts at 0, the same one too.
 function gear(d: any, rig: Rig, stance: string | undefined, a: Numbers, { vel, yaw }: { vel: number[]; yaw: number }, carry = true) {
-  const speed = Math.hypot(vel[0], vel[2])
+  const speed = math.hypot(vel[0], vel[2])
   const gears = speed < a.still ? [] : gearsOf(rig, stance)
-  let pick: string, rate = 1
+  let pick: string | undefined, rate = 1
   if (!gears.length) pick = momentOf(rig, stance, 'still')
   else {
-    const f = vel[0] * Math.sin(yaw) + vel[2] * Math.cos(yaw)
-    const l = vel[0] * Math.cos(yaw) - vel[2] * Math.sin(yaw)
-    const dir = Math.atan2(l, f) / DEG
+    const f = vel[0] * math.sin(yaw) + vel[2] * math.cos(yaw)
+    const l = vel[0] * math.cos(yaw) - vel[2] * math.sin(yaw)
+    const dir = math.atan2(l, f) / DEG
     const off = (g: Clip) => Math.abs(wrap(g.gear! - dir))
     const best = Math.min(...gears.map(off))
     const near = gears.filter(g => off(g) - best <= TIE)
@@ -428,6 +458,7 @@ function gear(d: any, rig: Rig, stance: string | undefined, a: Numbers, { vel, y
     pick = g.name
     rate = speed / g.speed
   }
+  if (pick === undefined) return
   if (pick !== d.clip || !carry) {
     const frac = d.clip == null || !carry ? 0 : (d.clipT / clipOf(rig, d.clip).dur) % 1
     change(d, pick)
@@ -461,10 +492,10 @@ function travelOf(c: Clip, t0: number, t1: number, yaw: number, turns: boolean):
   const [f1, l1, y1] = at(c.measure, t1)
   const df = (f1 - f0) * c.scale, dl = (l1 - l0) * c.scale
   const c0 = turns ? y0 * DEG : 0
-  const bf = df * Math.cos(c0) + dl * Math.sin(c0)
-  const bl = -df * Math.sin(c0) + dl * Math.cos(c0)
+  const bf = df * math.cos(c0) + dl * math.sin(c0)
+  const bl = -df * math.sin(c0) + dl * math.cos(c0)
   return {
-    move: [bf * Math.sin(yaw) + bl * Math.cos(yaw), bf * Math.cos(yaw) - bl * Math.sin(yaw)],
+    move: [bf * math.sin(yaw) + bl * math.cos(yaw), bf * math.cos(yaw) - bl * math.sin(yaw)],
     yaw: turns ? wrap((y1 - y0) * DEG, Math.PI) : 0,
   }
 }
@@ -474,10 +505,10 @@ export function animate(me: Row, w: W, dt: number): { markers: Marker[]; travel:
   const travel: Travel = { move: [0, 0], yaw: 0 }
   const d = me.data
   const a = numbersOf(w)
-  const reads = readsIn(a, me.kind)
+  const reads = readsIn(a, animKind(me))
   if (d[reads.limp]) return { markers: [], travel }
-  const { fade } = kindOf(a, me.kind)
-  const rig = rigOf(w, me.kind)
+  const { fade } = kindOf(a, animKind(me))
+  const rig = rigOf(w, animKind(me))
   const stance = stanceOf(rig, d)
   const per = (s: number) => (fade > 0 ? s / fade : Infinity)
   fill(d)
@@ -486,9 +517,9 @@ export function animate(me: Row, w: W, dt: number): { markers: Marker[]; travel:
   const { vel } = body
   if (d[reads.grounded] === false) {
     d.sink = -vel[1]
-    if (d.state !== 'fall') {
-      const moment = vel[1] > 0 ? (Math.hypot(vel[0], vel[2]) > a.leap ? 'leap' : 'jump') : 'fall'
-      change(d, momentOf(rig, stance, moment))
+    const air = momentOf(rig, stance, vel[1] > 0 ? (math.hypot(vel[0], vel[2]) > a.leap ? 'leap' : 'jump') : 'fall')
+    if (d.state !== 'fall' && air !== undefined) {
+      change(d, air)
       d.state = 'fall'
       d.clipT = 0
       d.rate = 1
@@ -496,8 +527,9 @@ export function animate(me: Row, w: W, dt: number): { markers: Marker[]; travel:
       drop(d)
     }
   } else if (d.state === 'fall') {
-    if (d.sink > a.landFall) {
-      change(d, momentOf(rig, stance, 'land'))
+    const land = momentOf(rig, stance, 'land')
+    if (d.sink > a.landFall && land !== undefined) {
+      change(d, land)
       d.state = 'act'
       d.clipT = 0
       d.rate = 1
@@ -505,6 +537,7 @@ export function animate(me: Row, w: W, dt: number): { markers: Marker[]; travel:
     } else d.state = 'loco'
   }
   if (d.state === 'loco') gear(d, rig, stance, a, body)
+  if (d.clip == null) return { markers: [], travel }
 
   const c = clipOf(rig, d.clip)
   const t0 = d.clipT
@@ -515,8 +548,9 @@ export function animate(me: Row, w: W, dt: number): { markers: Marker[]; travel:
     if (how.carries) Object.assign(travel, travelOf(c, t0, moved.t, body.yaw, how.turns))
   }
   if (moved.ended) {
-    if (d.state === 'fall') {
-      change(d, momentOf(rig, stance, 'fall'))
+    const fall = momentOf(rig, stance, 'fall')
+    if (d.state === 'fall' && fall !== undefined) {
+      change(d, fall)
       d.clipT = 0
     } else {
       d.state = 'loco'

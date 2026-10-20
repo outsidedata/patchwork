@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { boot, type Scene, type W } from '#engine/engine.ts'
-import { load, mod } from '#addons/scenemanager/scenemanager.addon.ts'
+import { load } from '#addons/scenemanager/scenemanager.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 import { written } from '#plugins/loader/loader.sim.ts'
 import type { Field } from '#plugins/terrain3d/terrain3d.sim.ts'
@@ -50,7 +50,7 @@ const range = {
     terrain3d: { field: 'land' },
     walker: { kinds: { soldier: SOLDIER, crate: { ...SOLDIER, radius: 0.5, height: 1 } } },
     hitscan3d: { mods: { ground: 'terrain3d', bodies: 'walker' }, kinds: { soldier: { parts: { legs: [0, 0.5], body: [0.5, 1] }, tall: 'tall', off: 'limp' } }, rewind: 5 },
-    volley3d: { patterns: 'patterns', hold: 0.25, wait: 0.5, mods: { shoot: 'hitscan3d', bodies: 'hitscan3d' } },
+    volley3d: { patterns: 'patterns', hold: 0.25, mods: { shoot: 'hitscan3d', bodies: 'hitscan3d' } },
   },
   prefabs: { engine: { dt: DT }, scenemanager: { out: {} }, loader: {}, hitscan3d: {}, soldier: { pos: [0, 0, 0] }, crate: { pos: [0, 0, 0] }, probe: {} },
   // A along +z, B along +x, the crate along −x.
@@ -87,26 +87,20 @@ async function booted() {
 }
 const who = (h: ReturnType<typeof shoot>) => h && { what: h.what, id: h.id, part: h.part }
 
-test('the scene\'s two keys give volley3d hitscan3d\'s shoot and bodies, loaded before the first step', async () => {
-  const { child } = await booted()
-  expect(mod(child.world, 'volley3d', 'shoot')).toBe(shoot)
-  expect(mod(child.world, 'volley3d', 'bodies')).toBe(bodies)
-})
-
-test('shoot is hitscan3d\'s shoot: the ground, a body and its part, skip, bodies: false and grow, each as hitscan3d answers', async () => {
+test('shoot is hitscan3d\'s shoot: the ground, a body and its part, skip and grow, each as hitscan3d answers', async () => {
   const { w, a } = await booted()
   const lines: [number[], number[], number, Parameters<typeof shoot>[4]][] = [
     [[0, 1, 0], [0, 0, 1], 20, {}],
     [[0, 1, 0], [0, 0, 1], 20, { skip: [a.id] }],
-    [[0, 1, 0], [0, 0, 1], 20, { bodies: false }],
-    [[0, 2, 0], [0, -0.2, 1], 20, { bodies: false }],
+    [[0, 2, 0], [0, -0.2, 1], 20, { skip: [a.id] }],
     [[0.6, 1, 0], [0, 0, 1], 20, {}],
     [[0.6, 1, 0], [0, 0, 1], 20, { grow: 0.3 }],
   ]
   for (const [from, d, far, opts] of lines) expect(shoot(w, from, d, far, opts)).toEqual(hitscan(w, from, d, far, opts))
   expect(who(shoot(w, [0, 1, 0], [0, 0, 1], 20, {}))).toEqual({ what: 'body', id: a.id, part: 'body' })
   expect(shoot(w, [0, 1, 0], [0, 0, 1], 20, { skip: [a.id] })).toBeUndefined()
-  expect(shoot(w, [0, 2, 0], [0, -0.2, 1], 20, { bodies: false })).toMatchObject({ what: 'ground', point: [0, expect.closeTo(0, 4), expect.closeTo(10, 3)] })
+  // Down past A, which it skips, to the ground 10 m on.
+  expect(shoot(w, [0, 2, 0], [0, -0.2, 1], 20, { skip: [a.id] })).toMatchObject({ what: 'ground', point: [0, expect.closeTo(0, 4), expect.closeTo(10, 3)] })
   // 0.6 m off A's middle is past its 0.4 m, and within it grown by 0.3.
   expect(shoot(w, [0.6, 1, 0], [0, 0, 1], 20, {})).toBeUndefined()
   expect(who(shoot(w, [0.6, 1, 0], [0, 0, 1], 20, { grow: 0.3 }))).toEqual({ what: 'body', id: a.id, part: 'body' })

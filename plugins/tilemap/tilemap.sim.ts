@@ -73,6 +73,7 @@
 // touching a cell or a box is clear of it.
 import type { Kind } from '#engine/engine.ts'
 import type { TileLayer, Tiled, TiledObject } from '#plugins/loader/loader.sim.ts'
+import * as math from '#plugins/math/math.sim.ts'
 
 export type Box = { x: number; y: number; w: number; h: number }
 export type Edits = Record<string, number>
@@ -138,7 +139,7 @@ export function solidAt(map: Tiled, edits: Edits | undefined, box: Box): boolean
   // Two convex shapes overlap unless, along the axis of some side of one of them, they lie apart.
   const apart = (a: P[], b: P[]) => {
     for (let i = 0; i < a.length; i++) {
-      const p = a[i], q = a[(i + 1) % a.length], n: P = [q[1] - p[1], p[0] - q[0]], len = Math.hypot(n[0], n[1])
+      const p = a[i], q = a[(i + 1) % a.length], n: P = [q[1] - p[1], p[0] - q[0]], len = math.hypot(n[0], n[1])
       if (!len) continue
       const on = (pts: P[]) => pts.map(v => (v[0] * n[0] + v[1] * n[1]) / len)
       const [ra, rb] = [on(a), on(b)]
@@ -358,7 +359,7 @@ function against(solids: Solid[], s: Solid, p: P, q: P, lo: number, hi: number, 
   }
   const t = ((lo + hi) / 2 - p[1]) / (q[1] - p[1])
   const mid: P = [p[0] + t * (q[0] - p[0]), (lo + hi) / 2]
-  const len = Math.hypot(q[0] - p[0], q[1] - p[1])
+  const len = math.hypot(q[0] - p[0], q[1] - p[1])
   const out: P = [mid[0] + ((q[1] - p[1]) / len) * 1e-7, mid[1] - ((q[0] - p[0]) / len) * 1e-7]
   return others.some(o => inside(o, out))
 }

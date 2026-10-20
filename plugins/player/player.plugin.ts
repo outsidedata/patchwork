@@ -1,63 +1,25 @@
 // The browser half of the player. Any function called on it becomes a message up the wire,
-// carrying the name and the inputs, at this seat's player row. A call made outside a frame,
-// as an actor's setup does before the first one, waits for the next tick.
+// carrying the name and the inputs, at this seat's player row, sent the moment it is called: a key
+// that goes down between frames is in the truth's inbox before the page's loop runs its next step.
+// A call made before the plugin has its wire, as an actor's setup makes on a client's first frame,
+// is sent at its first `input` or `tick`.
 //
-// Prediction. On a press, the rule it names is run here on a clone of
-// the rows. If that run wrote nothing but the row the press names, or the row that rule
-// called, the rows it wrote replace the packet's rows in what the actors draw, and the press
-// is kept, with the browser's step it was pressed at, until a packet's ack is at or past its number.
-// The browser's step is the page's own clock (Clock, below), and each such row's per-step rule runs
-// here once a step, under the same test: it writes nothing but that row, or a row whose act it calls, as a strike calls `hit` on what
-// it lands on. That row is drawn as the packets bring it, since no press predicts it, but the rules
-// run here read it as the packet brought it with what the acts called on it here wrote, until the
-// next packet, so a strike that fells what it lands on lets the striker's next steps here through
-// where it stood, as the server's are. When a packet arrives the server's rows are taken, the
-// presses the ack covers are dropped, and the per-step rule is run forward to the browser's step,
-// and each remaining press is re-applied before the passes of its own step, as the server applies
-// a message before the passes of the step it arrives in.
-// The steps ahead are half a press's round trip in the server's steps: from the packet it was sent
-// on to the one the last frame took before the packet whose ack covers it, since that ack came on
-// a packet after the last frame's.
+// When. What is read once a frame (the gamepads, the repeat, `every`, and what the mouse, a drag, the
+// hover, a stroke and the wheel added up to) is read in `input`, which a page whose loop steps the
+// truth calls before its steps (`client.input()`, `engine/browser.ts`), as `index.html`'s and
+// `client.html`'s do, so the steps it runs next take it. In a frame whose page calls no `input`, as a
+// test's may, it is read in `tick`.
 //
-// Clock. The browser's step is a clock of the page's own, moved by the page's clock and never by a
-// packet, so a packet that comes late, or two on one frame, as a timer's and a network's do, moves
-// nothing drawn: on a display drawing a frame a step it moves one step every frame, with packets as
-// without. Each packet taken says the server was at least at its step when the page took it, so the
-// server's step now is at least that step and the steps since; the most any packet taken in the
-// last `world.player.window` seconds (2 when the scene gives none) says is where the clock wants to
-// be, with the steps ahead added: the most measured in the same seconds. A packet that came late
-// says less than one that came on time and moves nothing. The clock keeps within a step above what
-// it wants: below it, it is moved up a step at a time, so a press still reaches the server by its
-// step; more than a step above, down a step at a time, which holds the rows drawn for a frame. A
-// server slower than the page's clock falls a step behind now and then, and the page holds a frame
-// each time, once the packets from before it fell behind have left the window; a steps ahead that
-// grows moves the page a step on at once, and one that falls holds it a frame, a window later. The
-// clock starts a quarter step past a whole step, so a frame of a display that draws one a step, or
-// two, is a quarter step from the edge of one, however its timing wobbles. The window is long
-// beside a stall or a burst of packets and short beside how far two machines' clocks drift apart.
-// A ledger is a row that only appends events for the page to play or draw: a sound on audio's, an
-// effect on particle3d's, a launched round on volley3d's. The scene's `world.player.ledgers` names
-// their kinds, fixed for the scene, so no row carries the list. What a run here writes
-// to a row of one of them, or calls on it, is dropped rather than refusing the run: the pressed row
-// is still predicted, the ledger drawn is the packet's, and the sound or effect comes once, from the
-// server's packet.
-// The rule file of a kind is `<kind>.sim.ts` next to the page, as its drawing file is, and every
-// kind the page is sent a row of has one: two kinds with one rule are two one-line files handing
-// out the one `Kind`. A plugin's kind — one named in the scene's `plugins` or in
-// `world.shipped`'s `plugins` — has its rule in the plugin's folder, not next to the page, so no file is
-// asked for, and a press whose rule calls a row of such a kind — a `quit` that calls `go` on the
-// `scenemanager` row — is not run here, as a spawn is not: the rows drawn are the ones the packet
-// carries. `player` is the one name that is both: the scene lists the player plugin, and the
-// `player` kind's rule is the game's own, which every press is sent to, so its file is always asked
-// for.
+// This plugin runs no rule. A message goes up the wire and nothing else happens here. Where it lands
+// first is the page's: on `index.html` the truth in the tab takes it on its next step; on
+// `client.html` the copy that runs ahead (`addons/predict`) takes it on its next step and the seat's
+// own `player` row is drawn from that copy the frame after the key, while every other row is drawn
+// as the server's packets bring it. A message the pipe refuses is numbered 0 by `wire.send`, and is
+// a press that never happened.
 //
-// A message the pipe refuses is numbered 0 by `wire.send`. The press is not run here, not kept,
-// and not re-applied: the rows drawn are the ones the packet carried.
-//
-// One of these per client. The rules it loaded, the rows it predicted, the presses no ack covers
-// yet, the step it thinks it is at, the key table and the listeners on the page all belong to the
-// one scene it was made for, and go when the page closes that scene's client: a key pressed after
-// the seat moved on cannot reach the rows of the scene it left.
+// One of these per client. The key table and the listeners on the page belong to the one scene it
+// was made for, and go when the page closes that scene's client: a key pressed after the seat moved
+// on cannot reach the rows of the scene it left.
 //
 // Keys, mouse and clicks. A game's player actor hands `bind` one table in its setup and holds no
 // listener, no queue and no tick of its own. The plugin listens on the page, and a key that goes
@@ -72,8 +34,8 @@
 // `send` as one message when either changes, so a rule hears a way at once rather than two halves
 // of it a message apart; each `hold` is a button of one or more keys,
 // held while any of them is down, whose value, 1 held and 0 let go, is sent through `send` when
-// it changes, so a rule can do a thing for as long as it is held; `every` is asked each frame, in this
-// plugin's tick, for a message from what is held; `click` is asked for a message from where the
+// it changes, so a rule can do a thing for as long as it is held; `every` is asked each frame (When,
+// above) for a message from what is held; `click` is asked for a message from where the
 // page was clicked, in the canvas's pixels: the page's CSS pixels divided by the renderer's
 // `scale`, which is more than 1 when render2d's `fit` draws a canvas pixel across several. A mouse
 // button is a key named `Mouse` and the button's number — `Mouse0` the left, `Mouse1` the middle,
@@ -94,22 +56,47 @@
 // is, so a table's `w a s d` are the same four keys under the left hand on every keyboard. A key with
 // no place, as an on-screen keyboard's, is named by what it typed, a letter in lower case.
 //
-// Gamepads. Every gamepad connected is read each frame, in this plugin's tick, and its buttons and
-// its left stick are keys like any other, in any table and with the same `press`, `axis`, `stick`,
+// Gamepads. Every gamepad connected is read each frame (When, above), and its buttons and
+// its two sticks are keys like any other, in any table and with the same `press`, `axis`, `stick`,
 // `hold`, `every` and `locked`: a key goes down the frame it is first seen down on any gamepad and
 // comes up the frame none has it down, and has no repeat. A button is `Pad` and its number in the
 // browser's standard mapping: `Pad0` the bottom face button (A on an Xbox pad, cross on a
 // PlayStation's), `Pad1` the right, `Pad2` the left, `Pad3` the top, `Pad4` and `Pad5` the left and
 // right shoulders, `Pad6` and `Pad7` the triggers, `Pad8` select, `Pad9` start, `Pad10` and `Pad11`
 // the sticks pressed in, `Pad12` to `Pad15` the d-pad's up, down, left and right, `Pad16` the home
-// button. A gamepad the browser does not map to the standard numbers its buttons its own way. The
-// left stick holds `PadStickLeft`, `PadStickRight`, `PadStickUp` and `PadStickDown` while it is
-// pushed that way past the `player` prefab's `deadzone`, a fraction of the way out, each axis on its
-// own, so a push both ways holds a diagonal; a scene whose prefab gives no `deadzone` reads no stick,
-// and a table that names a side of it there throws. So `stick` keys of `[['ArrowLeft', 'a', 'Pad14',
-// 'PadStickLeft'], …]` move a seat from the arrows, the keys, the d-pad or the stick. While a
-// modal has the input no gamepad key goes down, and one down as it came up is held only on a new
-// press.
+// button; a button is down while the browser calls it `pressed`. A gamepad the browser does not map
+// to the standard numbers its buttons its own way. The left stick holds `PadStickLeft`,
+// `PadStickRight`, `PadStickUp` and `PadStickDown` while it is pushed that way past
+// `world.player.deadzone`, a fraction of the way out, each axis on its own, so a push both ways holds
+// a diagonal; the right stick, the standard mapping's third and fourth axes, holds
+// `PadRightStickLeft`, `PadRightStickRight`, `PadRightStickUp` and `PadRightStickDown` the same way.
+// A scene that gives no `deadzone` reads no stick, and a table that names a side of either there
+// throws. So `stick` keys of `[['ArrowLeft', 'a', 'Pad14', 'PadStickLeft'], …]` move a seat from the
+// arrows, the keys, the d-pad or the stick. While a modal has the input no gamepad key goes down,
+// and one down as it came up is held only on a new press. So is one already down the first time a
+// client reads the gamepads, as a key of the keyboard held down as a page opens sends no keydown:
+// the button that pressed a menu's button to move the seat presses nothing in the scene it moves to,
+// whose UI has not ticked on its client's first frame.
+//
+// Analog. An `axis`, a `stick` or a `hold` read analog (`analog: true` on its entry in `bind`'s table,
+// its action named in `control`'s `analog`) sends how far each key is held, not only whether: a key
+// of the keyboard or a mouse button held is 1; a gamepad button held is its `value`, so a trigger
+// sends from where the browser first calls it pressed to 1 at the floor; a side of a stick held is
+// how far past the dead zone it is pushed, 0 at the dead zone and 1 at the rim. A side of an axis or
+// a stick is the most any of its keys holds, and the value sent is the positive side's less the
+// negative side's; a hold is the most any of its keys holds, and 1 while it is toggled on. Each
+// value sent is a whole number of steps over `world.player.resolution`, a whole number above 0,
+// rounded away from the middle at a half: a stick swept slowly sends one message each time it
+// crosses a step, and one held still, however its reading wanders inside a step, sends nothing. A
+// table that reads anything analog in a scene that gives no `resolution` throws.
+//
+// Rumble. `rumble({ strong, weak, seconds })` shakes the gamepad that last had a key go down (a
+// button pressed, a side of a stick pushed past the dead zone) for `seconds`, its heavy motor at
+// `strong` and its light one at `weak`, each 0 to 1, replacing a rumble it is playing. A key of the
+// keyboard or a mouse button pressed since, or no gamepad used yet, and nothing shakes: a pad left on
+// the desk while the player is on the keyboard stays still. Neither does a gamepad the browser gives
+// no `vibrationActuator`, as Firefox gives none. It is the plugin's own and not a message, as `bind`
+// is: what the page feels of the seat's own thing, which no other seat and no rule hears.
 //
 // Actions: the second avenue. `bind`'s table binds what a seat does straight to keys. `control`'s
 // binds it to the scene's actions instead, and the scene binds the keys to the actions, so a player
@@ -121,11 +108,12 @@
 // actions: `press`, `release` and `hold` name buttons, `axis` axes and `stick` sticks, `every` is
 // handed whether a button action is held, `locked` names button actions, and `drag` and `stroke`
 // each name the button action whose keys they follow; `click`, `pointer`, `hover` and `wheel` are
-// as they are in `bind`. It throws on an action the scene does not name, and on one whose keys are
-// not the shape the part of the table naming it reads. `bind` and `control` each replace the other
-// as the table in force, and `unbind` drops either. On this avenue:
-// - the left stick reads `world.player.deadzone`, not the player prefab's, and a scene whose actions
-//   hold a side of it and gives none throws;
+// as they are in `bind`; `analog` names the axis, stick and hold actions read analog (Analog, above).
+// It throws on an action the scene does not name, on one whose keys are not the shape the part of
+// the table naming it reads, and on an `analog` action no `axis`, `stick` or `hold` of it reads.
+// `bind` and `control` each replace the other as the table in force, and `unbind` drops either. On
+// this avenue:
+// - the sticks read the store's `player.deadzone` over `world.player.deadzone`, as `bind`'s do;
 // - a gamepad key going down is offered to the UI (`keyDown`, and `keyUp` as it comes up) before it
 //   is the game's, as a key from the keyboard is, so a pad moves through the UI's menus;
 // - what the player chose is the page's, never the server's: four keys of the store, which the
@@ -160,6 +148,19 @@
 //   by the gamepad's `id`, or `pad` for any other.
 // Each is the plugin's own and not a message, as `bind` is.
 //
+// What it read. On either avenue, for a screen that shows what the plugin hears, a controls screen's
+// or a debug view's, two reads, each the plugin's own and on the page alone:
+// - `pads()`: every gamepad connected as the last read of the gamepads found it (When, above), in the
+//   order `getGamepads()` lists them: `{ index, id, family, mapping, used, buttons, axes }`, its place
+//   in that list, its `id`, its family as `device()` names one (`xbox`, `playstation`, `pad`), the
+//   browser's `mapping` (`standard`, or `''` for a gamepad it does not map), whether it is the one that
+//   last had a key go down (Rumble, below), each button's `pressed` and `value`, and each axis, −1 to 1,
+//   as the browser gave them, before any dead zone. Each is a copy, the page's to keep. Before the first
+//   read, or with no gamepad connected, it is empty.
+// - `held()`: every key held now, by the name a table gives it (`ArrowUp`, `Shift`, `Mouse0`, `Pad7`,
+//   `PadStickLeft`), in the order each went down: what `press`, `axis` and the rest are asked of, so a
+//   key a modal has let go of, or a `locked` key without the pointer lock, is not in it.
+//
 // A key or a mouse button the table names anywhere has its browser default cancelled, as the wheel
 // does when `wheel` is in the table: Tab would move the focus off the page, the right button open a
 // menu, the wheel scroll it.
@@ -189,65 +190,36 @@
 // pixels.
 // With `pointer` in the table, a click on the page takes the pointer lock for the element
 // clicked, and while the page holds the lock the mouse's movement is added up and `pointer` is
-// asked once each frame, in this plugin's tick, for a message from the page pixels it moved across and
-// down since the last one; a frame it did not move asks nothing. A key goes down between frames,
-// so its message waits with the other calls made outside a frame and is applied in the next tick,
-// before any actor draws. The table in force is the last one bound; `unbind` drops it and the
+// asked once each frame (When, above) for a message from the page pixels it moved across and
+// down since the last one; a frame it did not move asks nothing. The
+// table in force is the last one bound; `unbind` drops it and the
 // listeners, and gives back a pointer lock this plugin took. Where there is no `document`, as in
 // node, or one with no pointer lock, as the one the loader lends node while a model decodes, nothing
 // holds the pointer lock and there is none to give back.
-//
-// `step` is the step the rows drawn are at, predicted either way, and `seen` the page's clock as its
-// last tick read it, the moment that step was placed at.
-//
-// Whole steps. A scene with `world.player.steps` true is predicted another way, for rules that keep
-// state between steps a single row's rule cannot be run ahead without, such as box3d's physics
-// world, which moves every body in the box3d row's own tick. There the page keeps its own rows,
-// the same objects by id from packet to packet, and runs whole steps over them: every row's
-// `before`, `tick` and `after`, as the server does. Each kind's rule is `<kind>.sim.ts` next to the
-// page, or else its plugin's, `plugins/<kind>/<kind>.sim.ts`. A press is stamped with the page's
-// step and applied before that step's passes; the engine holds a message until the step it is
-// stamped with, so the server applies it on the same step. The page runs on the Clock, the whole
-// round trip ahead, so a press reaches the server by its step. The round trip is measured by a
-// probe, a message whose action is '', which the engine refuses, writes nothing for and still acks:
-// it is stamped with the step of the last packet the page has, so no server holds it, and the first
-// packet whose ack covers it shows the step the server took it at, that packet's step less one. The
-// page takes every packet that came since its last frame at once, and only the last is read, so
-// that step is taken as the last frame's packet's, the least it can be: a round trip a stall drew
-// out, as a page's first frames do while it loads, is not measured at all. Each message covered, a
-// probe or a press, measures a steps ahead: the steps ahead it was sent with, and the steps the
-// server took it past the lowest step the clock could have been at when it was sent, so a press
-// that lands L steps late moves the page L steps further ahead, and a probe the server took early
-// lets it fall. `lead` is the steps ahead the clock runs by. The page sends a probe when it first
-// joins and again each time the last is covered, after the frame's step is placed.
-// The page keeps its rows after each step it ran. A packet for step n is compared with the page's
-// rows after step n, row by row as a packet carries them: the same, and nothing happens; different,
-// and the packet is written into the page's rows (each row's data into the page's object of its id,
-// a row the page lacks added, a row the packet lacks dropped) and the steps from n are run again,
-// each press no ack covers applied before the step it is stamped with. The objects are kept because
-// a plugin keeps its library's memory per row object, as box3d keeps its world per box3d row: new
-// objects would mean a new world per correction, and Box3D holds at most 128 a process. `reruns`
-// counts the corrections, and `fixed` is the last one: `was`, the page's rows after the packet's step
-// as it ran them, and `now`, the packet's. A packet is compared after
-// the page has run to its step with every press stamped before it, and only then are the presses
-// its ack covers dropped: a page on the server's step is sent the ack of a press before it has run
-// the step the press is stamped for, and that step is run with the press. The pipe's `send` stamps
-// a message with `wire.n`, the last packet's step, and the engine is not changed for this, so the
-// player sets `wire.n` to its step for the one call and puts it back.
-// A step that spawns, ends a row, rolls the die or writes the world is not run here: the rows drawn
-// are the last packet's until the next packet. The seat is taken to be sent every row a step reads.
-import type { Arg, Kind, Row, Scene, W } from '#engine/engine.ts'
+import type { Arg, Row } from '#engine/engine.ts'
 import type { Plugins, Wire } from '#engine/browser.ts'
-import { delta } from '#addons/scenemanager/scenemanager.addon.ts'
+import { possessed } from '#addons/player/player.addon.ts'
+
+// The `player` row this page plays as, among the rows it was sent: every seat is sent every `player`
+// row, and its own is the one that is `mine` (`addons/player`).
+export { possessed }
+
+// The row this page's `player` row holds (`player.sim.ts`), among the rows it was sent, or undefined
+// while it holds none: what a look binds the keys for and the camera follows, the frame the hold
+// changes.
+export function holding(rows: Row[]): Row | undefined {
+  const h = possessed(rows)?.data.held as { kind: string; id: number } | null | undefined
+  return h ? rows.find(r => r.id === h.id && r.kind === h.kind) : undefined
+}
 
 export type Input = [action: string, ...args: Arg[]]
 export type Keys = string | string[]
 export type Binds = {
   press?: Record<string, Input | (() => void)>
   release?: Record<string, () => void>
-  axis?: { keys: [neg: Keys, pos: Keys]; send: (v: number) => Input }[]
-  stick?: { keys: [left: Keys, right: Keys, up: Keys, down: Keys]; send: (x: number, y: number) => Input }[]
-  hold?: { keys: string[]; send: (v: number) => Input }[]
+  axis?: { keys: [neg: Keys, pos: Keys]; send: (v: number) => Input | undefined; analog?: boolean }[]
+  stick?: { keys: [left: Keys, right: Keys, up: Keys, down: Keys]; send: (x: number, y: number) => Input | undefined; analog?: boolean }[]
+  hold?: { keys: string[]; send: (v: number) => Input | undefined; analog?: boolean }[]
   every?: (held: (key: string) => boolean) => Input | undefined
   click?: (x: number, y: number) => Input | undefined
   pointer?: (dx: number, dy: number) => Input | undefined
@@ -274,13 +246,21 @@ export type Action = { label: string; keys: Bound }
 export type Shown = { name: string; label: string; shape: Shape; keys: Bound; defaults: Bound; bound: string[] }
 export type Settings = { toggle: string[]; deadzone: number | undefined; repeat: number }
 export type Device = 'keyboard' | 'xbox' | 'playstation' | 'pad'
+// A shake of the gamepad last used (Rumble, above): each motor 0 to 1, for `seconds`.
+export type Rumble = { strong: number; weak: number; seconds: number }
+// A gamepad as the last read found it, from `pads()` (What it read, above).
+export type Pad = {
+  index: number; id: string; family: Exclude<Device, 'keyboard'>; mapping: string; used: boolean
+  buttons: { pressed: boolean; value: number }[]; axes: number[]
+}
 // `control`'s table: `Binds` keyed by the scene's actions instead of keys.
 export type Controls = {
   press?: Record<string, Input | (() => void)>
   release?: Record<string, () => void>
-  axis?: Record<string, (v: number) => Input>
-  stick?: Record<string, (x: number, y: number) => Input>
-  hold?: Record<string, (v: number) => Input>
+  axis?: Record<string, (v: number) => Input | undefined>
+  stick?: Record<string, (x: number, y: number) => Input | undefined>
+  hold?: Record<string, (v: number) => Input | undefined>
+  analog?: string[]
   every?: (held: (action: string) => boolean) => Input | undefined
   click?: (x: number, y: number) => Input | undefined
   pointer?: (dx: number, dy: number) => Input | undefined
@@ -316,8 +296,10 @@ const TYPED: Record<string, string> = {
   NumpadEnter: 'Enter', NumpadEqual: '=', NumpadComma: ',',
 }
 
-// The four sides of the left stick, each a key.
+// The four sides of the left stick and of the right, each a key, left, right, up and down.
 const STICK = ['PadStickLeft', 'PadStickRight', 'PadStickUp', 'PadStickDown']
+const RIGHT = ['PadRightStickLeft', 'PadRightStickRight', 'PadRightStickUp', 'PadRightStickDown']
+const SIDES = [...STICK, ...RIGHT]
 
 // The name a binding gives the key at `code`, a `KeyboardEvent.code`: `KeyA` is `a`, `Digit1` and
 // `Numpad1` are `1`, `Space` is `' '`, `ShiftLeft` and `ShiftRight` are `Shift` (and so Control, Alt
@@ -351,387 +333,46 @@ export function keyOf(e: KeyboardEvent): string {
 }
 
 export function player() {
-  const PASSES = ['before', 'tick', 'after'] as const
-  type Press = { seq: number; n: number; id: number; action: string; args: Arg[] }
-
   let wire: Wire | undefined
   let all: Plugins | undefined
-  let between = true // no frame is running: presses wait for the next tick
+  // Calls made before the plugin has its wire, as an actor's setup makes them on a client's first
+  // frame: sent at its first `input` or `tick`.
   const waiting: (() => void)[] = []
-  // Everything below belongs to one wire and starts over when the frame brings a new one.
-  let rules = new Map<string, { kind?: Kind; error?: Error }>()
-  let predicted = new Set<number>() // rows a press wrote here; drawn from the browser's copy
-  let struck = new Map<number, Row>() // rows a predicted row's step called an act of, as the rules here read them until the next packet
-  let unacked: Press[] = [] // presses run here that no packet's ack covers yet
-  let sent: { seq: number; n: number }[] = [] // every press and the packet's step it was sent on, for the round trip
-  let seenN = -1, n = 0 // n: the browser's step
-  // The page's own clock of steps (the header's Clock): `clock` in steps, `last` the page's clock at
-  // the tick that moved it, NaN before the first packet. `taken` is each packet taken in the last
-  // `window` seconds, when by the page's clock and its step; `trips` each steps-ahead measured in them.
-  let clock = NaN, last = 0
-  let low = 0 // the lowest step the clock could be at, with the lead it runs ahead by: its want's floor
-  let seen = NaN // the page's clock as the last tick read it
-  let taken: { at: number; n: number }[] = []
-  let trips: { at: number; steps: number }[] = []
-
-  // The kinds whose rule is a plugin's, which have no file next to the page.
-  const plugged = (scene: Scene) => new Set([...(scene.plugins ?? []), ...(scene.world?.shipped?.plugins ?? [])].filter(k => k !== 'player'))
-
-  async function load(home: string, scene: Scene, kinds: Iterable<string>) {
-    const skip = plugged(scene)
-    for (const kind of kinds) {
-      if (rules.has(kind) || skip.has(kind)) continue
-      try {
-        const mod = await import(/* @vite-ignore */ new URL(`${kind}.sim.ts`, home).href)
-        if (!(kind in mod)) throw new Error(`${kind}.sim.ts does not export ${kind}`)
-        rules.set(kind, { kind: mod[kind] })
-      } catch (e) {
-        rules.set(kind, { error: e as Error })
-      }
-    }
-  }
-
-  function rule(kind: string): Kind {
-    const r = rules.get(kind)
-    if (!r) throw new Error(`no rule file loaded for kind ${kind}`)
-    if (r.error) throw r.error
-    return r.kind!
-  }
-
-  // Runs f over a clone of the rows, each called row as the rules here read it, and returns the rows
-  // it wrote, or undefined when it wrote a row `allowed` does not cover, spawned, ended, rolled the
-  // die, wrote the world, or called a row whose rule has no file next to the page. What it wrote to a
-  // row of a ledger kind, or called on one, is dropped: that row stays the packet's.
-  function run(f: (w: W) => void, allowed: (id: number, called: Set<number>) => boolean): Row[] | undefined {
-    const { scene } = wire!
-    const ledgers = new Set<string>(scene.world?.player?.ledgers ?? [])
-    const rows = structuredClone(wire!.rows.map(r => struck.get(r.id) ?? r))
-    const world = structuredClone(scene.world ?? {})
-    const before = new Map(rows.map(r => [r.id, JSON.stringify(r.data)]))
-    const called = new Set<number>()
-    let bad = false
-    const get = (id: number) => {
-      const r = rows.find(r => r.id === id)
-      if (!r) throw new Error(`no row ${id}`)
-      return r
-    }
-    const w: W = {
-      world,
-      all: kind => rows.filter(r => r.kind === kind),
-      get,
-      find: (kind, pred = () => true) => {
-        const r = rows.find(r => r.kind === kind && pred(r))
-        if (!r) throw new Error(`no ${kind} matches`)
-        return r
-      },
-      spawn: (kind, data = {}) => { bad = true; return { id: 0, kind, data: { ...structuredClone(scene.prefabs[kind]), ...data } } },
-      end: () => { bad = true },
-      die: () => { bad = true; return 0 },
-      call: (row, action, seat, ...args) => {
-        if (ledgers.has(row.kind)) return
-        // A row whose rule has no file next to the page — a plugin's, such as `scenemanager` — is
-        // run on the server alone.
-        if (!rules.get(row.kind)?.kind) { bad = true; return }
-        const act = rule(row.kind).acts?.[action]
-        if (!act) throw new Error(`no action ${row.kind}.${action}`)
-        called.add(row.id)
-        act(get(row.id), w, seat, ...args)
-      },
-    }
-    f(w)
-    if (bad || JSON.stringify(world) !== JSON.stringify(scene.world ?? {})) return
-    const wrote = rows.filter(r => !ledgers.has(r.kind) && before.get(r.id) !== JSON.stringify(r.data))
-    return wrote.every(r => allowed(r.id, called)) ? wrote : undefined
-  }
-
-  const swap = (row: Row) => { wire!.rows[wire!.rows.findIndex(r => r.id === row.id)] = row }
-
-  // The seconds of packets the clock is placed from: `world.player.window`, or 2. Long enough to hold
-  // a packet that came on time through a stall or a burst, short beside how far two clocks drift.
-  function windowOf(): number {
-    const s = wire!.scene.world?.player?.window ?? 2
-    if (typeof s !== 'number' || !(s > 0)) throw new Error('the scene\'s world.player.window is not a number of seconds above 0')
-    return s
-  }
-
-  // What the window keeps of `list` at `now`: its entries of the last `window` seconds, and the
-  // newest whatever its age.
-  const within = <T extends { at: number }>(list: T[], now: number) => list.filter((e, i) => i === list.length - 1 || e.at >= now - windowOf() * 1000)
-
-  // The packet taken now, at step `n`, for the clock.
-  function took(now: number, n: number) {
-    taken = within([...taken, { at: now, n }], now)
-    trips = within(trips, now)
-  }
-
-  // A steps-ahead measured now.
-  function trip(now: number, steps: number) {
-    trips = within([...trips, { at: now, steps }], now)
-  }
-
-  // The steps ahead: the most the window measured.
-  const leadNow = () => trips.reduce((m, t) => Math.max(m, t.steps), 0)
-
-  // The step the page is at `now`, by its own clock (the header's Clock).
-  function paced(now: number, dt: number): number {
-    const ms = dt * 1000
-    const want = taken.reduce((m, t) => Math.max(m, t.n + (now - t.at) / ms), -Infinity) + leadNow()
-    if (Number.isNaN(clock)) clock = Math.ceil(want - 1 / 4) + 1 / 4
-    else clock += (now - last) / ms
-    last = now
-    while (clock < want) clock += 1
-    while (clock > want + 1) clock -= 1
-    low = Math.floor(want)
-    return Math.floor(clock)
-  }
-
-  // Applies a press here when its rule writes only the row it names or the row that rule calls.
-  function apply(p: Press): boolean {
-    const me = wire!.rows.find(r => r.id === p.id)
-    if (!me) return false
-    const act = rule(me.kind).acts?.[p.action]
-    if (!act) throw new Error(`no action ${me.kind}.${p.action}`)
-    const wrote = run(w => act(w.get(p.id), w, me.data.seat, ...p.args), (id, called) => id === p.id || called.has(id))
-    if (!wrote) return false
-    for (const r of wrote) { swap(r); predicted.add(r.id); struck.delete(r.id) }
-    return true
-  }
-
-  // One step of each predicted row's per-step rule, each only when it writes nothing but that row
-  // and the rows whose acts it called. What it wrote to a predicted row is drawn; what it wrote to
-  // another is kept for the rules here and drawn as the packets bring it.
-  function advance() {
-    const dt = wire!.scene.prefabs.engine?.dt
-    if (!dt) throw new Error('scene has no engine prefab with dt')
-    for (const id of predicted) {
-      const wrote = run(w => { const me = w.get(id); for (const pass of PASSES) rule(me.kind)[pass]?.(me, dt, w) }, (x, called) => x === id || called.has(x))
-      for (const r of wrote ?? []) {
-        if (predicted.has(r.id)) swap(r)
-        else struck.set(r.id, r)
-      }
-    }
-  }
-
-  // ------------------------------------------------ whole steps (`world.player.steps`)
-
-  // `n` the step it is stamped with, `low` the lowest step the page could have been at when it was
-  // sent, `lead` the steps ahead then.
-  type Stamped = { seq: number; n: number; low: number; lead: number; id: number; action: string; args: Arg[] }
-  let mine: Row[] | undefined // the page's own rows, after `at` steps
-  let own: any // the page's own copy of the scene's world, which its steps read
-  let at = 0
-  let kept = new Map<number, Row[]>() // the page's rows after each step it ran, by step
-  let pending: Stamped[] = [] // presses and the probe that no ack covers yet
-  let stuck = false // a step could not be run here: hold at the packet until the next one
-  let reruns = 0
-  let fixed: { was: Row[]; now: Row[] } | undefined // the last correction
-  const whole = () => !!wire!.scene.world?.player?.steps
-
-  // The rule of each kind: next to the page, or else its plugin's.
-  async function loadWhole(home: string, kinds: Iterable<string>) {
-    for (const kind of kinds) {
-      if (rules.has(kind)) continue
-      const from = async (url: string) => {
-        const mod = await import(/* @vite-ignore */ url)
-        if (!(kind in mod)) throw new Error(`${url} does not export ${kind}`)
-        return mod[kind] as Kind
-      }
-      try {
-        rules.set(kind, { kind: await from(new URL(`${kind}.sim.ts`, home).href) })
-      } catch {
-        try {
-          rules.set(kind, { kind: await from(new URL(`../${kind}/${kind}.sim.ts`, import.meta.url).href) })
-        } catch (e) {
-          rules.set(kind, { error: e as Error })
-        }
-      }
-    }
-  }
-
-  // One whole step of the page's rows, as the server steps its truth: the presses stamped with this
-  // step, then every row's passes. False, and the rows as they were, when the step spawned, ended a
-  // row, rolled the die or wrote the world.
-  function stepWhole(dt: number): boolean {
-    const rows = mine!, world = own ??= structuredClone(wire!.scene.world)
-    const was = JSON.stringify(world)
-    const refuse = () => { throw refused }
-    const get = (id: number) => {
-      const r = rows.find(r => r.id === id)
-      if (!r) throw new Error(`no row ${id}`)
-      return r
-    }
-    const w: W = {
-      world,
-      all: kind => rows.filter(r => r.kind === kind),
-      get,
-      find: (kind, pred = () => true) => {
-        const r = rows.find(r => r.kind === kind && pred(r))
-        if (!r) throw new Error(`no ${kind} matches`)
-        return r
-      },
-      spawn: refuse, end: refuse, die: refuse,
-      call: (row, action, seat, ...args) => {
-        const act = rule(row.kind).acts?.[action]
-        if (!act) throw new Error(`no action ${row.kind}.${action}`)
-        act(get(row.id), w, seat, ...args)
-      },
-    }
-    try {
-      for (const p of pending.filter(p => p.n === at && p.action !== '')) {
-        const me = rows.find(r => r.id === p.id)
-        const act = me && rule(me.kind).acts?.[p.action]
-        if (act) act(me, w, me.data.seat, ...p.args)
-      }
-      for (const pass of PASSES) for (const row of [...rows]) rule(row.kind)[pass]?.(row, dt, w)
-      if (JSON.stringify(world) !== was) throw refused
-    } catch (e) {
-      if (e !== refused) throw e
-      for (const k of Object.keys(world)) delete world[k]
-      Object.assign(world, JSON.parse(was))
-      return false
-    }
-    at++
-    kept.set(at, structuredClone(rows))
-    return true
-  }
-  const refused = new Error('a step the page does not run')
-
-  // The packet's rows written into the page's own: each row's data into the page's object of its
-  // id, a row the page lacks added, a row the packet lacks dropped.
-  function reset(to: Row[], n: number) {
-    const had = new Map((mine ?? []).map(r => [r.id, r]))
-    mine = to.map(r => {
-      const own = had.get(r.id)
-      if (!own || own.kind !== r.kind) return structuredClone(r)
-      own.data = structuredClone(r.data)
-      return own
-    })
-    at = n
-    kept = new Map([[n, structuredClone(to)]])
-  }
-
-  const matches = (a: Row[], b: Row[]) => { const d = delta(a, b); return !d.add.length && !d.change.length && !d.drop.length }
-
-  // Runs the page's rows forward to step `to`, or holds at the packet when a step cannot be run.
-  function runTo(to: number, dt: number) {
-    while (!stuck && at < to) if (!stepWhole(dt)) { stuck = true; reset(wire!.rows, wire!.n) }
-  }
-
-  // A message stamped with the page's step: the pipe stamps `wire.n`, so it is the page's step for
-  // the one call. 0 when the pipe refused it.
-  function stamped(id: number, action: string, args: Arg[]): number {
-    const packet = wire!.n
-    wire!.n = at
-    try { return wire!.send(id, action, ...args) } finally { wire!.n = packet }
-  }
-
-  async function tickWhole(now: number, dt: number) {
-    if (wire!.n !== seenN) {
-      // A message the ack covers was taken on the step before the first packet that shows it. That
-      // packet came after the one the last frame took, so that step is at least the last frame's
-      // packet's. The lead that would have had it taken on the lowest step the page could have been
-      // at when it was sent is a steps-ahead measured.
-      const before = seenN
-      seenN = wire!.n
-      took(now, wire!.n)
-      await loadWhole(wire!.home, new Set(wire!.rows.map(r => r.kind)))
-      for (const p of pending) if (p.seq <= wire!.ack) trip(now, Math.max(0, p.lead + before - p.low))
-      stuck = false
-      // The page catches up to a packet for a step it has not run by running the steps, with the
-      // presses stamped for them, so its world stays one run of them, and compares the packet with
-      // what it ran. Every press the ack covers was stamped before the packet's step, so the steps
-      // from it on need none of them.
-      if (!mine) reset(wire!.rows, wire!.n)
-      else {
-        runTo(wire!.n, dt)
-        const mineThen = kept.get(wire!.n)
-        if (!mineThen || !matches(mineThen, wire!.rows)) {
-          const ahead = at
-          reruns++
-          fixed = { was: mineThen ?? [], now: wire!.rows }
-          reset(wire!.rows, wire!.n)
-          runTo(ahead, dt)
-        }
-      }
-      pending = pending.filter(p => p.seq > wire!.ack)
-      for (const n of kept.keys()) if (n < wire!.n) kept.delete(n)
-    }
-    runTo(paced(now, dt), dt)
-    if (!pending.some(p => p.action === '')) {
-      const me = wire!.rows.find(r => r.kind === 'player')
-      const seq = me ? wire!.send(me.id, '') : 0
-      if (seq) pending.push({ seq, n: wire!.n, low, lead: leadNow(), id: me!.id, action: '', args: [] })
-    }
-    wire!.rows = structuredClone(mine!)
-  }
-
-  function sendWhole(name: string, args: Arg[]) {
-    const me = mine!.find(r => r.kind === 'player')
-    if (!me) throw new Error('no player row on this seat')
-    const seq = stamped(me.id, name, args)
-    if (seq === 0) return
-    pending.push({ seq, n: at, low, lead: leadNow(), id: me.id, action: name, args })
-  }
+  let gathered = false // this frame's polled input went up in `input`, before the page's steps
 
   const send = (name: string, args: Arg[]) => {
-    if (whole()) return sendWhole(name, args)
-    const me = wire!.rows.find(r => r.kind === 'player')
+    const me = possessed(wire!.rows)
     if (!me) throw new Error('no player row on this seat')
-    const seq = wire!.send(me.id, name, ...args)
-    // The pipe refused it, so no seat will ever ack it. Nothing is predicted and nothing is kept:
-    // a press that was never sent is a press that never happened.
-    if (seq === 0) return
-    sent.push({ seq, n: wire!.n })
-    const press = { seq, n, id: me.id, action: name, args }
-    if (apply(press)) unacked.push(press)
+    wire!.send(me.id, name, ...args)
+  }
+  // A message up the wire now, or, before the plugin has its wire, at its first `input` or `tick`.
+  const post = (name: string, args: Arg[]) => { if (wire) send(name, args); else waiting.push(() => send(name, args)) }
+
+  function take(p: Plugins) {
+    all = p
+    wire = p.wire
+    for (const f of waiting.splice(0)) f()
   }
 
-  async function tick(p: Plugins) {
-    all = p
-    if (p.wire !== wire) {
-      wire = p.wire
-      rules = new Map(); predicted = new Set(); struck = new Map(); unacked = []; sent = []
-      seenN = -1; n = 0; clock = NaN; last = 0; low = 0; taken = []; trips = []
-      mine = undefined; own = undefined; at = 0; kept = new Map(); pending = []; stuck = false; reruns = 0; fixed = undefined
-    }
-    between = false
+  // Before the page's steps (`client.input()`, the Header): what is read once a frame, sent now, so
+  // the steps the page's loop is about to run take it.
+  function feed(p: Plugins) {
+    take(p)
+    gather()
+    gathered = true
+  }
+
+  // In a frame whose page called no `input`, as `client.html`'s and a test's frames call none, what is
+  // read once a frame is read here instead.
+  function tick(p: Plugins) {
+    take(p)
+    if (!gathered) gather()
+  }
+
+  // What is read once a frame: the gamepads, the repeat, `every`, and what the mouse and the wheel
+  // added up to since the last time.
+  function gather() {
     const now = performance.now()
-    seen = now
-    const dt = wire.scene.prefabs.engine?.dt
-    if (!dt) throw new Error('scene has no engine prefab with dt')
-    if (whole()) await tickWhole(now, dt)
-    else if (wire.n !== seenN) {
-      // The ack came on one of the packets taken this frame, so after the last frame's: the round
-      // trip, in the server's steps, is at least from the packet the press was sent on to that one.
-      const before = seenN
-      seenN = wire.n
-      took(now, wire.n)
-      await load(wire.home, wire.scene, new Set(wire.rows.map(r => r.kind)))
-      const covered = sent.filter(s => s.seq <= wire!.ack)
-      if (covered.length) {
-        trip(now, Math.max(0, Math.floor((before - covered[covered.length - 1].n) / 2)))
-        sent = sent.filter(s => s.seq > wire!.ack)
-      }
-      for (const id of [...predicted]) if (!wire.rows.some(r => r.id === id)) predicted.delete(id)
-      // The packet's rows are the server's, the acts' writes on them included.
-      struck = new Map()
-      let left = unacked.filter(u => u.seq > wire!.ack)
-      unacked = []
-      const replay = (due: (p: Press) => boolean) => {
-        const now = left.filter(due)
-        left = left.filter(p => !now.includes(p))
-        for (const p of now) if (apply(p)) unacked.push(p)
-      }
-      n = wire.n
-      replay(p => p.n <= n)
-      const due = paced(now, dt)
-      while (n < due) { advance(); n++; replay(p => p.n <= n) }
-      replay(() => true)
-    } else {
-      const due = paced(now, dt)
-      while (n < due) { advance(); n++ }
-    }
-    for (const f of waiting.splice(0)) f()
     if (controls) refresh()
     // Every key held as the lock was lost is let go, and every toggle with them.
     const hasLock = !!lockedTo()
@@ -741,23 +382,34 @@ export function player() {
     // input: one down then is held only on a new press, as a key is once a modal has let it go.
     // Every key a poll moved is moved before the axes are asked, so a stick swung from one side to
     // the other between two frames sends the one way it holds now.
+    if ((binds || controls) && sticks && deadzone() === undefined) throw new Error('the player table holds a side of a stick, and the scene gives no world.player.deadzone')
+    // The gamepad keys down on this client's first frame were pressed before it: taken as down
+    // already, so each is held only on a new press. The sticks are read by the scene's dead zone, as
+    // the store may tick after this on the first frame; the frame after reads by the player's own.
+    if (!polled) {
+      polled = true
+      pads = poll(wire?.scene.world?.player?.deadzone)
+    }
     if (binds) {
-      if (sticks && typeof wire.scene.prefabs.player?.deadzone !== 'number') throw new Error('the player table binds the left stick, and the player prefab has no deadzone')
-      const now = poll(wire.scene.prefabs.player?.deadzone), modal = !!all?.ui?.modal()
+      const now = poll(deadzone()), modal = !!all?.ui?.modal()
       for (const k of pads) if (!now.has(k)) { down.delete(k); armed.delete(k) }
-      for (const k of now) if (!pads.has(k) && !modal) { hold(k); pressed(k) }
+      for (const k of now) {
+        if (pads.has(k)) continue
+        touched = padAt.get(k)
+        if (!modal) { hold(k); pressed(k) }
+      }
       pads = now
     }
     // On the action avenue a gamepad key going down is handed to a `listen` waiting for one, else
     // offered to the UI, as a key from the keyboard is, and is the game's only when neither takes it;
     // each one handed to the UI is handed it again as it comes up.
     if (controls) {
-      if (sticks && deadzone() === undefined) throw new Error('an action holds a side of the left stick, and the scene gives no world.player.deadzone')
       const now = poll(deadzone()), modal = !!all?.ui?.modal()
       for (const k of pads) if (!now.has(k)) { down.delete(k); armed.delete(k); all?.ui?.keyUp?.(k) }
       for (const k of now) {
         if (pads.has(k)) continue
         used = family(padOf.get(k) ?? '')
+        touched = padAt.get(k)
         if (listener) hear(k)
         else if (all?.ui?.keyDown?.(k)) continue
         else if (!modal) { hold(k); act(k, true) }
@@ -802,6 +454,11 @@ export function player() {
   let sticks = false // the table names a side of the left stick
   let pads = new Set<string>() // the gamepad keys down at the last poll
   const padOf = new Map<string, string>() // each gamepad key down at the last poll, and the `id` of a gamepad holding it
+  const padAt = new Map<string, number>() // each gamepad key down at the last poll, and where that gamepad is in `getGamepads()`
+  const level = new Map<string, number>() // each gamepad key down at the last poll, and how far the most of any gamepad holds it, 0 to 1
+  let seen: Omit<Pad, 'used'>[] = [] // every gamepad connected at the last poll, copied
+  let touched: number | undefined // where in `getGamepads()` the gamepad that last had a key go down is, unless a key or a mouse button went down since
+  let polled = false // the gamepads have been read on this client's first frame
   let used: Device = 'keyboard' // what was used last
 
   // ------------------------------------------------ the action avenue (`control`)
@@ -865,9 +522,12 @@ export function player() {
       if (!(name in acts)) throw new Error(`the player table's ${part} names ${name}, which the scene's world.player.actions does not`)
       if (shape(name) !== want) throw new Error(`the player table's ${part} reads ${name} as a ${want}, and the scene gives it the keys of a ${shape(name)}`)
     }
+    for (const name of controls.analog ?? []) {
+      if (!(name in (controls.axis ?? {})) && !(name in (controls.stick ?? {})) && !(name in (controls.hold ?? {}))) throw new Error(`the player table reads ${name} analog, and no axis, stick or hold of it names ${name}`)
+    }
     bound = new Set([...keysOf.values()].flatMap(k => k.flat()))
     lockOnly = new Set((controls.locked ?? []).flatMap(buttonKeys))
-    sticks = STICK.some(k => bound.has(k))
+    sticks = SIDES.some(k => bound.has(k))
   }
   // A button action is held while any of its keys is, or, played as a toggle, from one press to the next.
   const pushedDown = (name: string) => buttonKeys(name).some(held)
@@ -890,19 +550,21 @@ export function player() {
       acted.set(k, v)
       return true
     }
+    const analog = new Set(c.analog ?? [])
+    const along = (name: string, neg: string[], pos: string[]) => (analog.has(name) ? reach(neg, pos) : way(neg, pos))
     for (const [name, f] of Object.entries(c.axis ?? {})) {
       const [neg, pos] = keysOf.get(name) as string[][]
-      const v = way(neg, pos)
+      const v = along(name, neg, pos)
       if (changed(`axis ${name}`, v)) input(f(v))
     }
     for (const [name, f] of Object.entries(c.stick ?? {})) {
       const [left, right, up, dn] = keysOf.get(name) as string[][]
-      const x = way(left, right), y = way(up, dn)
+      const x = along(name, left, right), y = along(name, up, dn)
       const moved = [changed(`x ${name}`, x), changed(`y ${name}`, y)]
       if (moved[0] || moved[1]) input(f(x, y))
     }
     for (const [name, f] of Object.entries(c.hold ?? {})) {
-      const v = isHeld(name) ? 1 : 0
+      const v = !analog.has(name) || toggles.has(name) ? (isHeld(name) ? 1 : 0) : stepped(most(buttonKeys(name)))
       if (changed(`hold ${name}`, v)) input(f(v))
     }
     for (const [name, f] of Object.entries(c.release ?? {})) {
@@ -956,26 +618,56 @@ export function player() {
   // Sony's 054c.
   const family = (id: string): Device =>
     /xbox|xinput|045e/i.test(id) ? 'xbox' : /playstation|dualshock|dualsense|054c/i.test(id) ? 'playstation' : 'pad'
-  // The gamepad keys down on every gamepad connected: each button pressed, and each side of the left
-  // stick past the dead zone.
-  // Each key is also written into `padOf` with the `id` of a gamepad holding it.
-  const poll = (deadzone: unknown): Set<string> => {
+  // The gamepad keys down on every gamepad connected: each button pressed, and each side of either
+  // stick past the dead zone. Each key is also written into `padOf` with the `id` of a gamepad
+  // holding it, into `padAt` with where that gamepad is, and into `level` with how far the most of
+  // any gamepad holds it: a button its `value`, a side of a stick how far past the dead zone it is
+  // pushed, out of the rest of the way to the rim.
+  const poll = (deadzone: number | undefined): Set<string> => {
     const now = new Set<string>()
     padOf.clear()
+    padAt.clear()
+    level.clear()
+    seen = []
     if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return now
-    for (const pad of navigator.getGamepads()) {
-      if (!pad?.connected) continue
-      const add = (k: string) => { now.add(k); if (!padOf.has(k)) padOf.set(k, pad.id ?? '') }
-      pad.buttons.forEach((b, i) => { if (b.pressed) add(`Pad${i}`) })
-      if (typeof deadzone !== 'number') continue
-      const [x, y] = pad.axes
-      if (x < -deadzone) add('PadStickLeft')
-      if (x > deadzone) add('PadStickRight')
-      if (y < -deadzone) add('PadStickUp')
-      if (y > deadzone) add('PadStickDown')
-    }
+    navigator.getGamepads().forEach((pad, at) => {
+      if (!pad?.connected) return
+      seen.push({
+        index: at, id: pad.id, family: family(pad.id) as Pad['family'], mapping: pad.mapping,
+        buttons: pad.buttons.map(b => ({ pressed: b.pressed, value: b.value })), axes: [...pad.axes],
+      })
+      const add = (k: string, v: number) => {
+        if (!now.has(k)) { padOf.set(k, pad.id ?? ''); padAt.set(k, at) }
+        now.add(k)
+        level.set(k, Math.max(level.get(k) ?? 0, v))
+      }
+      pad.buttons.forEach((b, i) => { if (b.pressed) add(`Pad${i}`, b.value) })
+      if (deadzone === undefined) return
+      const past = (a: number) => Math.min(1, (Math.abs(a) - deadzone) / (1 - deadzone))
+      // A gamepad of one stick has two axes; the standard mapping's right stick is the third and fourth.
+      const sides = pad.axes.length >= 4 ? [STICK, RIGHT] : [STICK]
+      sides.forEach((names, s) => {
+        const [x, y] = [pad.axes[2 * s], pad.axes[2 * s + 1]]
+        if (x < -deadzone) add(names[0], past(x))
+        if (x > deadzone) add(names[1], past(x))
+        if (y < -deadzone) add(names[2], past(y))
+        if (y > deadzone) add(names[3], past(y))
+      })
+    })
     return now
   }
+  // How far a key is held, 0 to 1 (Analog, above): a gamepad key as far as the last poll found it,
+  // any other key held all the way.
+  const amount = (key: string) => (held(key) ? (level.get(key) ?? 1) : 0)
+  const most = (keys: Keys) => (typeof keys === 'string' ? amount(keys) : Math.max(0, ...keys.map(amount)))
+  // A value to a whole number of steps over `world.player.resolution`, a half rounded away from 0.
+  const stepped = (v: number) => {
+    const r = wire?.scene.world?.player?.resolution
+    if (!(Number.isInteger(r) && r > 0)) throw new Error(`the player table reads a key analog, and the scene's world.player.resolution is ${r}, not a whole number of steps above 0`)
+    return (Math.sign(v) * Math.round(Math.abs(v) * r)) / r || 0
+  }
+  // An axis or a side of a stick read analog: how far its positive keys hold it, less its negative ones.
+  const reach = (neg: Keys, pos: Keys) => stepped(most(pos) - most(neg))
   // The element holding the pointer lock, or null.
   const lockedTo = () => (typeof document === 'undefined' ? null : document.pointerLockElement ?? null)
   const held = (key: string) => down.has(key) && (!lockOnly.has(key) || (armed.has(key) && !!lockedTo()))
@@ -993,20 +685,21 @@ export function player() {
   }
   const any = (keys: Keys) => (typeof keys === 'string' ? held(keys) : keys.some(held))
   const way = (neg: Keys, pos: Keys) => (any(pos) ? 1 : 0) - (any(neg) ? 1 : 0)
-  const input = (i: Input | undefined) => { if (i) between ? waiting.push(() => send(i[0], i.slice(1))) : send(i[0], i.slice(1)) }
+  const input = (i: Input | undefined) => { if (i) post(i[0], i.slice(1)) }
   const axes = () => {
     if (controls) return settle()
     binds?.axis?.forEach((a, i) => {
-      const v = way(a.keys[0], a.keys[1])
+      const v = (a.analog ? reach : way)(a.keys[0], a.keys[1])
       if (v !== values[i]) { values[i] = v; input(a.send(v)) }
     })
     binds?.stick?.forEach((st, i) => {
       const [left, right, up, down] = st.keys
-      const x = way(left, right), y = way(up, down)
+      const along = st.analog ? reach : way
+      const x = along(left, right), y = along(up, down)
       if (x !== pushed[i][0] || y !== pushed[i][1]) { pushed[i] = [x, y]; input(st.send(x, y)) }
     })
     binds?.hold?.forEach((h, i) => {
-      const v = h.keys.some(held) ? 1 : 0
+      const v = h.analog ? stepped(most(h.keys)) : h.keys.some(held) ? 1 : 0
       if (v !== holding[i]) { holding[i] = v; input(h.send(v)) }
     })
   }
@@ -1033,6 +726,7 @@ export function player() {
     }
     if (typed(e)) return
     used = 'keyboard'
+    touched = undefined
     const key = keyOf(e)
     cancel(e, key)
     const fresh = !down.has(key)
@@ -1054,6 +748,7 @@ export function player() {
   const ui = (e: MouseEvent) => !!all?.ui?.hit(...point(e))
   const onPress = (e: MouseEvent) => {
     used = 'keyboard'
+    touched = undefined
     if (listener) {
       e.preventDefault()
       swallow = true
@@ -1130,7 +825,7 @@ export function player() {
       ...(table.locked ?? []),
     ])
     lockOnly = new Set(table.locked ?? [])
-    sticks = STICK.some(k => bound.has(k))
+    sticks = SIDES.some(k => bound.has(k))
     values = (table.axis ?? []).map(() => 0)
     pushed = (table.stick ?? []).map(() => [0, 0])
     holding = (table.hold ?? []).map(() => 0)
@@ -1279,17 +974,31 @@ export function player() {
     refresh()
   }
 
+  // ------------------------------------------------ rumble (the page's alone)
+
+  function rumble({ strong, weak, seconds }: Rumble) {
+    if (!(strong >= 0 && strong <= 1 && weak >= 0 && weak <= 1 && seconds > 0)) throw new Error(`a rumble's strong and weak are 0 to 1 and its seconds above 0, not ${strong}, ${weak} and ${seconds}`)
+    if (touched === undefined || typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return
+    const pad = navigator.getGamepads()[touched]
+    // The browser's own: Firefox gives a gamepad no actuator.
+    const motors = pad?.connected ? pad.vibrationActuator : undefined
+    if (!motors) return
+    // A rumble begun while another plays preempts it, and the browser rejects the one cut short: no failure.
+    motors.playEffect('dual-rumble', { startDelay: 0, duration: seconds * 1000, strongMagnitude: strong, weakMagnitude: weak }).catch(() => {})
+  }
+
   return new Proxy(
     // Closing the client drops the table and every listener on the page, as `unbind` does.
     {
-      tick, afterTick() { between = true }, bind, unbind, close: unbind,
-      control, actions, listen, rebind, restore, conflicts, settings, configure, device: () => used,
+      tick, input: feed, afterTick() { gathered = false }, bind, unbind, close: unbind,
+      control, actions, listen, rebind, restore, conflicts, settings, configure, device: () => used, rumble,
+      pads: (): Pad[] => seen.map(p => ({ ...p, used: p.index === touched, buttons: p.buttons.map(b => ({ ...b })), axes: [...p.axes] })),
+      held: (): string[] => [...down].filter(held),
       get listening() { return !!listener },
-      get reruns() { return reruns }, get fixed() { return fixed }, get step() { return wire && whole() ? at : n }, get seen() { return seen }, get lead() { return leadNow() },
     },
     {
       get: (t: any, name: string) =>
-        name in t ? t[name] : (...args: Arg[]) => { between ? waiting.push(() => send(name, args)) : send(name, args) },
+        name in t ? t[name] : (...args: Arg[]) => post(name, args),
     },
   ) as Record<string, (...args: any[]) => void>
 }

@@ -2,15 +2,15 @@
 // 'tilemap'. The test writes a Tiled map, a floor of solid tiles with a one-way ledge over it, and a
 // manager and one child, `level`, which `load` boots as a game's would. The child's box2d world is
 // in cells with y down the rows, as the map's is, so its gravity is +y; its `probe` hands the test
-// the child's `w`. What is held is the wiring: chunk [i, j] is tilemap's `shapes` of its cells, each
-// a polygon of box2d's world, and the ground door builds, keeps and drops them as the row lists.
+// the child's `w`. What is held is the wiring: every tile's `shapes` are in one chunk of box2d's
+// world, and the ground door builds and drops the chunks as the row lists.
 import { afterAll, expect, test } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { boot, type Scene, type Truth, type W } from '#engine/engine.ts'
-import { load, mod } from '#addons/scenemanager/scenemanager.addon.ts'
+import { load } from '#addons/scenemanager/scenemanager.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 import { tiled, written } from '#plugins/loader/loader.sim.ts'
 import { castRay, castRayClosest, counters } from '#plugins/box2d/box2d.sim.ts'
@@ -86,22 +86,11 @@ const wOf = (): W => (globalThis as any).level
 const box2dRow = (t: Truth) => t.rows.find(r => r.kind === 'box2d')!
 const ALL = [[0, 0], [1, 0], [2, 0], [3, 0], [0, 1], [1, 1], [2, 1], [3, 1]]
 
-test('the scene\'s one key gives box2d tilemap\'s ground, loaded before the first step', async () => {
-  const t = await child()
-  expect(mod(t.world, 'box2d', 'ground')).toBe(ground)
-})
-
-test('chunk [i, j] is tilemap\'s shapes of its count × count cells, each a polygon, a one-way one looking up the rows', async () => {
+test('every tile\'s shapes are in one chunk and no other', async () => {
   const t = await child()
   run(t, 1)
   const w = wOf()
   const map = tiled(w, 'level')
-  for (const [i, j] of ALL) {
-    const made = ground(w, [i, j])
-    const want = shapes(map, undefined, { x: i * 4, y: j * 4, w: 4, h: 4 })
-    expect(made.shapes).toEqual(want.map(s => ({ polygon: { points: s.pts.flat() }, ...(s.oneway ? { oneWay: [0, -1] } : {}) })))
-  }
-  // Every tile's shapes are in one chunk and no other.
   const every = ALL.flatMap(([i, j]) => ground(w, [i, j]).shapes)
   expect(every).toHaveLength(shapes(map, undefined, { x: 0, y: 0, w: 16, h: 8 }).length)
   expect(every.filter(s => s.oneWay)).toHaveLength(4)
@@ -151,15 +140,4 @@ test('unlisting a chunk drops it and what rested on it falls; listing it again b
   run(t, 1)
   expect(castRay(wOf(), [10.5, 0], [0, 20]).filter(h => h.id === 0)).toEqual([])
   expect(castRayClosest(wOf(), [11.5, 0], [0, 20])!.point[1]).toBeCloseTo(6, 5)
-})
-
-test('a key listed step after step is built once: the world holds the same bodies throughout', async () => {
-  const t = await child()
-  box2dRow(t).data.ground = ALL
-  run(t, 1)
-  const w = wOf()
-  const before = counters(w)
-  run(t, 100)
-  expect(counters(w).bodyCount).toBe(before.bodyCount)
-  expect(counters(w).shapeCount).toBe(before.shapeCount)
 })

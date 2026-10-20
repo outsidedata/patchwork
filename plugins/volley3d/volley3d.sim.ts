@@ -1,9 +1,9 @@
 // The server half of volley3d: launched rounds in a 3D world, rockets, shells, grenades and missiles
 // that fly for a while before they meet something, none of them a row. A rule fires a round: one
-// entry on the ledger row naming its pattern, where it was fired from, which way and by whom. Each
-// step the entry is flown on and the line it flew in the step is asked what it met, and whoever
-// fired it is told. Every page draws the entries (`volley3d.plugin.ts`), and the page that fired a
-// round draws its own from the frame it was fired.
+// entry on the ledger row naming its pattern, where it was fired from, which way, by whom, and its
+// hurt, what it does to a body. Each step the entry is flown on and the line it flew in the step is
+// asked what it met, which hurts the body met, and a splash hurts every body near. Every page draws
+// the entries (`volley3d.plugin.ts`).
 //
 // The one row of this kind is the ledger. Its prefab is `next`, the id the next entry gets, and
 // `live`, the entries, and nothing else, since a prefab field goes onto the row and a row goes to
@@ -12,20 +12,19 @@
 //   patterns  the name in the scene's `loader` catalogue of the data file that holds every pattern;
 //   hold      the seconds an entry stays on the row once its round has ended, so every page, which
 //             reads only the last packet it took, sees how it ended;
-//   wait      the seconds a page keeps a round of its own that no entry of the row has matched
-//             (`volley3d.plugin.ts`); this half never reads it;
 //   mods      what volley3d asks other plugins for (`addons/scenemanager`'s mods), each optional:
-//     shoot   `(w, from, dir, far, { skip, bodies, grow }) → { t, point, what, id?, part? }`, the
+//     shoot   `(w, from, dir, far, { skip, grow, hurt }) → { t, point, what, id?, part? }`, the
 //             first thing a line from `from` along `dir`, any length, meets within `far` metres, or
 //             undefined: `t` metres along it, the point there, `what` it is, `ground`, `solid` or
-//             `body`, and a body's `id` and the `part` of it met. `skip` is ids of bodies the line
-//             passes through; `bodies: false` passes through every body, so only the land stops it;
-//             `grow` is metres every body is taken wider by, and longer by at both ends
-//             (`hitscan3d.volley3d.ts`). With none, a round meets nothing.
-//     bodies  `(w) → { id, pos, radius, height }[]`, every body a round can reach now, each an
-//             upright cylinder `radius` round from its feet at `pos` up `height`: what a splash
-//             reaches and what a guided round turns toward (`hitscan3d.volley3d.ts`). With none, no
-//             round splashes a body and none is guided.
+//             `body`, and a body's `id` and the `part` of it met; a body met is hurt by `hurt`, its
+//             `hit` act called. `skip` is ids of bodies the line passes through; `grow` is metres
+//             every body is taken wider by, and longer by at both ends (`hitscan3d.volley3d.ts`).
+//             With none, a round meets nothing.
+//     bodies  `(w) → { id, pos, shapes }[]`, every body a round can reach now, `pos` its feet and
+//             `shapes` its upright cylinders `{ part, cylinder: { pos, radius, height } }` and
+//             capsules `{ part, capsule: { a, b, radius } }`: what a splash reaches and what a guided
+//             round turns toward (`hitscan3d.volley3d.ts`). With none, no round splashes a body and
+//             none is guided.
 // A field of `world.volley3d` that is none of these throws, naming it.
 //
 // The patterns file is `{ patterns: { <name>: pattern } }`, and a pattern, in metres and seconds:
@@ -38,7 +37,7 @@
 //   radius   metres a body may be off its line and still be met: every body is met as if that much
 //            wider and longer at both ends, 0 when left out; the ground and the solids meet its middle;
 //   splash   metres: every body other than the one it met that is nearer than this to where it met
-//            something is splashed; left out or 0, none is;
+//            something is splashed; left out or 0, none is; its rounds' `hurt.damage` is a number;
 //   seek     radians a second its aim turns toward the target it was fired at; a pattern with none
 //            flies straight whatever it was fired at;
 //   look     `{ body, trail, burst }`, the particle3d effects a page draws it with: `body` carried
@@ -52,68 +51,77 @@
 // `dir`, and its fall, g·t²/2, down y. `velocity(pattern, dir, t)` is how fast it goes then, and
 // `speedOf(pattern, t)` its speed along its aim. The two halves fly a round by them alike.
 //
-// `fire(w, pattern, at, dir, { from, n, skip, target })` puts an entry on the ledger and hands it
-// back: `{ id, pattern, at, dir, age, from, n, skip, target?, ride?, pos, vel, hit? }`. `id` is the ledger's
-// `next`; `at` and `dir` are as fired and `age` 0; `from` is the row that fired it, whose `landed` act
-// is told what it met, and `n` the count that row gives its rounds, so `[from, n]` is the round's key,
-// by which a page that fired the same round itself knows it; `skip` is ids of the bodies it passes
-// through, its shooter's; `target` the id of the body it seeks, when fired at one; `ride` the row
-// and the field of the point it rides, when fired to ride one (below); `pos` is where it
-// is, `at` at first, and `vel` how fast it goes, its speed along `dir`.
+// `fire(w, pattern, at, dir, { from, n, skip, target, ride, hurt })` puts an entry on the ledger and
+// hands it back: `{ id, pattern, at, dir, age, from, n, skip, hurt, target?, ride?, pos, vel, hit? }`.
+// `id` is the ledger's `next`; `at` and `dir` are as fired and `age` 0; `from` is the row that fired
+// it, and `n` the count that row gives its rounds, so `[from, n]` names the round, as a page's
+// `volleys()` keys it; `skip` is ids of the bodies it passes through, its shooter's; `hurt` what it
+// does to a body it meets or splashes, hitscan3d's `{ damage, by, … }`;
+// `target` the id of the body it seeks, when fired at one; `ride` the row and the field of the point
+// it rides, when fired to ride one (below); `pos` is where it is, `at` at first, and `vel` how fast
+// it goes, its speed along `dir`.
 //
 // Each step, in `before`, every entry in flight is a step older, flown to its age or to the end of its
 // life, whichever is sooner. So a round fired in a tick or an after is sent where it was fired, and one
-// fired in an act a seat's message runs, which is answered before the step's passes, is sent a step
-// on, as far as the page that sent the message has flown its own by then:
+// fired in an act a seat's message runs, answered before the step's passes, is sent a step on:
 //   - an unguided one, its pattern with no `seek` or fired at no target, is where `flight` puts it;
 //   - a guided one flies as `flight` would, but first each step its aim is turned toward the point it
 //     is after, by no more than `seek` times the step; with no closed form of that, its `pos` and
 //     `vel` are the ones written each step. The point is its `ride`'s while it has one: fired with
 //     `ride` `{ id, field }`, it rides the point [x, y, z] row `id` carries in `field`, a laser's spot
 //     say, wherever it moves to, for as long as the row carries one there. Otherwise it is the middle
-//     of its target's body. With neither, a ride whose row has ended or carries no point and a target
-//     that is not among `bodies`, the round flies on straight.
+//     of its target's body, the middle of the box its shapes stand in. With neither, a ride whose row
+//     has ended or carries no point and a target that is not among `bodies`, the round flies on
+//     straight.
 // The line it flew in the step, from where it was to where it is, is asked of `shoot`, passing
-// through `skip`, every body grown by `radius`. At the first thing met, its `pos` is the point met and
-// it writes `hit` `{ point, what, id, age }`: `id` the body's, null for the ground or a solid, and
-// `age` its age as it met it, found along the step. Then it calls `landed(entry, what, id, part, 0)` on
-// its `from` row, `id` and `part` null for the ground or a solid, and with a `splash`,
-// `landed(entry, 'splash', id, null, far)` on it for every body but the one met whose `far`, the
-// metres from the point to the nearest point of the body's upright cylinder, 0 inside it, is under
-// `splash`: its shooter's too, since `skip` is the line's alone, and the act says what a splash of
-// its own shooter does. A `from` row that has ended is told nothing. A round that reaches the end of
-// its life meeting nothing ends there, with no hit, and tells nothing.
+// through `skip`, every body grown by `radius`, hurting the body it meets by its `hurt`. At the first
+// thing met, its `pos` is the point met and it writes `hit` `{ point, what, id, age }`: `id` the
+// body's, null for the ground or a solid, and `age` its age as it met it, found along the step. Then,
+// with a `splash`, every body but the one met whose `far`, the metres from the point to the nearest
+// point of its shapes, 0 inside one, is under `splash` is hurt: its `hit` act is called, as a rule's
+// (seat −1), with hitscan3d's `Struck`, `{ ...hurt, damage: hurt.damage × (1 − far / splash), part:
+// null, point, dir, what: 'splash' }`, `dir` the unit way from the point to the body's middle. Its
+// shooter's body is among them, since `skip` is the line's alone, and its own `hit` says what a splash
+// of its own does. A round that reaches the end of its life meeting nothing ends there, with no hit,
+// and hurts nothing.
 // An entry that has ended ages on and leaves the row `hold` seconds after it ended.
 //
 // `intercept(w, id)` shoots down entry `id` where it is: a round still in flight ends there, its
 // `hit` `{ point, what: 'intercepted', id: null, age }` at its `pos` and age, telling nobody, and the
 // page bursts it there as it bursts any hit the server writes. It returns whether it did: an entry
 // that has ended, or none of that id, is left as it is.
-import type { Kind, W } from '#engine/engine.ts'
+import type { Arg, Kind, W } from '#engine/engine.ts'
 import { mod } from '#addons/scenemanager/scenemanager.addon.ts'
 import { json } from '#plugins/loader/loader.sim.ts'
+import * as math from '#plugins/math/math.sim.ts'
 
 export type Look = { body?: string; trail?: string; burst?: string }
 export type Pattern = {
   speed: number; accel?: number; max?: number; g?: number; life: number; radius?: number; splash?: number; seek?: number; look: Look
 }
 export type Patterns = { patterns: Record<string, Pattern> }
-export type Numbers = { patterns: string; hold: number; wait: number; mods?: Record<string, string> }
+export type Numbers = { patterns: string; hold: number; mods?: Record<string, string> }
 export type Hit = { point: number[]; what: string; id: number | null; age: number }
+// What a round does to a body: `damage`, a number, or by the part met, and `by`, the row that fired it,
+// with whatever else the weapon carries; handed to `shoot`, and to `hit` in a `Struck`.
+export type Hurt = { damage: number | Record<string, number>; by: number; [more: string]: unknown }
 export type Entry = {
-  id: number; pattern: string; at: number[]; dir: number[]; age: number; from: number; n: number; skip: number[]
+  id: number; pattern: string; at: number[]; dir: number[]; age: number; from: number; n: number; skip: number[]; hurt: Hurt
   target?: number; ride?: Ride; pos: number[]; vel: number[]; hit?: Hit
 }
 export type Ride = { id: number; field: string }
 // What `shoot` answers: the first thing a line meets.
 export type Shot = { t: number; point: number[]; what: string; id?: number; part?: string }
-export type Shoot = (w: W, from: number[], dir: number[], far: number, opts: { skip?: number[]; bodies?: boolean; grow?: number }) => Shot | undefined
-export type Body = { id: number; pos: number[]; radius: number; height: number }
+export type Shoot = (w: W, from: number[], dir: number[], far: number, opts: { skip?: number[]; grow?: number; hurt?: Hurt }) => Shot | undefined
+export type Shape = { part: string } & (
+  | { cylinder: { pos: number[]; radius: number; height: number } }
+  | { capsule: { a: number[]; b: number[]; radius: number } })
+export type Body = { id: number; pos: number[]; shapes: Shape[] }
 export type Bodies = (w: W) => Body[]
 
 // The fields of the row, of `world.volley3d`, of a pattern and of its look.
 const ROW = ['next', 'live']
-export const WORLD = ['patterns', 'hold', 'wait', 'mods'] as const satisfies readonly (keyof Numbers)[]
+export const WORLD = ['patterns', 'hold', 'mods'] as const satisfies readonly (keyof Numbers)[]
 export const FIELDS = ['speed', 'accel', 'max', 'g', 'life', 'radius', 'splash', 'seek', 'look'] as const satisfies readonly (keyof Pattern)[]
 export const LOOK = ['body', 'trail', 'burst'] as const satisfies readonly (keyof Look)[]
 const NEEDED = ['speed', 'life', 'look'] as const
@@ -141,7 +149,7 @@ export function patternOf(file: Patterns, name: string): Pattern {
 }
 
 const unit = (v: number[]) => {
-  const l = Math.hypot(v[0], v[1], v[2])
+  const l = math.hypot(v[0], v[1], v[2])
   if (!(l > 0)) throw new Error('volley3d is asked a round along no direction')
   return [v[0] / l, v[1] / l, v[2] / l]
 }
@@ -183,14 +191,47 @@ function ridden(w: W, ride: Ride): number[] | undefined {
   return Array.isArray(v) && v.length === 3 && v.every(x => Number.isFinite(x)) ? v : undefined
 }
 
-// A body's middle, which a guided round turns toward.
-const middle = (b: Body) => [b.pos[0], b.pos[1] + b.height / 2, b.pos[2]]
+// A body's middle, which a guided round turns toward: the middle of the box its shapes stand in.
+export function middle(b: Body): number[] {
+  if (!b.shapes.length) return b.pos.slice()
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity]
+  // A box from its least corner to its most, taken into the bounds.
+  const box = (down: number[], up: number[]) => {
+    for (let i = 0; i < 3; i++) {
+      lo[i] = Math.min(lo[i], down[i])
+      hi[i] = Math.max(hi[i], up[i])
+    }
+  }
+  for (const s of b.shapes) {
+    if ('cylinder' in s) {
+      const { pos: [x, y, z], radius: r, height } = s.cylinder
+      box([x - r, y, z - r], [x + r, y + height, z + r])
+    } else {
+      const { a, b: e, radius: r } = s.capsule
+      for (const p of [a, e]) box([p[0] - r, p[1] - r, p[2] - r], [p[0] + r, p[1] + r, p[2] + r])
+    }
+  }
+  return [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2]
+}
 
-// Metres from a point to the nearest point of a body's upright cylinder, 0 inside it.
+// Metres from a point to the nearest point of one shape, 0 inside it.
+function farFrom(s: Shape, p: number[]): number {
+  if ('cylinder' in s) {
+    const { pos, radius, height } = s.cylinder
+    const across = Math.max(0, math.hypot(p[0] - pos[0], p[2] - pos[2]) - radius)
+    const up = Math.max(0, pos[1] - p[1], p[1] - (pos[1] + height))
+    return math.hypot(across, up)
+  }
+  const { a, b, radius } = s.capsule
+  const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], ap = [p[0] - a[0], p[1] - a[1], p[2] - a[2]]
+  const len2 = dot(ab, ab)
+  const u = len2 > 1e-12 ? Math.min(1, Math.max(0, dot(ap, ab) / len2)) : 0
+  return Math.max(0, math.hypot(ap[0] - ab[0] * u, ap[1] - ab[1] * u, ap[2] - ab[2] * u) - radius)
+}
+
+// Metres from a point to the nearest point of a body's shapes, 0 inside one.
 export function far(b: Body, p: number[]): number {
-  const across = Math.max(0, Math.hypot(p[0] - b.pos[0], p[2] - b.pos[2]) - b.radius)
-  const up = Math.max(0, b.pos[1] - p[1], p[1] - (b.pos[1] + b.height))
-  return Math.hypot(across, up)
+  return Math.min(...b.shapes.map(s => farFrom(s, p)))
 }
 
 // A guided round's aim at its age: its velocity with its fall taken off, over its speed along its
@@ -205,10 +246,10 @@ function aimOf(p: Pattern, e: Entry): number[] {
 // Unit `h` turned toward unit `want` by no more than `most` radians.
 function turn(h: number[], want: number[], most: number): number[] {
   const c = Math.min(1, Math.max(-1, dot(h, want)))
-  if (Math.acos(c) <= most) return want
+  if (math.acos(c) <= most) return want
   let q = [want[0] - h[0] * c, want[1] - h[1] * c, want[2] - h[2] * c]
-  if (Math.hypot(q[0], q[1], q[2]) < 1e-12) q = Math.abs(h[1]) < 0.9 ? [h[2], 0, -h[0]] : [1, 0, 0]
-  const n = unit(q), cos = Math.cos(most), sin = Math.sin(most)
+  if (math.hypot(q[0], q[1], q[2]) < 1e-12) q = Math.abs(h[1]) < 0.9 ? [h[2], 0, -h[0]] : [1, 0, 0]
+  const n = unit(q), cos = math.cos(most), sin = math.sin(most)
   return unit([h[0] * cos + n[0] * sin, h[1] * cos + n[1] * sin, h[2] * cos + n[2] * sin])
 }
 
@@ -241,7 +282,8 @@ const holds = (w: W, id: number) => {
   }
 }
 
-// One step of a round in flight: flown on, and its line asked what it met, which its `from` is told.
+// One step of a round in flight: flown on, and its line asked what it met, which hurts the body met
+// and, with a splash, every body near.
 function fly(w: W, e: Entry, p: Pattern, dt: number) {
   const t0 = e.age, t1 = Math.min(t0 + dt, p.life)
   const g = p.g ?? 0
@@ -252,7 +294,7 @@ function fly(w: W, e: Entry, p: Pattern, dt: number) {
     const m = (e.ride && ridden(w, e.ride)) ?? (body && middle(body))
     if (m) {
       const d = [m[0] - e.pos[0], m[1] - e.pos[1], m[2] - e.pos[2]]
-      if (Math.hypot(d[0], d[1], d[2]) > 1e-9) aim = turn(aim, unit(d), p.seek! * (t1 - t0))
+      if (math.hypot(d[0], d[1], d[2]) > 1e-9) aim = turn(aim, unit(d), p.seek! * (t1 - t0))
     }
     const s = along(p, t1) - along(p, t0), fall = (g * (t1 * t1 - t0 * t0)) / 2
     to = [e.pos[0] + aim[0] * s, e.pos[1] + aim[1] * s - fall, e.pos[2] + aim[2] * s]
@@ -264,9 +306,9 @@ function fly(w: W, e: Entry, p: Pattern, dt: number) {
   }
   e.age += dt
   const gap = [to[0] - e.pos[0], to[1] - e.pos[1], to[2] - e.pos[2]]
-  const length = Math.hypot(gap[0], gap[1], gap[2])
+  const length = math.hypot(gap[0], gap[1], gap[2])
   const shoot = mod<Shoot>(w.world, 'volley3d', 'shoot')
-  const met = shoot && length > 0 ? shoot(w, e.pos, gap, length, { skip: e.skip, grow: p.radius ?? 0 }) : undefined
+  const met = shoot && length > 0 ? shoot(w, e.pos, gap, length, { skip: e.skip, grow: p.radius ?? 0, hurt: e.hurt }) : undefined
   if (!met) {
     e.pos = to
     e.vel = vel
@@ -277,13 +319,19 @@ function fly(w: W, e: Entry, p: Pattern, dt: number) {
   e.pos = met.point.slice()
   e.vel = guided(p, e) ? vel : velocity(p, e.dir, age)
   e.hit = { point: met.point.slice(), what: met.what, id, age }
-  if (!holds(w, e.from)) return
-  w.call(w.get(e.from), 'landed', -1, e.id, met.what, id, id === null ? null : (met.part ?? null), 0)
   if (!p.splash) return
+  const { damage } = e.hurt
+  if (typeof damage !== 'number') throw new Error(`volley3d pattern ${e.pattern} splashes, and its round's hurt gives damage by part`)
   for (const b of mod<Bodies>(w.world, 'volley3d', 'bodies')?.(w) ?? []) {
-    if (b.id === id) continue
+    if (b.id === id || !holds(w, b.id)) continue
     const k = far(b, met.point)
-    if (k < p.splash && holds(w, e.from)) w.call(w.get(e.from), 'landed', -1, e.id, 'splash', b.id, null, k)
+    if (k >= p.splash) continue
+    const m = middle(b), to = [m[0] - met.point[0], m[1] - met.point[1], m[2] - met.point[2]]
+    const l = math.hypot(to[0], to[1], to[2])
+    const dir = l > 1e-9 ? [to[0] / l, to[1] / l, to[2] / l] : [0, 1, 0]
+    // A `Struck` is no message, and no seat sends one: an act a seat asks for is handed plain values.
+    const struck = { ...e.hurt, damage: damage * (1 - k / p.splash), part: null, point: met.point.slice(), dir, what: 'splash' }
+    w.call(w.get(b.id), 'hit', -1, struck as unknown as Arg)
   }
 }
 
@@ -300,7 +348,7 @@ export const volley3d: Kind = {
     for (const k of Object.keys(d)) if (!ROW.includes(k)) throw new Error(`the volley3d prefab has ${k}, which volley3d does not know`)
     const { hold } = numbersOf(w)
     const file = fileOf(w)
-    // What a `landed` act fires meanwhile is put on the same list, and goes on from the next step.
+    // What a `hit` act fires meanwhile is put on the same list, and goes on from the next step.
     const was = d.live as Entry[], count = was.length
     const kept: Entry[] = []
     for (const e of was.slice(0, count)) {
@@ -320,11 +368,11 @@ export function intercept(w: W, id: number): boolean {
   return true
 }
 
-export function fire(w: W, pattern: string, at: number[], dir: number[], by: { from: number; n: number; skip: number[]; target?: number; ride?: Ride }): Entry {
+export function fire(w: W, pattern: string, at: number[], dir: number[], by: { from: number; n: number; skip: number[]; target?: number; ride?: Ride; hurt: Hurt }): Entry {
   const ledger = ledgerOf(w)
   const p = patternOf(fileOf(w), pattern)
   const entry: Entry = {
-    id: ledger.next++, pattern, at: [...at], dir: [...dir], age: 0, from: by.from, n: by.n, skip: [...by.skip],
+    id: ledger.next++, pattern, at: [...at], dir: [...dir], age: 0, from: by.from, n: by.n, skip: [...by.skip], hurt: structuredClone(by.hurt),
     pos: [...at], vel: velocity(p, dir, 0),
   }
   if (by.target !== undefined) entry.target = by.target

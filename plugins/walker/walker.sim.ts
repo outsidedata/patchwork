@@ -7,6 +7,9 @@
 //   radius     metres: the body's circle against solids.
 //   height     metres: the body's height, for whatever stands on it.
 //   accel      1/s: `vel` eases toward `want` by 1 − exp(−accel·dt) a step.
+//   airAccel   1/s: the same rate for a body in the air, off the ground and not sliding: 0 keeps the
+//              horizontal speed it left the ground with, a fling or a leap carried all the way; small
+//              lets the keys steer it a little. `accel` when absent.
 //   turnRate   1/s: `yaw` eases toward its aim by 1 − exp(−turnRate·dt) a step.
 //   turnMax    rad/s: the fastest `yaw` turns, so a heavy body swings round at a steady rate and eases
 //              in only at the end; no limit when absent.
@@ -26,11 +29,13 @@
 //   bodies     the kinds of the table whose bodies are solid to this kind's, or none when absent: each
 //              row of one, but the body itself and one `limp` (ragdoll3d's, lying), is a solid circle
 //              of its kind's `radius` at its `pos`, asked with the ground's (below).
-// `walk`, `slide`, `carry` and `seek` look up `w.world.walker.kinds[me.kind]`, and a kind the table
+// `walk`, `slide`, `carry` and `seek` look up `w.world.walker.kinds[me.kind]` (the kind a row's `as`
+// names, when it names one: a seat's `player` row that is an `xbot` walks as one), and a kind the table
 // does not name throws naming it. The table is checked by whichever of those four is asked first
 // whenever its content changes, compared as text since the editor edits the scene in place. `check` throws a sentence naming the kind for
 // a number that is not finite or out of range (jumpH and wade may be 0, the rest must be above it),
-// for `bodies` that is not a list of the table's kinds, and unless maxSlope·span·√2 < step: a span
+// for `bodies` that is not a list of the table's kinds (or `player`, whose rows walk by their `as`),
+// and unless maxSlope·span·√2 < step: a span
 // square's corners on a grade g spread by up to g·span·√2 and the centre lies between them, so every
 // grade up to maxSlope keeps all five feet within step.
 //
@@ -52,6 +57,20 @@
 // that reach within r of the kinds the body's `bodies` names, read off the rows the rule's `w` holds,
 // so a body is slid round, stopped at and sought round as a trunk is.
 //
+// One read a call. `walk`, `slide`, `carry`, `seek` and `stand` each read the ground once for the body
+// they move. A ground with a `cell` (metres; `world.walker.mods.cell`, terrain3d's the cell of its
+// finest ring) is stood on as the triangles of that lattice: each corner, a whole number of cells on
+// each axis, is asked of `height` (and `depth`) once in the call, and every cell is split from its
+// low corner to its high one, as terrain3d draws it, so a body stands on the ground that is drawn
+// and every foot, gradient and probe of the call is worked out from those corners. The cell is never
+// chosen for walker: it is the ground the game draws, so a game that draws its ground finer has its
+// bodies stand on that finer ground with nothing else changed: a body that stands wrong is fixed by
+// drawing the ground finer, never in walker. A ground with no
+// `cell` is asked at each point. The solids are asked once, round the body out to the farthest the
+// call can reach (the move, or the way to a `seek`'s target) and two radii past it, and every
+// question inside that disc is answered from that list; one reaching outside it is asked of the
+// ground.
+//
 // The footprint. The feet are the four corners of a `span` square, square to the world's axes, and
 // its centre. S(x, z), the stand height, is the mean height of the feet within `step` of the highest
 // foot: on noise, or any grade up to maxSlope, the plain mean of all five; across a ledge, the feet
@@ -70,7 +89,8 @@
 //
 // `walk(me, w, dt, ground)`, one step:
 //   1. On steep ground, `want` is taken as above. `vel`'s horizontal part eases toward it, as a
-//      vector, by 1 − exp(−accel·dt). `yaw` eases the short way round toward `face`, or toward
+//      vector, by 1 − exp(−accel·dt), or by 1 − exp(−airAccel·dt) for a body in the air (on the
+//      ground or sliding as step 4 has it at the step's start). `yaw` eases the short way round toward `face`, or toward
 //      `want`'s bearing when `face` is null and `want` is not zero, by 1 − exp(−turnRate·dt), at most
 //      turnMax·dt, and is kept in (−π, π]. Bearings are the camera law's: yaw θ faces (sin θ, cos θ).
 //   2. `jump`, grounded, sets vy = √(2·gravity·jumpH) and leaves the ground; `jump` is cleared
@@ -184,12 +204,14 @@
 // (span/8) aside, 12 halvings (FRACTION) of a round's move, at most 6 ROUNDS of `slide`, and the
 // position's own rounding, two parts in 2⁵², that `walk` reads a move made as the move asked within.
 import type { Row, W } from '#engine/engine.ts'
+import * as math from '#plugins/math/math.sim.ts'
 import { mod } from '#addons/scenemanager/scenemanager.addon.ts'
 
 export type Numbers = {
   radius: number; height: number; accel: number; turnRate: number; gravity: number; jumpH: number
   step: number; maxSlope: number; slopeBand: number; slide: number; wade: number; span: number; probe: number; seekSpeed: number
   turnMax?: number
+  airAccel?: number
   bodies?: string[]
 }
 export type Solid = { x: number; z: number; radius: number }
@@ -197,18 +219,73 @@ export type Ground = {
   height(x: number, z: number): number
   depth?(x: number, z: number): number
   solids(x: number, z: number, r: number): Solid[]
+  cell?: number
 }
 export function groundOf(w: W): Ground {
   const height = mod<(w: W, x: number, z: number) => number>(w.world, 'walker', 'height')
   if (!height) throw new Error('walker is asked for the ground its mods make, and the scene names no world.walker.mods.height')
   const depth = mod<(w: W, x: number, z: number) => number>(w.world, 'walker', 'depth')
   const solids = mod<(w: W, x: number, z: number, r: number) => Solid[]>(w.world, 'walker', 'solids')
+  const drawn = mod<(w: W) => number>(w.world, 'walker', 'cell')
+  const cell = drawn?.(w)
   return {
     height: (x, z) => height(w, x, z),
     ...(depth && { depth: (x: number, z: number) => depth(w, x, z) }),
     solids: (x, z, r) => (solids ? solids(w, x, z, r) : []),
+    ...(cell !== undefined && { cell }),
   }
 }
+
+// ---------------------------------------------------------------- one body's read of the ground
+
+// The ground as one body reads it in one call: on a ground with a `cell`, its height and depth are
+// the triangles of the lattice of that cell, each corner asked of the ground once in the call, every
+// cell split from its (i, j) corner to its (i + 1, j + 1) one, as terrain3d draws its finest ring; and
+// its solids are asked once, round (x, z) out to `reach`, and every question inside that disc is
+// answered from that list. A question that reaches outside it is asked of the ground.
+const READ = Symbol('read')
+type Read = Ground & { [READ]: true }
+
+function lattice(f: (x: number, z: number) => number, c: number) {
+  const corners = new Map<number, number>()
+  const at = (i: number, j: number) => {
+    const key = (i + 1048576) * 2097152 + (j + 1048576)
+    let h = corners.get(key)
+    if (h === undefined) corners.set(key, (h = f(i * c, j * c)))
+    return h
+  }
+  return (x: number, z: number) => {
+    const gx = x / c, gz = z / c
+    const i = Math.floor(gx), j = Math.floor(gz)
+    const fx = gx - i, fz = gz - j
+    const a = at(i, j), d = at(i + 1, j + 1)
+    if (fx >= fz) {
+      const b = at(i + 1, j)
+      return a + (b - a) * fx + (d - b) * fz
+    }
+    const e = at(i, j + 1)
+    return a + (e - a) * fz + (d - e) * fx
+  }
+}
+
+function read(ground: Ground, x: number, z: number, reach: number): Read {
+  if ((ground as Read)[READ]) return ground as Read
+  const near = (list: Solid[], qx: number, qz: number, r: number) => list.filter(s => math.hypot(s.x - qx, s.z - qz) <= r + s.radius)
+  const held = reach > 0 ? ground.solids(x, z, reach) : undefined
+  const c = ground.cell
+  return {
+    [READ]: true,
+    height: c ? lattice(ground.height, c) : ground.height,
+    ...(ground.depth && { depth: c ? lattice(ground.depth, c) : ground.depth }),
+    solids: (qx, qz, r) => (held && math.hypot(qx - x, qz - z) + r <= reach ? near(held, qx, qz, r) : ground.solids(qx, qz, r)),
+    ...(c && { cell: c }),
+  }
+}
+
+// One call's ground for `me`: the bodies solid to it beside the ground's solids, read round where it
+// stands out to `reach` past its own radius.
+const ready = (me: Row, w: W, k: Numbers, on: Ground, reach: number) =>
+  read(bodied(me, w, k, on), me.data.pos[0], me.data.pos[2], reach + 2 * k.radius)
 
 export type Body = {
   pos: number[]; yaw: number; vel: number[]; grounded: boolean; speed: number
@@ -224,7 +301,7 @@ const EDGE = 8
 const ROUNDS = 6
 
 // Which numbers may be 0; every other must be above it.
-const FIELDS: Record<Exclude<keyof Numbers, 'bodies' | 'turnMax'>, 'zero' | 'above'> = {
+const FIELDS: Record<Exclude<keyof Numbers, 'bodies' | 'turnMax' | 'airAccel'>, 'zero' | 'above'> = {
   radius: 'above', height: 'above', accel: 'above', turnRate: 'above', gravity: 'above', jumpH: 'zero',
   step: 'above', maxSlope: 'above', slopeBand: 'above', slide: 'above', wade: 'zero', span: 'above', probe: 'above', seekSpeed: 'above',
 }
@@ -241,7 +318,11 @@ export function check(kinds: Record<string, Numbers>) {
     if (k.turnMax !== undefined && !(Number.isFinite(k.turnMax) && k.turnMax > 0)) {
       throw new Error(`walker kind ${name}: turnMax ${k.turnMax} is not a number above 0`)
     }
-    if (k.bodies !== undefined && !(Array.isArray(k.bodies) && k.bodies.every(b => typeof b === 'string' && Object.hasOwn(kinds, b)))) {
+    if (k.airAccel !== undefined && !(Number.isFinite(k.airAccel) && k.airAccel >= 0)) {
+      throw new Error(`walker kind ${name}: airAccel ${k.airAccel} is not a number at or above 0`)
+    }
+    // `player`, a seat's row, walks as the kind its `as` names, so it may stand among the bodies too.
+    if (k.bodies !== undefined && !(Array.isArray(k.bodies) && k.bodies.every(b => typeof b === 'string' && (Object.hasOwn(kinds, b) || b === 'player')))) {
       throw new Error(`walker kind ${name}: bodies ${JSON.stringify(k.bodies)} is not a list of the table's kinds`)
     }
     if (!(k.slopeBand < k.maxSlope)) throw new Error(`walker kind ${name}: slopeBand ${k.slopeBand} is not under maxSlope ${k.maxSlope}`)
@@ -252,21 +333,25 @@ export function check(kinds: Record<string, Numbers>) {
   }
 }
 
-// The scene's table, `world.walker.kinds`, checked whenever its content changes.
-const checked = new WeakMap<object, string>()
+// The scene's table, `world.walker.kinds`, checked the first time it is read.
+const checked = new WeakSet<object>()
 function table(w: W): Record<string, Numbers> {
   const kinds = w.world.walker.kinds as Record<string, Numbers>
-  const text = JSON.stringify(kinds)
-  if (checked.get(kinds) !== text) {
+  if (!checked.has(kinds)) {
     check(kinds)
-    checked.set(kinds, text)
+    checked.add(kinds)
   }
   return kinds
 }
 
+// The kind whose entry a row walks by: the kind its `as` names, or its own. A seat's `player` row
+// that is one of several bodies, an `xbot` or a `ybot`, names it in `as`.
+export const kindOf = (me: Row): string => (typeof me.data.as === 'string' ? me.data.as : me.kind)
+
 export function numbers(me: Row, w: W): Numbers {
-  const k = table(w)[me.kind]
-  if (!k) throw new Error(`walker kinds has no kind ${me.kind}`)
+  const kind = kindOf(me)
+  const k = table(w)[kind]
+  if (!k) throw new Error(`walker kinds has no kind ${kind}`)
   return k
 }
 
@@ -275,10 +360,12 @@ export function numbers(me: Row, w: W): Numbers {
 function bodied(me: Row, w: W, k: Numbers, ground: Ground): Ground {
   if (!k.bodies?.length) return ground
   const kinds = w.world.walker.kinds as Record<string, Numbers>
-  const bodies = k.bodies.flatMap(kind => w.all(kind).filter(o => o.id !== me.id && !o.data.limp).map(o => ({ x: o.data.pos[0], z: o.data.pos[2], radius: kinds[kind].radius })))
+  // A row walks among the bodies by its own entry, or the entry of the kind its `as` names; a `player`
+  // row with neither (a seat that plays no body) is none.
+  const bodies = k.bodies.flatMap(kind => w.all(kind).filter(o => o.id !== me.id && !o.data.limp && kinds[kindOf(o)]).map(o => ({ x: o.data.pos[0], z: o.data.pos[2], radius: kinds[kindOf(o)].radius })))
   return {
     ...ground,
-    solids: (x, z, r) => [...ground.solids(x, z, r), ...bodies.filter(s => Math.hypot(s.x - x, s.z - z) <= r + s.radius)],
+    solids: (x, z, r) => [...ground.solids(x, z, r), ...bodies.filter(s => math.hypot(s.x - x, s.z - z) <= r + s.radius)],
   }
 }
 
@@ -290,8 +377,10 @@ const feet = (k: Numbers) => {
   return [[-o, -o], [o, -o], [-o, o], [o, o], [0, 0]]
 }
 
-// S: the mean height of the feet within step of the highest.
-export function stand(k: Numbers, ground: Ground, x: number, z: number): number {
+// S: the mean height of the feet within step of the highest, on the ground as a body reads it.
+export const stand = (k: Numbers, ground: Ground, x: number, z: number): number => standOn(k, read(ground, x, z, 0), x, z)
+
+function standOn(k: Numbers, ground: Ground, x: number, z: number): number {
   const hs = feet(k).map(([ox, oz]) => ground.height(x + ox, z + oz))
   const top = Math.max(...hs)
   let sum = 0, n = 0
@@ -317,7 +406,7 @@ function gradient(f: (x: number, z: number) => number, x: number, z: number, wid
 function normal(f: (x: number, z: number) => number, x: number, z: number, span: number): number[] | undefined {
   for (const width of [span / FINE, span]) {
     const [gx, gz] = gradient(f, x, z, width)
-    const m = Math.hypot(gx, gz)
+    const m = math.hypot(gx, gz)
     if (m > TOLERANCE) return [gx / m, gz / m]
   }
   return undefined
@@ -341,7 +430,7 @@ function wading(k: Numbers, ground: Ground, p: number[], q: number[]): Refusal {
 // line through the two crossings is the edge's tangent, and the normal is square to it.
 function stepping(k: Numbers, ground: Ground, p: number[], y: number, q: number[]): Refusal {
   const d = [q[0] - p[0], q[1] - p[1]]
-  const len = Math.hypot(d[0], d[1])
+  const len = math.hypot(d[0], d[1])
   for (const [ox, oz] of feet(k)) {
     const from = Math.max(ground.height(p[0] + ox, p[1] + oz), y)
     const over = (x: number, z: number) => ground.height(x, z) - from > k.step + TOLERANCE
@@ -366,7 +455,7 @@ function stepping(k: Numbers, ground: Ground, p: number[], y: number, q: number[
       const other = !over(s0[0], s0[1]) ? (over(s1[0], s1[1]) ? cross(s0, s1) : undefined) : cross(start, s0)
       if (!other) continue
       const tx = other[0] - c[0], tz = other[1] - c[1]
-      const m = Math.hypot(tx, tz)
+      const m = math.hypot(tx, tz)
       if (!(m > TOLERANCE)) continue
       const n = [tz / m, -tx / m]
       const toward = n[0] * d[0] + n[1] * d[1] >= 0 ? 1 : -1
@@ -382,9 +471,9 @@ function stepping(k: Numbers, ground: Ground, p: number[], y: number, q: number[
 // g out to probe, less `from`, is over step. R is over step as soon as one sample is, so the samples
 // stop there.
 function climb(k: Numbers, ground: Ground, q: number[], from: number): number[] | undefined {
-  const S = (x: number, z: number) => stand(k, ground, x, z)
+  const S = (x: number, z: number) => standOn(k, ground, x, z)
   const [gx, gz] = gradient(S, q[0], q[1], k.span)
-  const m = Math.hypot(gx, gz)
+  const m = math.hypot(gx, gz)
   if (!(m > k.maxSlope)) return undefined
   const ux = gx / m, uz = gz / m, apart = k.span / SAMPLES
   for (let i = 0; i * apart <= k.probe + TOLERANCE; i++) {
@@ -394,7 +483,7 @@ function climb(k: Numbers, ground: Ground, q: number[], from: number): number[] 
 }
 
 function sloping(k: Numbers, ground: Ground, p: number[], y: number, q: number[]): Refusal {
-  const S = (x: number, z: number) => stand(k, ground, x, z)
+  const S = (x: number, z: number) => standOn(k, ground, x, z)
   const sp = S(p[0], p[1])
   if (!(S(q[0], q[1]) > Math.max(sp, y) + TOLERANCE)) return undefined
   // Steep ground is not ground: a rise onto it is refused across its own gradient.
@@ -415,10 +504,10 @@ function push(k: Numbers, ground: Ground, q: number[], from: number[]): number[]
   for (const s of ground.solids(x, z, k.radius)) {
     const reach = s.radius + k.radius
     let dx = x - s.x, dz = z - s.z
-    let d = Math.hypot(dx, dz)
+    let d = math.hypot(dx, dz)
     if (d >= reach) continue
     // A point on the centre is pushed back the way it came.
-    if (d === 0) { dx = from[0] - q[0]; dz = from[1] - q[1]; d = Math.hypot(dx, dz) }
+    if (d === 0) { dx = from[0] - q[0]; dz = from[1] - q[1]; d = math.hypot(dx, dz) }
     if (d === 0) { dx = 1; dz = 0; d = 1 }
     x = s.x + (dx / d) * reach
     z = s.z + (dz / d) * reach
@@ -427,11 +516,14 @@ function push(k: Numbers, ground: Ground, q: number[], from: number[]): number[]
 }
 
 const clear = (k: Numbers, ground: Ground, q: number[]) =>
-  ground.solids(q[0], q[1], k.radius).every(s => Math.hypot(q[0] - s.x, q[1] - s.z) >= s.radius + k.radius - TOLERANCE)
+  ground.solids(q[0], q[1], k.radius).every(s => math.hypot(q[0] - s.x, q[1] - s.z) >= s.radius + k.radius - TOLERANCE)
 
 export function slide(me: Row, w: W, delta: number[], on: Ground): number[] {
   const k = numbers(me, w)
-  const ground = bodied(me, w, k, on)
+  return slideOn(me, k, ready(me, w, k, on, math.hypot(delta[0], delta[1])), delta)
+}
+
+function slideOn(me: Row, k: Numbers, ground: Read, delta: number[]): number[] {
   const b = me.data as Body
   const [px, y, pz] = b.pos
   const p = [px, pz]
@@ -441,7 +533,7 @@ export function slide(me: Row, w: W, delta: number[], on: Ground): number[] {
   }
   let d = [delta[0], delta[1]]
   for (let round = 0; round < ROUNDS; round++) {
-    if (Math.hypot(d[0], d[1]) <= TOLERANCE) break
+    if (math.hypot(d[0], d[1]) <= TOLERANCE) break
     const q = push(k, ground, [px + d[0], pz + d[1]], p)
     d = [q[0] - px, q[1] - pz]
     const refused = limits(k, ground, p, y, q)
@@ -452,7 +544,7 @@ export function slide(me: Row, w: W, delta: number[], on: Ground): number[] {
     const { n } = refused
     const along = n ? d[0] * n[0] + d[1] * n[1] : 0
     const next = n && along > 0 ? [d[0] - along * n[0], d[1] - along * n[1]] : undefined
-    const stalled = !next || round === ROUNDS - 1 || Math.hypot(next[0], next[1]) >= Math.hypot(d[0], d[1]) * (1 - TOLERANCE)
+    const stalled = !next || round === ROUNDS - 1 || math.hypot(next[0], next[1]) >= math.hypot(d[0], d[1]) * (1 - TOLERANCE)
     if (!stalled) {
       d = next
       continue
@@ -463,7 +555,7 @@ export function slide(me: Row, w: W, delta: number[], on: Ground): number[] {
     // deeper). It is moved down that field's own gradient by its excess over the gradient's square,
     // and judged again the next round.
     if (refused.by !== 'step' && round < ROUNDS - 1) {
-      const S = (x: number, z: number) => stand(k, ground, x, z)
+      const S = (x: number, z: number) => standOn(k, ground, x, z)
       const D = (x: number, z: number) => depthOf(k, ground, x, z)
       const [f, level] = refused.by === 'slope' ? [S, Math.max(S(px, pz), y)] : [D, Math.max(k.wade, D(px, pz))]
       const [gx, gz] = gradient(f, q[0], q[1], k.span / FINE)
@@ -484,7 +576,7 @@ export function slide(me: Row, w: W, delta: number[], on: Ground): number[] {
       if (!limits(k, ground, p, y, c) && clear(k, ground, c)) lo = t
       else hi = t
     }
-    if (lo * Math.hypot(d[0], d[1]) <= TOLERANCE) break
+    if (lo * math.hypot(d[0], d[1]) <= TOLERANCE) break
     return take(push(k, ground, [px + d[0] * lo, pz + d[1] * lo], p))
   }
   return [0, 0]
@@ -504,21 +596,22 @@ function meets(k: Numbers, p: number[], d: number[], s: Solid): number {
   return Math.min(1, (-b - Math.sqrt(disc)) / a)
 }
 
-export function carry(me: Row, w: W, delta: number[], on: Ground): number[] {
+export function carry(me: Row, w: W, delta: number[], at: Ground): number[] {
   const k = numbers(me, w)
   const b = me.data as Body
   const [px, y, pz] = b.pos
   // Every solid within the body's radius of the move: those reaching within half its length and the
   // radius of its middle.
-  const half = Math.hypot(delta[0], delta[1]) / 2
+  const half = math.hypot(delta[0], delta[1]) / 2
+  const on = ready(me, w, k, at, 2 * half)
   let t = 1
-  for (const s of bodied(me, w, k, on).solids(px + delta[0] / 2, pz + delta[1] / 2, half + k.radius)) t = Math.min(t, meets(k, [px, pz], delta, s))
-  const made = slide(me, w, [delta[0] * t, delta[1] * t], on)
+  for (const s of on.solids(px + delta[0] / 2, pz + delta[1] / 2, half + k.radius)) t = Math.min(t, meets(k, [px, pz], delta, s))
+  const made = slideOn(me, k, on, [delta[0] * t, delta[1] * t])
   // The body stands on S where the move rose to it, or, on the ground, dropped to it by up to step onto
   // ground that is not steep; a body in the air lands there, with vy 0. Anywhere else it is in the air
   // at its height.
   const [x, , z] = b.pos
-  const S = stand(k, on, x, z)
+  const S = standOn(k, on, x, z)
   if (S >= y || ((b.grounded || b.sliding) && y - S <= k.step + TOLERANCE && !steep(k, on, x, z))) {
     if (!b.grounded && !b.sliding) b.vel = [b.vel[0], 0, b.vel[2]]
     b.pos = [x, S, z]
@@ -541,20 +634,23 @@ const wrap = (a: number) => a - 2 * Math.PI * Math.ceil((a - Math.PI) / (2 * Mat
 // beside the body and not a grade under it.
 function steep(k: Numbers, ground: Ground, x: number, z: number, limit = k.maxSlope): number[] | undefined {
   const h = k.span / FINE
-  const s0 = stand(k, ground, x, z)
+  const s0 = standOn(k, ground, x, z)
   const least = (a: number, b: number) => (a * b <= 0 ? 0 : Math.abs(a) < Math.abs(b) ? a : b)
-  const gx = least(stand(k, ground, x + h, z) - s0, s0 - stand(k, ground, x - h, z)) / h
-  const gz = least(stand(k, ground, x, z + h) - s0, s0 - stand(k, ground, x, z - h)) / h
-  const m = Math.hypot(gx, gz)
+  const gx = least(standOn(k, ground, x + h, z) - s0, s0 - standOn(k, ground, x - h, z)) / h
+  const gz = least(standOn(k, ground, x, z + h) - s0, s0 - standOn(k, ground, x, z - h)) / h
+  const m = math.hypot(gx, gz)
   return m > limit ? [gx / m, gz / m] : undefined
 }
 
-export function walk(me: Row, w: W, dt: number, ground: Ground) {
+export function walk(me: Row, w: W, dt: number, at: Ground) {
   const k = numbers(me, w)
   const b = me.data as Body
   const [px, py, pz] = b.pos
+  // The farthest this step can move it: its speed eases between `vel` and `want`, steep ground's slide
+  // added to it.
+  const ground = ready(me, w, k, at, (math.hypot(b.vel[0], b.vel[2]) + math.hypot(b.want[0], b.want[1]) + k.slide) * dt)
   // On the ground: grounded, or on steep ground within the fall of one step of it, sliding.
-  const on = b.grounded || py <= stand(k, ground, px, pz) + k.gravity * dt * dt
+  const on = b.grounded || py <= standOn(k, ground, px, pz) + k.gravity * dt * dt
   // A slide starts past maxSlope and ends only below maxSlope − slopeBand.
   const up = on ? steep(k, ground, px, pz, b.sliding ? k.maxSlope - k.slopeBand : k.maxSlope) : undefined
   let want = b.want
@@ -563,13 +659,13 @@ export function walk(me: Row, w: W, dt: number, ground: Ground) {
     const slid = Math.min(along, -k.slide)
     want = [want[0] + (slid - along) * up[0], want[1] + (slid - along) * up[1]]
   }
-  const ease = 1 - Math.exp(-k.accel * dt)
+  const ease = 1 - math.exp(-(on ? k.accel : (k.airAccel ?? k.accel)) * dt)
   const vx = b.vel[0] + (want[0] - b.vel[0]) * ease
   const vz = b.vel[2] + (want[1] - b.vel[2]) * ease
-  const aim = b.face ?? (Math.hypot(b.want[0], b.want[1]) > TOLERANCE ? Math.atan2(b.want[0], b.want[1]) : null)
+  const aim = b.face ?? (math.hypot(b.want[0], b.want[1]) > TOLERANCE ? math.atan2(b.want[0], b.want[1]) : null)
   if (aim !== null) {
     const most = (k.turnMax ?? Infinity) * dt
-    b.yaw = wrap(b.yaw + Math.max(-most, Math.min(most, wrap(aim - b.yaw) * (1 - Math.exp(-k.turnRate * dt)))))
+    b.yaw = wrap(b.yaw + Math.max(-most, Math.min(most, wrap(aim - b.yaw) * (1 - math.exp(-k.turnRate * dt)))))
   }
 
   let vy = b.vel[1]
@@ -581,9 +677,9 @@ export function walk(me: Row, w: W, dt: number, ground: Ground) {
   b.jump = false
 
   const asked = [vx * dt, vz * dt]
-  const made = slide(me, w, asked, ground)
+  const made = slideOn(me, k, ground, asked)
   const [x, y, z] = b.pos
-  const S = stand(k, ground, x, z)
+  const S = standOn(k, ground, x, z)
   let ny: number
   // A grounded drop the fall would reach is the landing below, taken within the step.
   if (following && S >= y) {
@@ -607,14 +703,14 @@ export function walk(me: Row, w: W, dt: number, ground: Ground) {
   const back = (m: number, ask: number, v: number, from: number, to: number) =>
     Math.abs(m - ask) <= 2 * Number.EPSILON * Math.max(Math.abs(from), Math.abs(to)) ? v : m / dt
   b.vel = [back(made[0], asked[0], vx, px, x), vy, back(made[1], asked[1], vz, pz, z)]
-  b.speed = Math.hypot(b.vel[0], b.vel[2])
+  b.speed = math.hypot(b.vel[0], b.vel[2])
 }
 
 export function relative(stick: number[], yaw: number): number[] {
-  const s = Math.sin(yaw), c = Math.cos(yaw)
+  const s = math.sin(yaw), c = math.cos(yaw)
   const x = stick[1] * s - stick[0] * c
   const z = stick[1] * c + stick[0] * s
-  const m = Math.hypot(x, z)
+  const m = math.hypot(x, z)
   return m > 1 ? [x / m, z / m] : [x, z]
 }
 
@@ -624,24 +720,25 @@ type Grown = { x: number; z: number; r: number; d: number }
 
 export function seek(me: Row, w: W, target: number[], stop: number, on: Ground): boolean {
   const k = numbers(me, w)
-  const ground = bodied(me, w, k, on)
   const b = me.data as Body
   const [px, , pz] = b.pos
   const tx = target[0] - px, tz = target[1] - pz
-  const far = Math.hypot(tx, tz)
+  const far = math.hypot(tx, tz)
   if (far <= stop) {
     b.want = [0, 0]
     b.side = 0
     b.turned = 0
     return true
   }
-  const toward = Math.atan2(tx, tz)
-  const heading = (a: number) => [k.seekSpeed * Math.sin(a), k.seekSpeed * Math.cos(a)]
+  // Read out past target, so the corridor and the groups round it are answered from one list.
+  const ground = ready(me, w, k, on, far + k.radius)
+  const toward = math.atan2(tx, tz)
+  const heading = (a: number) => [k.seekSpeed * math.sin(a), k.seekSpeed * math.cos(a)]
   const ux = tx / far, uz = tz / far
   // A solid's circle grown by the body's radius, about the body.
   const grow = (s: Solid): Grown => {
     const x = s.x - px, z = s.z - pz
-    return { x, z, r: s.radius + k.radius, d: Math.hypot(x, z) }
+    return { x, z, r: s.radius + k.radius, d: math.hypot(x, z) }
   }
   const key = (c: Grown) => `${c.x} ${c.z} ${c.r}`
 
@@ -662,7 +759,7 @@ export function seek(me: Row, w: W, target: number[], stop: number, on: Ground):
     const ahead = c.x * ux + c.z * uz
     if (!(ahead > 0)) continue
     const t = Math.min(ahead, far)
-    if (!(Math.hypot(c.x - ux * t, c.z - uz * t) < c.r - TOLERANCE)) continue
+    if (!(math.hypot(c.x - ux * t, c.z - uz * t) < c.r - TOLERANCE)) continue
     const enters = ahead - Math.sqrt(Math.max(0, c.r * c.r - (c.d * c.d - ahead * ahead)))
     if (enters < nearest) { nearest = enters; first = c }
   }
@@ -680,7 +777,7 @@ export function seek(me: Row, w: W, target: number[], stop: number, on: Ground):
     for (const c of added.values()) {
       into.set(key(c), c)
       for (const s of ground.solids(c.x + px, c.z + pz, c.r + k.radius).map(grow)) {
-        if (!into.has(key(s)) && !added.has(key(s)) && Math.hypot(s.x - c.x, s.z - c.z) < s.r + c.r) added.set(key(s), s)
+        if (!into.has(key(s)) && !added.has(key(s)) && math.hypot(s.x - c.x, s.z - c.z) < s.r + c.r) added.set(key(s), s)
       }
     }
   }
@@ -691,8 +788,8 @@ export function seek(me: Row, w: W, target: number[], stop: number, on: Ground):
   // interval and its turns either way; undefined when it closes round the body.
   const silhouette = () => {
     const spans = [...members.values()].flatMap(c => {
-      const at = wrap(Math.atan2(c.x, c.z) - toward)
-      const half = c.d > c.r ? Math.asin(c.r / c.d) : Math.PI / 2
+      const at = wrap(math.atan2(c.x, c.z) - toward)
+      const half = c.d > c.r ? math.asin(c.r / c.d) : Math.PI / 2
       return [-2 * Math.PI, 0, 2 * Math.PI].map(turn => ({ lo: at + turn - half, hi: at + turn + half, c }))
     })
     let lo = 0, hi = 0, grew = true
@@ -716,16 +813,16 @@ export function seek(me: Row, w: W, target: number[], stop: number, on: Ground):
       const sil = silhouette()
       if (!sil) return undefined
       const rel = side === 1 ? sil.hi : sil.lo, by = side === 1 ? sil.hiBy : sil.loBy
-      const a = toward + rel, ex = Math.sin(a), ez = Math.cos(a)
+      const a = toward + rel, ex = math.sin(a), ez = math.cos(a)
       const reach = Math.sqrt(Math.max(0, by.d * by.d - by.r * by.r))
       const blocking = ground.solids(px, pz, reach + k.radius).map(grow).find(c => {
         if (members.has(key(c))) return false
         const ahead = c.x * ex + c.z * ez
         if (!(ahead > 0)) return false
         const t = Math.min(ahead, reach)
-        return Math.hypot(c.x - ex * t, c.z - ez * t) < c.r - TOLERANCE
+        return math.hypot(c.x - ex * t, c.z - ez * t) < c.r - TOLERANCE
       })
-      if (!blocking) return { a, way: reach + Math.hypot(tx - reach * ex, tz - reach * ez) }
+      if (!blocking) return { a, way: reach + math.hypot(tx - reach * ex, tz - reach * ez) }
       flood(members, blocking)
     }
   }
@@ -744,6 +841,6 @@ export function seek(me: Row, w: W, target: number[], stop: number, on: Ground):
   const taken = edge(b.side)
   const was = b.want
   b.want = heading(taken ? taken.a : toward)
-  if (Math.hypot(was[0], was[1]) > TOLERANCE) b.turned += wrap(Math.atan2(b.want[0], b.want[1]) - Math.atan2(was[0], was[1]))
+  if (math.hypot(was[0], was[1]) > TOLERANCE) b.turned += wrap(math.atan2(b.want[0], b.want[1]) - math.atan2(was[0], was[1]))
   return false
 }

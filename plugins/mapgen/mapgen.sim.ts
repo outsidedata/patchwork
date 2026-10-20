@@ -148,6 +148,8 @@
 // stairs, then the recipe's entries in order, each at its cell's centre, no two in one cell; and
 // `roles`, each cell's role, `roles[r][c]`.
 
+import * as math from '#plugins/math/math.sim.ts'
+
 type Die = () => number
 type Span = [number, number]
 type Side = 'n' | 'e' | 's' | 'w'
@@ -416,7 +418,7 @@ function carve(die: Die, m: G, a: number[], b: number[], width: number) {
 
 const inside = (die: Die, q: Rect) => [q.x + Math.floor(die() * q.w), q.y + Math.floor(die() * q.h)]
 const centre = (q: Rect) => [q.x + q.w / 2, q.y + q.h / 2]
-const apartSq = (a: Rect, b: Rect) => { const [p, q] = [centre(a), centre(b)]; return (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 }
+const apartSq = (a: Rect, b: Rect) => { const [p, q] = [centre(a), centre(b)]; return math.pow(p[0] - q[0], 2) + math.pow(p[1] - q[1], 2) }
 
 // Corridor cells on a room's ring become doors on a roll. A ring is rock until a corridor crosses it,
 // so every walkable cell on one is a corridor's.

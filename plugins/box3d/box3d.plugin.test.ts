@@ -13,6 +13,8 @@ import { boot, type Row, type Scene, type Truth } from '#engine/engine.ts'
 import { accept, link, load, manager, scene, view } from '#addons/scenemanager/scenemanager.addon.ts'
 import { loopback } from '#addons/loopback/loopback.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
+import type { Plugins } from '#engine/browser.ts'
+import { box3d } from './box3d.plugin.ts'
 
 const DT = 1 / 60
 
@@ -76,7 +78,8 @@ export const scene = file
 writeFileSync(join(dir, 'crate.client.ts'), `
 const crates = (globalThis.crates ??= new WeakMap())
 const mine = plugins => { let m = crates.get(plugins); if (!m) crates.set(plugins, m = new Map()); return m }
-const part = () => ({ at: null, fromArray(a) { this.at = [...a] } })
+// As three's: \`fromArray\` hands back the object, and a quaternion's \`normalize\` makes it a unit turn.
+const part = () => ({ at: null, fromArray(a) { this.at = [...a]; return this }, normalize() { const l = Math.hypot(...this.at); this.at = this.at.map(x => x / l); return this } })
 export function setup(row, plugins) {
   if (row.data.shy) return
   const o = { position: part(), quaternion: part(), let: false }
@@ -127,7 +130,9 @@ test('after every frame a followed object is where its row is, over whatever the
     const row = p.client!.rows.find(r => r.id === tipped.id) as Row
     const o = objects(p).get(tipped.id)!
     expect(o.position.at).toEqual(row.data.pos)
-    expect(o.quaternion.at).toEqual(row.data.rot)
+    // Box3D's turn is a unit turn only to its float32s, and is drawn made one exactly.
+    const l = Math.hypot(...row.data.rot)
+    expect(o.quaternion.at).toEqual(row.data.rot.map((x: number) => x / l))
     seen.push(row.data.pos, row.data.rot)
   }
   // It fell, and turned, so the object was moved with it and not left where it began.
@@ -170,7 +175,6 @@ test('each page\'s client has a table of its own: one page letting an object go 
   const a = page(), b = page()
   await run(truth, [a, b], 2)
   const [tipped] = rowsOf(a)
-  expect(objects(a)).not.toBe(objects(b))
   // A lets its object of the tipped crate go by hand, so what its actor scribbles stays; B's goes on
   // following, lifted with its row.
   a.client!.plugins.box3d.drop(tipped.id)
@@ -180,4 +184,19 @@ test('each page\'s client has a table of its own: one page letting an object go 
   const row = b.client!.rows.find(r => r.id === tipped.id)!
   expect(row.data.pos[1]).toBeGreaterThan(6)
   expect(objects(b).get(tipped.id)!.position.at).toEqual(row.data.pos)
+})
+
+// A page that runs ahead hands its view a turn blended number by number while it eases a jump
+// (`addons/predict`, Easing a jump), which is no unit turn: the object takes it made one again.
+test('a row\'s turn that is not a unit turn is drawn as the unit turn along it', () => {
+  const plugin = box3d()
+  const at: Record<string, number[]> = {}
+  const part = (name: string) => ({
+    fromArray(a: number[]) { at[name] = [...a]; return { normalize: () => { const l = Math.hypot(...at[name]); at[name] = at[name].map(x => x / l) } } },
+  })
+  plugin.follow(4, { position: part('pos'), quaternion: part('rot') })
+  plugin.afterTick({ wire: { rows: [{ id: 4, kind: 'crate', data: { pos: [1, 2, 3], rot: [0, 0.6, 0, 1.6] } }] } } as unknown as Plugins)
+  expect(at.pos).toEqual([1, 2, 3])
+  const l = Math.hypot(0.6, 1.6)
+  expect(at.rot).toEqual([0, 0.6 / l, 0, 1.6 / l])
 })

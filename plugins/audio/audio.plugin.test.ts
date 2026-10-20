@@ -234,6 +234,38 @@ test('every entry plays once, however many frames see it and however many steps 
   expect(heard(p.ctx)).toEqual(Array.from({ length: 12 }, (_, i) => ['thud', [i + 1, 0, 0]]))
 })
 
+test('a player row\'s own sounds play once each, from that row; a player row first seen plays none of what it holds; a ledger entry of the same id plays too', () => {
+  const scene: Scene = {
+    world: { audio: TABLE },
+    prefabs: {
+      audio: { step: 0, next: 1, live: [] },
+      bell: { queue: [], walk: false, pos: [0, 0, 0] },
+      player: { queue: [], walk: false, pos: [5, 0, 0] },
+    },
+    actors: [{ is: 'audio' }, { is: 'bell' }, { is: 'player' }],
+  }
+  const truth = boot(scene, { audio: ledger, bell, player: bell })
+  const [b, me] = [truth.rows.find(r => r.kind === 'bell')!, truth.rows.find(r => r.kind === 'player')!]
+  const p = page(truth)
+  p.frame()
+  me.data.queue.push(['thud', 'from', []])
+  b.data.queue.push(['thud', 'at', [1, 0, 0]])
+  truth.step(DT)
+  p.frame()
+  p.frame()
+  expect(me.data.voiced.map((e: { id: number }) => e.id)).toEqual([2])
+  // The bell's on the ledger and the player row's on its own row, each heard once, each where it was raised.
+  expect(heard(p.ctx).map(h => h[1]).sort()).toEqual([[1, 0, 0], [5, 0, 0]])
+  // A second player row the page sees for the first time, already holding a sound, plays none of it.
+  const late = truth.spawn('player', { pos: [9, 0, 0], voiced: [{ id: 99, cue: 'thud', at: [9, 0, 0], step: 1 }] })
+  p.frame()
+  expect(heard(p.ctx).length).toBe(2)
+  late.data.voiced.push({ id: 100, cue: 'thud', at: [9, 0, 0], step: 2 })
+  p.frame()
+  expect(heard(p.ctx).map(h => h[1])).toContainEqual([9, 0, 0])
+  expect(heard(p.ctx).length).toBe(3)
+})
+
 test('a page that arrives late hears nothing raised before its first snapshot', () => {
   const { ring, step, truth } = rig()
   ring(0, 'thud', 'at', [1, 0, 0])
@@ -559,6 +591,61 @@ test('a stream lets its blocks go while the context is locked, and where there i
   vi.stubGlobal('AudioContext', undefined)
   const none = page(truth)
   expect(() => none.me.stream({ rate: 1000, lead: 0.05, most: 0.2 }).push(new Float32Array(10))).not.toThrow()
+})
+
+test('a held sound repeats its buffer whole from now at its rate and gain, placed at its point through a panner of space\'s numbers with its range for max, through the volume', () => {
+  const { truth } = rig()
+  const p = page(truth)
+  const held = p.me.hold(p.plugins, { name: 'engine' } as any, { rate: 1.5, gain: 0.4, at: [3, 0, -2], range: 90 })!
+  const [s] = p.ctx.started
+  expect([s.name, s.loop, s.loopStart, s.loopEnd, s.playbackRate.value, s.started]).toEqual(['engine', true, 0, 0, 1.5, []])
+  expect(s.gain.gain.value).toBe(0.4)
+  expect(s.startedAt).toEqual([3, 0, -2])
+  const panner = s.panner!
+  expect([panner.distanceModel, panner.refDistance, panner.maxDistance, panner.rolloffFactor]).toEqual(['linear', 5, 90, 1])
+  expect(chain(s).slice(-2)).toEqual([p.ctx.master(), p.ctx.destination])
+  // set sends the rate and the gain toward new values over a time constant of one step; put moves it
+  p.ctx.currentTime = 7
+  held.set(2, 0.1)
+  expect(s.playbackRate.events).toEqual([['target', 2, 7, DT]])
+  expect(s.gain.gain.events).toEqual([['target', 0.1, 7, DT]])
+  held.put([10, 1, 1])
+  expect(panner.at()).toEqual([10, 1, 1])
+  // stop fades it out over the same time constant and stops it five of them later
+  p.ctx.currentTime = 8
+  held.stop()
+  expect(s.gain.gain.events.at(-1)).toEqual(['target', 0, 8, DT])
+  expect(s.stopped).toBe(8 + 5 * DT)
+})
+
+test('a sound played once plays its buffer a single time from now at its rate and gain, placed at its point through a panner of space\'s numbers with its range for max, through the volume', () => {
+  const { truth } = rig()
+  const p = page(truth)
+  p.me.once(p.plugins, { name: 'stomp' } as any, { rate: 0.9, gain: 0.6, at: [4, 0, 7], range: 120 })
+  const [s] = p.ctx.started
+  expect([s.name, s.loop, s.playbackRate.value, s.started]).toEqual(['stomp', false, 0.9, []])
+  expect(s.gain.gain.value).toBe(0.6)
+  expect(s.startedAt).toEqual([4, 0, 7])
+  const panner = s.panner!
+  expect([panner.distanceModel, panner.refDistance, panner.maxDistance, panner.rolloffFactor]).toEqual(['linear', 5, 120, 1])
+  expect(chain(s).slice(-2)).toEqual([p.ctx.master(), p.ctx.destination])
+  // with no point it plays unplaced, straight into the volume
+  p.me.once(p.plugins, { name: 'click' } as any, { rate: 1, gain: 0.3 })
+  expect(chain(p.ctx.started[1]).slice(1)).toEqual([p.ctx.started[1].gain, p.ctx.master(), p.ctx.destination])
+})
+
+test('a sound played once is let go while the context is locked, and where there is none', () => {
+  Ctx.state = 'suspended'
+  const { truth } = rig()
+  const p = page(truth)
+  p.me.once(p.plugins, { name: 'stomp' } as any, { rate: 1, gain: 1, at: [0, 0, 0] })
+  expect(p.ctx.started).toEqual([])
+  p.ctx.run()
+  p.me.once(p.plugins, { name: 'stomp' } as any, { rate: 1, gain: 1, at: [0, 0, 0] })
+  expect(p.ctx.started.map(s => s.name)).toEqual(['stomp'])
+  vi.stubGlobal('AudioContext', undefined)
+  const none = page(truth)
+  expect(() => none.me.once(none.plugins, { name: 'stomp' } as any, { rate: 1, gain: 1 })).not.toThrow()
 })
 
 test('where there is no Web Audio there is no context, and a page plays nothing and asks for nothing', () => {

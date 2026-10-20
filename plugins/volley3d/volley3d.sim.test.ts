@@ -73,7 +73,7 @@ const range = {
     terrain3d: { field: 'land' },
     walker: { kinds: { dummy: DUMMY } },
     hitscan3d: { mods: { ground: 'terrain3d', bodies: 'walker' }, kinds: { dummy: { parts: { legs: [0, 0.5], chest: [0.5, 1] } } }, rewind: 1 },
-    volley3d: { patterns: 'patterns', hold: HOLD, wait: 0.5, mods: { shoot: 'hitscan3d', bodies: 'hitscan3d' } },
+    volley3d: { patterns: 'patterns', hold: HOLD, mods: { shoot: 'hitscan3d', bodies: 'hitscan3d' } },
   },
   prefabs: {
     engine: { dt: DT }, scenemanager: { out: {} }, loader: {}, volley3d: { next: 1, live: [] },
@@ -462,7 +462,7 @@ test('a round from a row that has ended meets what it meets and tells nobody', a
 })
 
 test('a field of world.volley3d, of a pattern or of its look that volley3d does not know throws, naming it, and so does a pattern with no speed, life or look', async () => {
-  const own = { patterns: 'patterns', hold: 1, wait: 1 }
+  const own = { patterns: 'patterns', hold: 1 }
   expect(() => check({ patterns: { a: { speed: 1, life: 1, look: {}, sped: 2 } as never } }, own)).toThrow('volley3d pattern a has sped, which volley3d does not know')
   expect(() => check({ patterns: { b: { speed: 1, life: 1, look: { flash: 'x' } } as never } }, own)).toThrow('volley3d pattern b\'s look has flash, which volley3d does not know')
   for (const k of ['speed', 'life', 'look']) {

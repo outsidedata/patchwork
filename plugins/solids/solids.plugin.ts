@@ -57,9 +57,9 @@
 // it is a spot light pointed at `aim`, a point in the same frame, its cone `angle` radians from its
 // axis to its edge and `penumbra` the share of that softened. `shadow`, a whole number of pixels,
 // casts shadows through a map that many pixels across. `paint` names the paint the light is the glow
-// of: a plugin that lights and darkens a model's paints as it draws, interior3d's `lit`, lights and
-// darkens the light with it, and the light carries the name as `userData.paint`. `lights(THREE,
-// lights)` makes them, keyed by the node as `meshes` keys its meshes, each spot's aim a child of the
+// of: a plugin that lights and darkens a model's paints as it draws (a mech's headlamps, its cabin's
+// lights) lights and darkens the light with it, and the light carries the name as `userData.paint`.
+// `lights(THREE, lights)` makes them, keyed by the node as `meshes` keys its meshes, each spot's aim a child of the
 // node beside it so it moves with it, and `owned` what it made, for the caller to dispose. A drawn
 // row whose model hangs a light from a node it does not list throws naming the model and the node.
 import type { Plugins } from '#engine/browser.ts'

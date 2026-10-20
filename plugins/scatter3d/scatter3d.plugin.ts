@@ -17,7 +17,8 @@
 //   cutout    the alpha a BLEND material is cut at: every BLEND material of a model becomes an
 //             alpha-tested one at `cutout`, written to depth and sorted with the opaque; a MASK
 //             material keeps its own cutoff. Both are cards.
-//   budget    milliseconds a frame may spend placing and bedding cells new to reach (The field).
+//   budget    milliseconds a frame may spend placing and bedding cells new to reach (The field), and
+//             what is left of it on the place the land has prepared (Prepared places).
 //   coverage  a card's alpha gains this much per mip level its texture is read at: a becomes
 //             a·(1 + max(0, level)·coverage), level = ½·log2 of the larger squared screen derivative
 //             of its texel position. Without it an alpha-tested leaf falls under the cutoff a few mips
@@ -91,6 +92,31 @@
 // least one. Each frame, only the slots of a look written since the last and still drawn go to the GPU,
 // and they wait there until the renderer has sent them.
 //
+// Prepared places. The page's land may hold a place the camera is about to jump to, `prepared()` →
+// `[x, z]` or undefined (terrain3d's `prepare`). For each pack, every cell within its reach of that
+// place's cell is placed and bedded off the scene, nearest first, with what is left of `budget` once
+// the camera's cells have had their share. A cell the camera's field asks for that the place has
+// placed is taken from it, not queued. The frame the camera's cell is the place's cell, the camera has
+// arrived: what the place had not placed yet is placed in that frame, `budget` or no budget, so the
+// field there is never seen half placed. A new land or a stroke lays the place out again. `ready()` is
+// whether this field's share of the place is done: every pack built, and every cell in reach of the
+// place placed, in the place before arriving and in the field after; true with no place in hand. The
+// land asks it through `scatter3d.terrain3d.ts`, named in `world.terrain3d.mods.ready`.
+//
+// Workers. Where the page has `Worker` and the land lends its workers (`task` on the page's land,
+// terrain3d's), cells are placed and bedded off the page (`scatter3d.cells.ts`, the same arithmetic the
+// page runs, so an instance is the same to the bit): the field's cells nearest the camera first, and
+// the prepared place's nearest it first, BATCH a task, FLIGHT tasks of each in flight at once for each
+// pack, the next sent as each comes back. What comes back is held where the field still waits for it,
+// kept for the place, or, for a batch placed on a land that has since changed, queued again. `budget`
+// then bounds nothing of scatter3d's. The frame the camera arrives at the prepared place with the land
+// on the scene, every cell the field still waits for is placed on the page in that frame; while the
+// land is not on the scene, as during preloading, the page keeps running and the workers finish it.
+// Without them, every cell is placed on the page, a slice a frame.
+//
+// The looks go on render3d's scene only once the land says it is shown (`shown()` on the page's land,
+// true when the land has none), so trees and grass never stand on ground that is not drawn yet.
+//
 // Bedding. A cell's instance is its model at `size`, yawed, then tilted, and sunk:
 //   foot    the mean distance from the axis of LOD 0's vertices from y = 0 up to a tenth of its rise,
 //           its highest point; edge the largest of those distances;
@@ -110,26 +136,53 @@
 // is the same tree, one on a painted road is refused, and the cells away from the stroke keep their
 // matrices.
 //
+// Hollows. A scene may name, in `world.scatter3d.mods.hollows`, a list of plugins whose mods hand it
+// boxes it draws nothing inside, `hollows(plugins)` → `[{ at, rot, half }]`, each a box's middle, its
+// turn and its half extents along its own axes, as the page has them that frame: a car's body and
+// wheels (`box3dvehicle.scatter3d.ts`), so grass the car stands in is never drawn through it. Each
+// frame the boxes nearest the camera, `world.scatter3d.hollows` of them at most, are handed to every
+// material of the field, and a fragment of an instance inside one is not drawn. Every plugin named
+// is listed (`provided`), and `hollows` is a whole number above 0, or the first frame throws.
+//
 // It hands out `solids(x, z, r)`, the server half's `solids` over this client's land: the held cells
 // where the field has them, any other placed on the spot; `packs()`, each built pack by name, `{ at, the
 // camera's cell; held, its cells by cellKey; pending, the cells waiting to be placed; looks, by
-// "<row> <shell>"; models, each drawn row's LODs and its foot, edge, rise and lean }`; `cellKey`; and
-// `leafNormal`. `close` takes every look off the scene and disposes
+// "<row> <shell>"; models, each drawn row's LODs and its foot, edge, rise and lean; ahead, the place's
+// cells, or undefined }`; `ready()` (Prepared places); `cellKey`; and `leafNormal`. `close` takes every look off the scene and disposes
 // its meshes, the copied geometries and the copied materials.
 import type * as THREE from 'three'
 import type { Plugins } from '#engine/browser.ts'
-import { ahead, mod } from '#addons/scenemanager/scenemanager.addon.ts'
+import { ahead, mod, modsOf, provided } from '#addons/scenemanager/scenemanager.addon.ts'
 import { check, hash, place, solidsOver, unit, type Cell, type Ground, type Pack, type RockSurface, type Scatter } from './scatter3d.sim.ts'
+import { take as takeCell, type Stand } from './scatter3d.cells.ts'
+
+// The module a land's workers place and bed cells with (Workers), and how many cells go in one task.
+const CELLS = new URL('./scatter3d.cells.ts', import.meta.url).href
+const BATCH = 512
+// How many tasks of one pack's field, and of its share of the prepared place, may be in flight at once.
+const FLIGHT = 4
 
 type Three = typeof import('three')
+// A box no instance is drawn inside: its middle, its turn and its half extents along its own axes.
+export type Hollow = { at: number[]; rot: number[]; half: number[] }
+// What a `hollows` mod is: the boxes of its plugin's things as this page has them.
+export type Hollows = (plugins: Plugins) => Hollow[]
 export type Part = { name: string; geometry: THREE.BufferGeometry; material: THREE.Material }
 export type Model = { lods: Part[][]; foot: number; edge: number; rise: number; lean: number }
 export type Held = { i: number; j: number; cell: Cell | undefined; m: Float32Array | undefined; shell: number; look: Look | undefined; slot: number }
 export type Look = { meshes: THREE.InstancedMesh[]; cap: number; count: number; held: Held[]; written: Set<number> }
+// A pack's share of the prepared place: the place's cell, the cells placed there by cellKey, every
+// cell in reach of it nearest first and how far through them it is, and whether the camera has arrived.
+export type Ahead = {
+  at: [number, number]; cells: Map<number, { cell: Cell | undefined; m: Float32Array | undefined }>
+  queue: { i: number; j: number; d: number }[]; next: number; out: number; arrived: boolean
+}
 export type Live = {
   name: string; pack: Pack; radii: number[]; grow: number; models: Record<string, Model>
   at: [number, number] | undefined; held: Map<number, Held>; looks: Map<string, Look>; byRow: Record<string, Look[]>
   pending: Map<number, { i: number; j: number; d: number }>; queue: { i: number; j: number; d: number }[]; next: number
+  stands: Record<string, Stand>; flying: Set<number>; out: number
+  ahead: Ahead | undefined
   geometries: Set<THREE.BufferGeometry>; materials: Set<THREE.Material>
 }
 
@@ -170,6 +223,32 @@ const cardOf = (leaf: number, coverage: number) => ({
     normal_fragment_maps: leafNormal(leaf),
   },
 })
+
+// The surface that draws nothing inside the hollows: each fragment's world point taken into each
+// box's own space, where the box is the cube from -1 to 1, and dropped inside one. `scHollow` holds
+// `cap` boxes, the first `scHollows` of them in use.
+const hollowOf = (cap: number, uniforms: object) => ({
+  uniforms,
+  fragment: {
+    common: `uniform mat4 scHollow[ ${cap} ];\nuniform int scHollows;`,
+    clipping_planes_fragment: [
+      `for ( int k = 0; k < ${cap}; k ++ ) {`,
+      '  if ( k >= scHollows ) break;',
+      '  vec3 q = ( scHollow[ k ] * vec4( vDressWorld, 1.0 ) ).xyz;',
+      '  if ( all( lessThanEqual( abs( q ), vec3( 1.0 ) ) ) ) discard;',
+      '}',
+    ].join('\n'),
+  },
+})
+
+type Surface = { uniforms?: object; vertex?: Record<string, string>; fragment?: Record<string, string> }
+// Two surfaces as one: their uniforms together, and each chunk's glsl one after the other.
+function both(a: Surface | undefined, b: Surface | undefined): Surface | undefined {
+  if (!a || !b) return a ?? b
+  const join = (x: Record<string, string> = {}, y: Record<string, string> = {}) =>
+    Object.fromEntries([...new Set([...Object.keys(x), ...Object.keys(y)])].map(k => [k, [x[k], y[k]].filter(Boolean).join('\n')]))
+  return { uniforms: { ...a.uniforms, ...b.uniforms }, vertex: join(a.vertex, b.vertex), fragment: join(a.fragment, b.fragment) }
+}
 
 // A boulder's surface.
 function rockOf(s: RockSurface, three: Three) {
@@ -242,12 +321,19 @@ export function scatter3d() {
   let seen: { s: Scatter; ground: Ground | undefined } | undefined
   let built: string | undefined
   let checked = false
+  // Whether this field's share of the land's prepared place is done (Prepared places).
+  let share = true
+  // Whether the looks are on the scene: from the first frame the land is shown.
+  let onScene = false
   let lives: Record<string, Live> = {}
   let land: object | undefined
   let versions: number[] = []
   let three: Three | undefined
   let scene: THREE.Scene | undefined
   const asked = new Set<string>()
+  // The hollows every material of this client's shares: made with the field, while the scene names a
+  // `hollows` mod, and written each frame.
+  let hollow: { cap: number; uniforms: { scHollow: { value: THREE.Matrix4[] }; scHollows: { value: number } } } | undefined
 
   const drop = () => {
     for (const l of Object.values(lives)) {
@@ -261,6 +347,7 @@ export function scatter3d() {
   const me = {
     leafNormal,
     packs: () => lives,
+    ready: () => share,
 
     solids(x: number, z: number, r: number) {
       const ground = seen?.ground
@@ -286,6 +373,19 @@ export function scatter3d() {
         drop()
         built = text
         checked = false
+        const named = modsOf<Hollows>(on.world!, 'scatter3d', 'hollows').length > 0
+        if (named && !(Number.isInteger(s.hollows) && s.hollows! > 0)) throw new Error(`scatter3d is handed hollows, and world.scatter3d.hollows ${s.hollows} is not a whole number above 0, the most it clears at once`)
+        hollow = named ? { cap: s.hollows!, uniforms: { scHollow: { value: Array.from({ length: s.hollows! }, () => new three!.Matrix4()) }, scHollows: { value: 0 } } } : undefined
+      }
+      if (hollow) {
+        provided(on, 'scatter3d', 'hollows')
+        // The nearest boxes to the camera, as many as it holds.
+        const eye = (plugins.render3d.camera as THREE.PerspectiveCamera | undefined)?.position
+        const boxes = modsOf<Hollows>(on.world!, 'scatter3d', 'hollows').flatMap(f => f(plugins))
+        if (eye) boxes.sort((a, b) => Math.hypot(a.at[0] - eye.x, a.at[1] - eye.y, a.at[2] - eye.z) - Math.hypot(b.at[0] - eye.x, b.at[1] - eye.y, b.at[2] - eye.z))
+        const used = boxes.slice(0, hollow.cap), t = three!
+        used.forEach((b, k) => hollow!.uniforms.scHollow.value[k].compose(new t.Vector3(...b.at), new t.Quaternion(...b.rot), new t.Vector3(...b.half)).invert())
+        hollow.uniforms.scHollows.value = used.length
       }
       if (!ground) return
       if (!checked) {
@@ -299,7 +399,10 @@ export function scatter3d() {
       }
       const e = ground.edits()
       if (e.land !== land) {
-        for (const l of Object.values(lives)) for (const h of l.held.values()) retake(l, h, ground)
+        for (const l of Object.values(lives)) {
+          for (const h of l.held.values()) retake(l, h, ground)
+          l.ahead = undefined
+        }
         land = e.land
         versions = e.layers.map(v => v.version)
       } else {
@@ -310,27 +413,60 @@ export function scatter3d() {
           for (const l of Object.values(lives)) {
             const c = l.pack.cell, g = l.grow
             for (const h of l.held.values()) if (h.i * c - g <= x1 && (h.i + 1) * c + g >= x0 && h.j * c - g <= z1 && (h.j + 1) * c + g >= z0) retake(l, h, ground)
+            l.ahead = undefined
           }
         })
       }
       const camera = plugins.render3d.camera as THREE.PerspectiveCamera | undefined
       const all = Object.values(lives)
-      if (camera) for (const l of all) follow(l, camera.position.x, camera.position.z)
-      // The cells new to reach, a cell from each pack in turn, nearest first, until `budget`
-      // milliseconds have gone, and at least one.
-      const start = performance.now()
-      let took = true, one = false
-      while (took && (!one || performance.now() - start < s.budget)) {
-        took = false
-        for (const l of all) if (settle(l, ground)) took = one = true
+      const at = ground.prepared?.()
+      for (const l of all) aim(l, at)
+      let landed = false
+      if (camera) for (const l of all) {
+        follow(l, camera.position.x, camera.position.z)
+        if (reach(l)) landed = true
       }
+      const start = performance.now()
+      if (typeof Worker !== 'undefined' && ground.task) {
+        // The land's workers place the cells (Workers). The frame the camera arrives at the prepared
+        // place with the field in view, every cell it still waits for is placed here, now.
+        if (landed && (ground.shown?.() ?? true)) for (const l of all) drain(l, ground)
+        for (const l of all) {
+          while (send(l, ground)) continue
+          while (sendAhead(l, ground)) continue
+        }
+      } else {
+        // The cells new to reach, a cell from each pack in turn, nearest first, until `budget`
+        // milliseconds have gone, and at least one; every one of them the frame the camera arrives at
+        // the prepared place.
+        let took = true, one = false
+        while (took && (landed || !one || performance.now() - start < s.budget)) {
+          took = false
+          for (const l of all) if (settle(l, ground)) took = one = true
+        }
+        // The prepared place's cells, a cell from each pack in turn, with what is left of the budget.
+        let more = true
+        while (more && performance.now() - start < s.budget) {
+          more = false
+          for (const l of all) if (prepare(l, ground)) more = true
+        }
+      }
+      share = !at || (all.length === Object.keys(s.packs).length && all.every(l => (l.ahead!.arrived ? l.pending.size === 0 : l.ahead!.next >= l.ahead!.queue.length && l.ahead!.out === 0)))
       for (const l of all) upload(l)
+      // Every look onto the scene the frame the land is shown, in the same frame as the land's rings.
+      if (!onScene && (ground.shown?.() ?? true)) {
+        onScene = true
+        for (const l of all) for (const look of l.looks.values()) for (const m of look.meshes) scene!.add(m)
+      }
     },
 
     close() {
       drop()
       seen = undefined
       built = undefined
+      share = true
+      onScene = false
+      hollow = undefined
       land = undefined
       versions = []
       asked.clear()
@@ -344,7 +480,11 @@ export function scatter3d() {
     const radii = [...pack.lods.map(l => Math.ceil(l / pack.cell)), Math.ceil(pack.reach / pack.cell)]
     const ends = [...pack.lods, pack.reach]
     const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>()
-    const dress = <M extends THREE.Material>(m: M, surface?: object): M => plugins.render3d.dress(m, surface ? { surface } : {})
+    const clear = hollow && hollowOf(hollow.cap, hollow.uniforms)
+    const dress = <M extends THREE.Material>(m: M, own?: Surface): M => {
+      const surface = both(own, clear)
+      return plugins.render3d.dress(m, surface ? { surface } : {})
+    }
     const models: Record<string, Model> = {}
     if (pack.asset !== undefined) {
       const loader = plugins.loader
@@ -421,7 +561,7 @@ export function scatter3d() {
           // The instances move as the camera does; a bounding sphere kept from any one moment culls
           // the rest.
           m.frustumCulled = false
-          scene!.add(m)
+          if (onScene) scene!.add(m)
           return m
         })
         const look = { meshes, cap, count: 0, held: [], written: new Set<number>() }
@@ -430,7 +570,8 @@ export function scatter3d() {
       })
     }
     const grow = Math.max(0, ...drawn.map(row => models[row].edge)) * (pack.size[0] + pack.size[1])
-    return { name, pack, radii, grow, models, at: undefined, held: new Map(), looks, byRow, pending: new Map(), queue: [], next: 0, geometries, materials }
+    const stands = Object.fromEntries(drawn.map(row => [row, { foot: models[row].foot, edge: models[row].edge, lean: models[row].lean }]))
+    return { name, pack, radii, grow, models, at: undefined, held: new Map(), looks, byRow, pending: new Map(), queue: [], next: 0, stands, flying: new Set(), out: 0, ahead: undefined, geometries, materials }
   }
 
   // The shell a cell d cells from the camera's is in, or −1 out of reach.
@@ -492,11 +633,8 @@ export function scatter3d() {
     }
   }
 
-  // A cell placed and bedded from its hashes.
-  function take(l: Live, i: number, j: number, ground: Ground) {
-    const cell = place(l.pack, i, j, ground)
-    return { cell, m: cell && bed(cell, l.models[cell.row], ground) }
-  }
+  // A cell placed and bedded from its hashes, here on the page (`scatter3d.cells.ts`).
+  const take = (l: Live, i: number, j: number, ground: Ground) => takeCell(l.pack, l.stands, i, j, ground)
 
   // A held cell placed and bedded again where it is, in its shell.
   function retake(l: Live, h: Held, ground: Ground) {
@@ -508,7 +646,8 @@ export function scatter3d() {
   // The field onto the camera's cell. A cell's shell changes only when its distance from the camera's
   // cell crosses a shell's radius R, and a move of δ cells changes that distance by at most δ, so
   // only the cells between R − δ and R + δ from the old cell are asked, ring by ring: O(R) of them
-  // on a crossing. A move past the field's reach asks the whole square.
+  // on a crossing. A move past the field's reach asks the whole square. A cell the prepared place has
+  // placed is taken from it.
   function follow(l: Live, x: number, z: number) {
     const ci = Math.floor(x / l.pack.cell), cj = Math.floor(z / l.pack.cell)
     const was = l.at
@@ -522,6 +661,14 @@ export function scatter3d() {
       const key = cellKey(i, j)
       const h = l.held.get(key)
       if (!h) {
+        const ready = k >= 0 ? l.ahead?.cells.get(key) : undefined
+        if (ready) {
+          const taken: Held = { i, j, ...ready, shell: k, look: undefined, slot: -1 }
+          l.held.set(key, taken)
+          l.ahead!.cells.delete(key)
+          if (taken.cell) arriving.push(taken)
+          return
+        }
         if (k >= 0 && !l.pending.has(key)) l.pending.set(key, { i, j, d: 0 })
         return
       }
@@ -558,6 +705,54 @@ export function scatter3d() {
     l.next = 0
   }
 
+  // Whether the camera's cell has just become the prepared place's: then every cell the place has placed
+  // that the field still waits for is taken from it, and the place has arrived.
+  function reach(l: Live) {
+    const a = l.ahead
+    if (!a || a.arrived || !l.at || l.at[0] !== a.at[0] || l.at[1] !== a.at[1]) return false
+    const taken: Held[] = []
+    for (const [key, ready] of a.cells) {
+      const c = l.pending.get(key)
+      if (!c) continue
+      const h: Held = { i: c.i, j: c.j, ...ready, shell: shellOf(l, Math.max(Math.abs(c.i - l.at[0]), Math.abs(c.j - l.at[1]))), look: undefined, slot: -1 }
+      l.pending.delete(key)
+      l.held.set(key, h)
+      if (h.cell) taken.push(h)
+    }
+    for (const h of taken) arrive(l, h)
+    a.arrived = true
+    a.cells.clear()
+    return true
+  }
+
+  // The pack's share of the prepared place at `at`, laid out when the place's cell moves: every cell in
+  // reach of it, nearest first, none placed yet. None with no place in hand.
+  function aim(l: Live, at: number[] | undefined) {
+    if (!at) { l.ahead = undefined; return }
+    const ci = Math.floor(at[0] / l.pack.cell), cj = Math.floor(at[1] / l.pack.cell)
+    if (l.ahead && l.ahead.at[0] === ci && l.ahead.at[1] === cj) return
+    const R = l.radii[l.radii.length - 1]
+    const queue: { i: number; j: number; d: number }[] = []
+    for (let j = cj - R; j <= cj + R; j++) for (let i = ci - R; i <= ci + R; i++) queue.push({ i, j, d: Math.max(Math.abs(i - ci), Math.abs(j - cj)) })
+    queue.sort((p, q) => p.d - q.d)
+    l.ahead = { at: [ci, cj], cells: new Map(), queue, next: 0, out: 0, arrived: false }
+  }
+
+  // The next cell of the prepared place not yet placed, placed and bedded off the scene; false when
+  // every one is, or the camera has arrived. A cell the camera's field already holds is skipped.
+  function prepare(l: Live, ground: Ground) {
+    const a = l.ahead
+    if (!a || a.arrived) return false
+    while (a.next < a.queue.length) {
+      const { i, j } = a.queue[a.next++]
+      const key = cellKey(i, j)
+      if (l.held.has(key)) continue
+      a.cells.set(key, take(l, i, j, ground))
+      return true
+    }
+    return false
+  }
+
   // The nearest cell still to be placed, placed and bedded in its shell; false when there is none.
   function settle(l: Live, ground: Ground) {
     while (l.next < l.queue.length) {
@@ -572,39 +767,80 @@ export function scatter3d() {
     return false
   }
 
-  // The instance's matrix: yawed, tilted `lean` of the way to the ground's plane, and sunk.
-  function bed(c: Cell, model: Model, ground: Ground): Float32Array {
-    const t = three!
-    const { foot, edge, lean } = model
-    const f = foot * c.size
-    let a = 0, bx = 0, bz = 0
-    if (f > 0) {
-      let sx = 0, sz = 0
-      for (let k = 0; k < 8; k++) {
-        const dx = f * Math.cos((k * Math.PI) / 4), dz = f * Math.sin((k * Math.PI) / 4)
-        const h = ground.height(c.x + dx, c.z + dz)
-        a += h
-        sx += h * dx
-        sz += h * dz
-      }
-      // Eight points evenly round a circle: Σdx² = Σdz² = 4f² and Σdx·dz = 0.
-      a /= 8
-      bx = sx / (4 * f * f)
-      bz = sz / (4 * f * f)
-    } else a = ground.height(c.x, c.z)
-    const up = new t.Vector3(0, 1, 0)
-    const tilt = new t.Quaternion().slerpQuaternions(new t.Quaternion(), new t.Quaternion().setFromUnitVectors(up, new t.Vector3(-bx, 1, -bz).normalize()), lean)
-    const rho = (foot + lean * (edge - foot)) * c.size
-    const down = Math.atan2(-bz, -bx)
-    const p = new t.Vector3()
-    let gap = -Infinity
-    for (let k = 0; k < 8; k++) {
-      const th = down + (k * Math.PI) / 4
-      p.set(rho * Math.cos(th), 0, rho * Math.sin(th)).applyQuaternion(tilt)
-      gap = Math.max(gap, a + p.y - ground.height(c.x + p.x, c.z + p.z))
+  // A cell the field waits for, now placed: held in its shell, and in its look when it is not refused.
+  // Nothing when the field no longer waits for it, placed already or out of reach.
+  function hold(l: Live, i: number, j: number, cell: Cell | undefined, m: Float32Array | undefined) {
+    const key = cellKey(i, j)
+    if (!l.pending.delete(key)) return
+    const h: Held = { i, j, cell, m, shell: shellOf(l, Math.max(Math.abs(i - l.at![0]), Math.abs(j - l.at![1]))), look: undefined, slot: -1 }
+    l.held.set(key, h)
+    if (h.cell) arrive(l, h)
+  }
+
+  // Every cell the field waits for placed here, now.
+  function drain(l: Live, ground: Ground) {
+    for (const c of [...l.pending.values()]) {
+      const t = take(l, c.i, c.j, ground)
+      hold(l, c.i, c.j, t.cell, t.m)
     }
-    const q = tilt.multiply(new t.Quaternion().setFromAxisAngle(up, c.yaw))
-    return Float32Array.from(new t.Matrix4().compose(new t.Vector3(c.x, a - gap, c.z), q, new t.Vector3(c.size, c.size, c.size)).elements)
+  }
+
+  // Up to BATCH of the field's cells, nearest first, that no task has, sent to the land's workers:
+  // false when FLIGHT are in flight or none is left. What comes back is held where the field still
+  // waits for it; a batch placed on a land that has since changed goes back in the queue.
+  function send(l: Live, ground: Ground) {
+    if (l.out >= FLIGHT) return false
+    const batch: number[][] = []
+    while (batch.length < BATCH && l.next < l.queue.length) {
+      const { i, j } = l.queue[l.next++]
+      const key = cellKey(i, j)
+      if (!l.pending.has(key) || l.flying.has(key)) continue
+      l.flying.add(key)
+      batch.push([i, j])
+    }
+    if (!batch.length) return false
+    const on = land, ver = versions.join()
+    l.out++
+    ground.task!(CELLS, { pack: l.pack, stands: l.stands, cells: batch })!.then(o => {
+      const r = o as { cells: (Cell | undefined)[]; m: Float32Array }
+      l.out--
+      for (const [i, j] of batch) l.flying.delete(cellKey(i, j))
+      if (lives[l.name] !== l) return
+      if (land !== on || versions.join() !== ver) {
+        for (const [i, j] of batch) l.queue.push({ i, j, d: 0 })
+        return
+      }
+      batch.forEach(([i, j], n) => hold(l, i, j, r.cells[n], r.cells[n] && r.m.slice(16 * n, 16 * n + 16)))
+      while (send(l, ground)) continue
+    })
+    return true
+  }
+
+  // Up to BATCH of the prepared place's cells, nearest it first, that the field does not hold, sent to
+  // the land's workers: false when FLIGHT are in flight or none is left. What comes back is kept for the
+  // place, or, once the camera has arrived, held where the field waits for it.
+  function sendAhead(l: Live, ground: Ground) {
+    const a = l.ahead
+    if (!a || a.arrived || a.out >= FLIGHT) return false
+    const batch: number[][] = []
+    while (batch.length < BATCH && a.next < a.queue.length) {
+      const { i, j } = a.queue[a.next++]
+      if (!l.held.has(cellKey(i, j))) batch.push([i, j])
+    }
+    if (!batch.length) return false
+    a.out++
+    ground.task!(CELLS, { pack: l.pack, stands: l.stands, cells: batch })!.then(o => {
+      const r = o as { cells: (Cell | undefined)[]; m: Float32Array }
+      a.out--
+      if (lives[l.name] !== l || l.ahead !== a) return
+      batch.forEach(([i, j], n) => {
+        const cell = r.cells[n], m = cell && r.m.slice(16 * n, 16 * n + 16)
+        if (a.arrived) hold(l, i, j, cell, m)
+        else a.cells.set(cellKey(i, j), { cell, m })
+      })
+      while (sendAhead(l, ground)) continue
+    })
+    return true
   }
 
   return me

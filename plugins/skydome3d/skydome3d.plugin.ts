@@ -58,6 +58,12 @@
 // is is listed before this one, so the land it asks in its `afterTick` is this frame's, and a scene
 // that lists it after, or does not list it, throws (`ahead`).
 //
+// With `world.skydome3d.biomes` (`skydome3d.sim.ts`), every frame is drawn in the weather standing
+// under the camera, `here` over the land's `mix(x, z)` at the camera's x and z, each biome's share by
+// name: the dome, the deck, the fog, the gloom and the falling things are that place's, so the sky
+// slides from one biome's weather to the next as the camera crosses. With no land yet, the scene's;
+// with biomes and no land mod named, it throws.
+//
 // The palette, from the sun's elevation `el` in radians: day = smooth(−0.10, 0.22, el), night =
 // 1 − smooth(−0.16, 0.02, el), sunset = exp(−(el/0.20)²). The zenith is mix(nightZenith, dayZenith,
 // day) pushed toward setZenith by sunset·0.65·day, the horizon likewise by sunset·0.85·day, and the
@@ -74,7 +80,7 @@
 // The fog is FogExp2, of density haze·(0.6 + mix.haze·0.5) + mix.fog·mist. Three mixes the fog into a
 // lit material after its tone mapping, so the fog's colour is the dome's horizon as drawn, the
 // horizon plus a flash's lift, passed through three's tone curve (`toneMap`, the same `aces` and
-// `neutral` render3d names) at the exposure; with render3d's `ao` the frame is tone mapped at its
+// `neutral` render3d names) at the exposure; with render3d's `ao` on the frame is tone mapped at its
 // end, and the fog's colour is that horizon itself. So the dome behind a fogged hill is the fog on
 // it, through a flash too.
 //
@@ -144,9 +150,9 @@
 // result is the scene's `environment`, lit at `look.envIntensity` (three's
 // `scene.environmentIntensity`), so a metal reflects the sky and every standard or physical material
 // is lit by it. It is made on the first frame with a renderer and again only when stale
-// (`stale(look, then, now)` over `lit(row)`: none yet, a new `to`, `from` or look, the sun turned more
-// than envSun radians, or s, the smoothstep of `blend`, moved more than envMix); the one before is
-// disposed. It is drawn without a flash, the god rays and the light on the deck and the cirrus at the
+// (`stale(look, then, now)` over `lit(row, shares)`: none yet, a new `to`, `from` or look, the sun
+// turned more than envSun radians, or s, the smoothstep of `blend`, or a biome's share under the camera
+// moved more than envMix); the one before is disposed. It is drawn without a flash, the god rays and the light on the deck and the cirrus at the
 // key light less the flash, all put back after, so a refresh during a flash does not hold the flash
 // for as long as it stands.
 //
@@ -164,7 +170,7 @@
 import type * as THREE from 'three'
 import type { Plugins } from '#engine/browser.ts'
 import { ahead, mod } from '#addons/scenemanager/scenemanager.addon.ts'
-import { moon as moonOf, moonLit, sun as sunOf, wind as windOf, type Sky, type Table, type Weather } from './skydome3d.sim.ts'
+import { here, moon as moonOf, moonLit, sun as sunOf, wind as windOf, type Sky, type Table, type Weather } from './skydome3d.sim.ts'
 
 type Sway = [number, number, number]
 export type Look = {
@@ -186,8 +192,8 @@ export type Precip = {
 export type Shadow = { map: number; half: number; near: number; far: number; bias: number; normalBias: number }
 // The row with `world.skydome3d` beside it, which the frame is drawn from.
 type Row = Sky & Table & { look: Look; precip: Precip; shadow: Shadow }
-// What the `land` mod hands back: the ground's height, or undefined until there is one.
-type Land = (plugins: Plugins) => { height(x: number, z: number): number } | undefined
+// What the `land` mod hands back: the ground's height and each biome's share, or undefined until there is one.
+type Land = (plugins: Plugins) => { height(x: number, z: number): number; mix(x: number, z: number): Record<string, number> } | undefined
 const skyOf = (plugins: Plugins, data: Record<string, any>): Row => ({ ...data, ...plugins.wire.scene.world!.skydome3d })
 type Tone = 'aces' | 'neutral' | 'none' | undefined
 type Three = typeof import('three')
@@ -227,13 +233,14 @@ export function toneMap(tone: Tone, [r, g, b]: number[], exposure: number): numb
 }
 
 // What the environment was made from: when it is stale is `stale`.
-export type Lit = { sun: number[]; to: string; from: Weather; s: number; look: Look }
-export const lit = (row: Row): Lit => ({ sun: sunOf(row), to: row.to, from: row.from, s: smooth(0, 1, row.blend), look: row.look })
+export type Lit = { sun: number[]; to: string; from: Weather; s: number; look: Look; shares: Record<string, number> }
+export const lit = (row: Row, shares: Record<string, number> = {}): Lit => ({ sun: sunOf(row), to: row.to, from: row.from, s: smooth(0, 1, row.blend), look: row.look, shares })
 export function stale(look: Look, then: Lit | undefined, now: Lit): boolean {
   if (!then) return true
   if (then.to !== now.to || JSON.stringify(then.from) !== JSON.stringify(now.from) || JSON.stringify(then.look) !== JSON.stringify(now.look)) return true
   const turned = Math.acos(Math.min(1, Math.max(-1, then.sun[0] * now.sun[0] + then.sun[1] * now.sun[1] + then.sun[2] * now.sun[2])))
-  return turned > look.envSun || Math.abs(now.s - then.s) > look.envMix
+  const moved = Object.keys({ ...then.shares, ...now.shares }).some(n => Math.abs((now.shares[n] ?? 0) - (then.shares[n] ?? 0)) > look.envMix)
+  return turned > look.envSun || Math.abs(now.s - then.s) > look.envMix || moved
 }
 
 // One integer hash for the drops' and splashes' seeds and the noise, the same in JS and in GLSL.
@@ -647,7 +654,7 @@ export function skydome3d() {
   }
 
   // The frame's sky from the row and `world.skydome3d` as they stand, the camera where it stands, and render3d's renderer.
-  function read(plugins: Plugins, row: Row, camera: THREE.PerspectiveCamera) {
+  function read(plugins: Plugins, row: Row, camera: THREE.PerspectiveCamera, shares: Record<string, number>) {
     const { three, u, key, hemi, fog, colour, light } = b!
     const look = row.look, mix = row.mix
     const s = sunOf(row), m = moonOf(row)
@@ -679,7 +686,7 @@ export function skydome3d() {
     fog.density = look.haze * (0.6 + mix.haze * 0.5) + mix.fog * look.mist
     // The dome's horizon as it is drawn, a flash's lift and all.
     const drawn = colour.copy(horizon).addScalar(lift)
-    if (render.ao) fog.color.copy(drawn)
+    if (render.ao?.on) fog.color.copy(drawn)
     else fog.color.setRGB(...(toneMap(render.tone, drawn.toArray(), exposure) as [number, number, number]))
 
     shadowBox(renderer, row.shadow, toward, camera.position)
@@ -727,7 +734,7 @@ export function skydome3d() {
     light.sky.copy(hemi.color).multiplyScalar(hemi.intensity)
     light.ground.copy(hemi.groundColor).multiplyScalar(hemi.intensity)
 
-    environment(renderer, row, camera, () => { set('skyFlash', 0); set('skyRays', rays(0)); lightAt(0) }, () => { set('skyFlash', lift); set('skyRays', rays(lift)); lightAt(lift) })
+    environment(renderer, row, shares, camera, () => { set('skyFlash', 0); set('skyRays', rays(0)); lightAt(0) }, () => { set('skyFlash', lift); set('skyRays', rays(lift)); lightAt(lift) })
 
     return {
       el, day, night, sunset, dark, moonEl, sunKey, moonKey, body, exposure,
@@ -827,10 +834,10 @@ export function skydome3d() {
   }
 
   // The scene's environment, made again only when stale, drawn with the flash taken out.
-  function environment(renderer: THREE.WebGLRenderer | undefined, row: Row, camera: THREE.PerspectiveCamera, calm: () => void, back: () => void) {
+  function environment(renderer: THREE.WebGLRenderer | undefined, row: Row, shares: Record<string, number>, camera: THREE.PerspectiveCamera, calm: () => void, back: () => void) {
     const { three, scene, env } = b!
     if (!renderer) return
-    const now = lit(row)
+    const now = lit(row, shares)
     if (stale(row.look, env.then, now)) {
       env.pmrem ??= new three.PMREMGenerator(renderer)
       env.mesh.position.copy(camera.position)
@@ -859,7 +866,13 @@ export function skydome3d() {
       if (!b) build(plugins, sky)
       const camera = plugins.render3d.camera as THREE.PerspectiveCamera | undefined
       if (!camera) return
-      probe = read(plugins, sky, camera)
+      let shares: Record<string, number> = {}
+      if (Object.keys(sky.biomes ?? {}).length) {
+        const land = mod<Land>(plugins.wire.scene.world!, 'skydome3d', 'land')
+        if (!land) throw new Error('skydome3d has biomes and the scene names no world.skydome3d.mods.land')
+        shares = land(plugins)?.mix(camera.position.x, camera.position.z) ?? {}
+      }
+      probe = read(plugins, { ...sky, mix: here(sky.mix, sky.biomes, shares) }, camera, shares)
       shown = true
     },
     light: () => (shown ? b!.light : undefined),

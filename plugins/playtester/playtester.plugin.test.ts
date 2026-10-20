@@ -4,9 +4,9 @@
 // The scene is written here: one seat, whose `player` row climbs a rung a press to its top. The
 // seat's actor binds a key to `climb` and hands the playtester a think that presses it until the
 // top; it, the player's rule and the scene's own file and sim are written into a folder of their
-// own, the page's folder, where the client finds the actor and the player plugin the rule. A
-// manager of that one scene is booted beside it, and a page is on it through the loopback, as a
-// game's `index.html` runs.
+// own, the page's folder, where `load` finds the scene and its sim, which imports the rule, and the
+// client finds the actor. A manager of that one scene is booted beside it, and a page is on it
+// through the loopback, as a game's `index.html` runs.
 import { afterAll, expect, test } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -73,8 +73,10 @@ test('the playtester plays the seat with no key pressed', async () => {
     if (rung() > before) climbing++
   }
   page.close()
-  // The think presses until the row the seat was sent is at the top; the presses in flight when it
-  // gets there are the last ones, so the server stops on the top.
+  // The think reads the rows of the last packet the page took. A press it makes in a frame is in the
+  // truth's inbox at once, answered by the step after that frame, and in the packet the next frame
+  // takes, so no press is in flight when the think reads: it presses until the row the seat was sent
+  // is at the top, and the server stops on the top.
   expect(rung()).toBe(30)
   expect(climbing).toBe(30)
 })

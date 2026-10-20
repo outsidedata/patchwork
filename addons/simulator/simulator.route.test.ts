@@ -25,7 +25,7 @@ writeFileSync(path.join(game, 'lane.scene.json'), JSON.stringify({
 }))
 writeFileSync(path.join(game, 'lane.sim.ts'), `import { scenemanager } from ${SM}\nexport const sim = { scenemanager }\n`)
 writeFileSync(path.join(game, 'track.scene.json'), JSON.stringify({
-  world: { player: { steps: true } }, plugins: ['scenemanager', 'player'], seats: 2, actors: [{ is: 'scenemanager' }],
+  world: {}, plugins: ['scenemanager', 'player'], seats: 2, actors: [{ is: 'scenemanager' }],
   prefabs: { engine: { dt: DT, width: 10, height: 10 }, scenemanager: { out: {} }, player: { seat: 0, mover: 0 }, mover: { pos: [0, 0, 0] } },
 }))
 writeFileSync(path.join(game, 'track.sim.ts'), `import { scenemanager } from ${SM}

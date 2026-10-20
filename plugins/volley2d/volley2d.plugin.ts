@@ -22,16 +22,22 @@
 // not have, or no longer builds, as a file the editor has written may say, draws nothing and leaves
 // `preview` that frame; a row's entry of such a pattern throws, as the server's step does.
 //
-// The sprites are a pool reused frame to frame, the ones not needed hidden. They are placed in
+// Each bullet has a sprite of its own for its whole life, keyed by its volley (the row's or the
+// page's) and entry id and its number in the pattern: made the first frame the bullet is drawn,
+// destroyed the first frame it is not. render2d draws each thing between where the last two steps
+// put it, and knows a thing by its sprite, so a sprite handed from one bullet to another would be
+// drawn part way between the two, a bullet for a frame where none is. A new sprite is a thing that
+// came with the newest step, which render2d holds back until the clock reaches it. They are placed in
 // `afterTick`, after render2d's `tick` has read the world, and so this plugin is listed before
-// `render2d`, whose `afterTick` draws; `close` frees the pool and empties `preview`, and the sheets
-// are the loader's.
+// `render2d`, whose `afterTick` draws; `close` frees every sprite and empties `preview`, and the
+// sheets are the loader's.
 import type { Plugins } from '#engine/browser.ts'
 import { json } from '#plugins/loader/loader.sim.ts'
-import { ahead, points, shots, type Entry, type Patterns, type Shot } from './volley2d.sim.ts'
+import { ahead, points, shots, type Entry, type Patterns, type Point, type Shot } from './volley2d.sim.ts'
 
 export function volley2d() {
-  const pool: any[] = []
+  // Each bullet's sprite, by `<volley>:<entry id>:<number in the pattern>`.
+  let sprites = new Map<string, any>()
   let preview: Entry[] = []
   // The page's volleys fired since the last frame, whose point is still a point of the world.
   let fresh = new Set<Entry>()
@@ -53,14 +59,15 @@ export function volley2d() {
       const row = plugins.wire.rows.find(r => r.kind === 'volley2d')
       const frame: number[] = row?.data.frame ?? [0, 0]
       const [ox, oy] = render2d.place([0, 0])
-      let used = 0
-      const draw = (p: { pos: [number, number]; heading: number; shot: Shot }) => {
+      const drawn = new Map<string, any>()
+      const draw = (volley: string, e: Entry, p: Point) => {
         const { sheet: name, clip, orient } = p.shot
         if (!name || !clip) return
         const sheet = loader.get(name)
         if (!sheet) return void loader.load(name)
-        const s = pool[used] ?? (pool[used] = new render2d.PIXI.Sprite())
-        used++
+        const key = `${volley}:${e.id}:${p.k}`
+        const s = sprites.get(key) ?? new render2d.PIXI.Sprite()
+        drawn.set(key, s)
         const layer = render2d.layer(p.shot.layer ?? cfg.layer)
         if (s.parent !== layer) layer.addChild(s)
         const f = sheet.frameOf(clip, 0, 0)
@@ -78,7 +85,7 @@ export function volley2d() {
       }
       if (row || preview.length) {
         const file: Patterns = json(plugins.wire, cfg.patterns)
-        if (row) for (const e of row.data.live as Entry[]) for (const p of points(shots(file, e.pattern), e, frame)) draw(p)
+        if (row) for (const e of row.data.live as Entry[]) for (const p of points(shots(file, e.pattern), e, frame)) draw('row', e, p)
         if (preview.length) {
           const dt = plugins.wire.scene.prefabs.engine?.dt
           if (!dt) throw new Error('scene has no engine prefab with dt')
@@ -101,15 +108,16 @@ export function volley2d() {
             e.gone = [...gone].sort((x, y) => x - y)
             return e.gone.length < list.length
           })
-          for (const e of preview) for (const p of points(shots(file, e.pattern), e, frame)) draw(p)
+          for (const e of preview) for (const p of points(shots(file, e.pattern), e, frame)) draw('preview', e, p)
         }
       }
       fresh = new Set()
-      for (let i = used; i < pool.length; i++) pool[i].visible = false
+      for (const [key, s] of sprites) if (!drawn.has(key)) s.destroy()
+      sprites = drawn
     },
     close() {
-      for (const s of pool) s.destroy()
-      pool.length = 0
+      for (const s of sprites.values()) s.destroy()
+      sprites = new Map()
       preview = []
       fresh = new Set()
     },

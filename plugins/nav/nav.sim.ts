@@ -51,6 +51,7 @@
 // `sight` reaches for a body of `radius`, 0 when left out, down to the last.
 //
 // It has no numbers of its own and no row: a window is the caller's, as are the costs.
+import * as math from '#plugins/math/math.sim.ts'
 
 export type Grid = { w: number; h: number; window: number; around: (c: number) => Iterable<readonly [number, number]> }
 export type Nav = Grid & { sub: number; open: Uint8Array; blocked: Blocked }
@@ -183,7 +184,7 @@ export function centre(g: Nav, c: number, radius = 0): [number, number] {
   for (const [dx, dy] of STEPS) {
     if (!g.blocked(mx + dx, my + dy)) continue
     const nx = Math.max(mx + dx, Math.min(p[0], mx + dx + 1)), ny = Math.max(my + dy, Math.min(p[1], my + dy + 1))
-    const ox = p[0] - nx, oy = p[1] - ny, d = Math.hypot(ox, oy)
+    const ox = p[0] - nx, oy = p[1] - ny, d = math.hypot(ox, oy)
     if (d >= radius) continue
     if (!dx) p[1] = ny + Math.sign(-dy) * radius
     else if (!dy) p[0] = nx + Math.sign(-dx) * radius
@@ -228,7 +229,7 @@ export function down(f: Field, c: number): number {
 }
 
 export function sight(blocked: Blocked, from: Point, to: Point, radius = 0): boolean {
-  const len = Math.hypot(to[0] - from[0], to[1] - from[1])
+  const len = math.hypot(to[0] - from[0], to[1] - from[1])
   if (!radius || !len) return line(blocked, from, to)
   const ox = (-(to[1] - from[1]) / len) * radius, oy = ((to[0] - from[0]) / len) * radius
   return [0, 1, -1].every(s => line(blocked, [from[0] + ox * s, from[1] + oy * s], [to[0] + ox * s, to[1] + oy * s]))

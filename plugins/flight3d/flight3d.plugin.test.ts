@@ -89,6 +89,20 @@ test('each flight3d row is drawn once, from its own plane\'s model, on its row\'
   expect(drawn(scene)[0].getObjectByName('jet')).toBeTruthy()
 })
 
+test('a scene whose world.flight3d.kinds lists player draws its player rows as planes, and no row of another kind', () => {
+  f.kinds = ['player']
+  try {
+    const seat = { ...plane(1, { type: 'jet', pos: [5, 6, 7] }), kind: 'player' } as Row
+    const { scene, frame } = page([seat, plane(2)])
+    frame()
+    expect(drawn(scene)).toHaveLength(1)
+    expect(drawn(scene)[0].getObjectByName('jet')).toBeTruthy()
+    expect(drawn(scene)[0].position.toArray()).toEqual([5, 6, 7])
+  } finally {
+    delete f.kinds
+  }
+})
+
 test('a plane is asked of the loader once, and drawn from the frame its model has landed', () => {
   let landed = false
   const { scene, frame, loads } = page([plane(1, { type: 'biplane' }), plane(2, { type: 'biplane' })], () => landed)

@@ -12,10 +12,8 @@
 // effects file has an effect of that name, false until the file has been read; this half asks the
 // loader for it in its `tick`, before any actor ticks, so an actor can ask.
 //
-// particle2d is this plugin drawn on render2d's stage: the two read the same fields with the same
-// meanings, each in its own space, and every field of the one is a field of the other
-// (`particle3d.plugin.test.ts` measures the one against the other). Here the space is the world's,
-// in metres: y is up, and a direction is a vector [x, y, z], so [0, 1, 0] is straight up.
+// The space is the world's, in metres: y is up, and a direction is a vector [x, y, z], so [0, 1, 0]
+// is straight up.
 //
 // The effects are in a data file, the entry of the scene's `loader` catalogue that
 // `world.particle3d.effects` names, which this half reads off the scene (the ledger row goes to every seat
@@ -74,6 +72,11 @@
 //            as its frame at its size, turned about its length to face the camera, wherever the
 //            effect is moved: a beam or a tracer that reaches its target. An effect with a beam is
 //            spawned with a `to`.
+//   light    { intensity, distance, decay }: each particle carries a real point light where it is
+//            drawn, of its colour as it cools, `intensity` times its opacity as it fades, reaching
+//            `distance` metres times the effect's `scale`, falling off by `decay` as three's own
+//            point lights do. A spell's sparks light the ground and the caster round them. The scene
+//            lists `lights3d`, which draws every one of them, and particle3d throws when it does not.
 //
 // A field the file has that is none of these throws, naming it, the first frame the file is read and
 // the first frame after it is written; so does a `dir`, `jitter`, `box` or `at` of the wrong count of
@@ -130,6 +133,7 @@ export type Emitter = {
   g?: number; drag?: number; pull?: number; pace?: number[][]; follow?: boolean
   tint?: number; tint1?: number; gain?: number; a0?: number; a1?: number; fade?: number
   spin?: number; origin?: [number, number]; add?: boolean; stretch?: boolean; face?: boolean; beam?: boolean; flips?: number[][]
+  light?: { intensity: number; distance: number; decay: number }
 }
 export type Layer = Emitter | { effect: string; at?: number[] }
 export type Effects = { cap: number; alphaTest?: number; ppm?: number; effects: Record<string, Layer[]> }
@@ -139,6 +143,7 @@ export type Effects = { cap: number; alphaTest?: number; ppm?: number; effects: 
 export const FIELDS = [
   'n', 'every', 'after', 'life', 'lasts', 'skip', 'sheet', 'clip', 'play', 'size', 'grow', 'dir', 'spread', 'speed', 'jitter', 'box',
   'g', 'drag', 'pull', 'pace', 'follow', 'flips', 'tint', 'tint1', 'gain', 'a0', 'a1', 'fade', 'spin', 'origin', 'add', 'stretch', 'face', 'beam',
+  'light',
 ] as const satisfies readonly (keyof Emitter)[]
 export const REF = ['effect', 'at'] as const
 export const FILE = ['cap', 'alphaTest', 'ppm', 'effects'] as const satisfies readonly (keyof Effects)[]
@@ -207,6 +212,8 @@ export function check(file: Effects, own: Record<string, unknown>) {
       for (const [k, v] of Object.entries(l)) {
         if (!known.includes(k)) throw new Error(`particle3d effect ${name} layer ${i} has ${k}, which particle3d does not know`)
         if (k in COUNTS && (!Array.isArray(v) || v.length !== COUNTS[k])) throw new Error(`particle3d effect ${name} layer ${i} has a ${k} of ${JSON.stringify(v)}, and particle3d reads ${COUNTS[k]} numbers`)
+        if (k === 'light' && !(v && typeof v === 'object' && ['intensity', 'distance', 'decay'].every(n => typeof (v as any)[n] === 'number' && (v as any)[n] >= 0) && Object.keys(v).length === 3))
+          throw new Error(`particle3d effect ${name} layer ${i} has a light of ${JSON.stringify(v)}, and particle3d reads { intensity, distance, decay }, each 0 or more`)
       }
     })
   }
@@ -241,6 +248,9 @@ export function particle3d() {
   let checked = false
   let parts: Part[] = []
   const groups = new Map<string, Group>()
+  // The point light each lit particle carries, and the lights let go of, hidden, for the next to take.
+  const lit = new Map<Part, any>()
+  const spare: any[] = []
 
   const spawn = (name: string, at: number[], s: Spawn, seed: number, server?: number): Live => {
     const fx: Live = {
@@ -419,8 +429,41 @@ export function particle3d() {
     return file!.ppm
   }
 
-  // Writes every particle of each mesh into its buffers, as quads facing the camera.
+  // The light a lit particle carries, at its place, of its colour and opacity this frame.
+  const shine = (plugins: Plugins, q: Part, at: number[], colour: any, a: number) => {
+    const L = q.layer.light!
+    let light = lit.get(q)
+    if (!light) {
+      light = spare.pop()
+      if (!light) {
+        light = new plugins.render3d.THREE.PointLight()
+        plugins.render3d.scene.add(light)
+      }
+      lit.set(q, light)
+    }
+    light.visible = true
+    light.position.set(at[0], at[1], at[2])
+    light.color.copy(colour)
+    light.intensity = L.intensity * a
+    light.distance = L.distance * q.fx.scale
+    light.decay = L.decay
+  }
+
+  // Writes every particle of each mesh into its buffers, as quads facing the camera, and puts each lit
+  // particle's light on it; a light whose particle is gone, or not drawn this frame, is hidden and
+  // kept for the next.
   const draw = (plugins: Plugins) => {
+    const shone = new Set<Part>()
+    quadsOf(plugins, shone)
+    for (const [q, light] of lit) {
+      if (shone.has(q)) continue
+      light.visible = false
+      lit.delete(q)
+      spare.push(light)
+    }
+  }
+
+  const quadsOf = (plugins: Plugins, shone: Set<Part>) => {
     for (const g of groups.values()) g.mesh.geometry.setDrawRange(0, 0)
     if (!parts.length) return
     const { THREE, camera } = plugins.render3d
@@ -512,7 +555,12 @@ export function particle3d() {
         const rgb = l.tint1 === undefined ? from : mix(from, l.tint1, k)
         const fading = l.fade === undefined ? k : Math.max(0, 1 - (span(q) - q.age) / l.fade)
         const a = (l.a0 ?? 1) + ((l.a1 ?? 1) - (l.a0 ?? 1)) * fading
-        colour.setHex(rgb).multiplyScalar(l.gain ?? 1)
+        colour.setHex(rgb)
+        if (l.light) {
+          shine(plugins, q, at, colour, a)
+          shone.add(q)
+        }
+        colour.multiplyScalar(l.gain ?? 1)
         const rgba = [colour.r, colour.g, colour.b, a]
         for (let v = 0; v < 4; v++) col.set(rgba, 16 * n + 4 * v)
       })
@@ -607,6 +655,8 @@ export function particle3d() {
       if (unchecked) {
         unchecked = false
         check(file, own)
+        const lights = Object.entries(file.effects).find(([, layers]) => layers.some(l => 'light' in l))
+        if (lights && !scene.plugins!.includes('lights3d')) throw new Error(`particle3d effect ${lights[0]} gives its particles light, and the scene does not list lights3d to draw them`)
       }
       if (stale) {
         stale = false
@@ -630,6 +680,12 @@ export function particle3d() {
         g.mesh.material.dispose()
       }
       groups.clear()
+      for (const light of [...lit.values(), ...spare]) {
+        plugins.render3d.scene.remove(light)
+        light.dispose()
+      }
+      lit.clear()
+      spare.length = 0
       ledger = []
       parts = []
     },

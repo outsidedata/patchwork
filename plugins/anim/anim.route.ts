@@ -1,4 +1,4 @@
-// anim's route: a rig's bodies baked from ~/troupe-collection by Blender (`anim.export.py`), for the
+// anim's route: a rig's bodies baked from the library by Blender (`anim.export.py`), for the
 // Export models command (`anim.extension.tsx`).
 //
 //   POST export   { rig, models }: `rig` is the rig file and `models` `{ <body>: <glb> }` the glb each

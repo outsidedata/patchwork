@@ -1,23 +1,19 @@
-// terrain3d's mod for solids, given to solids by one key of a scene: `world.solids.mods.land` is
-// 'terrain3d'. The test writes a manager and one child, `hills`, which `load` boots as a game's would,
-// and a page on it through the loopback as `index.html` makes one, on a clock of one step a frame,
-// with render3d handed a canvas stand-in and no camera, so terrain3d makes its land and builds no
-// ring. The land is the page's terrain3d's `ground`, undefined until its field has loaded; a `pad`
-// row, which solids draws from a model of the test's own, stands on it wherever the row moves,
-// whatever height the row says.
+// terrain3d's mod for solids, named by the scene's `world.solids.mods.land`. The test writes a manager
+// and one child, `hills`, which `load` boots as a game's would, and a page on it through the loopback as
+// `index.html` makes one, on a clock of one step a frame, with render3d handed a canvas stand-in. A
+// `pad` row, which solids draws from a model of the test's own, stands on the land the page holds
+// wherever the row moves, whatever height the row says.
 import { afterAll, expect, test, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { boot, type Scene } from '#engine/engine.ts'
-import type { Plugins } from '#engine/browser.ts'
-import { accept, link, load, manager, mod, view } from '#addons/scenemanager/scenemanager.addon.ts'
+import { accept, link, load, manager, view } from '#addons/scenemanager/scenemanager.addon.ts'
 import { loopback } from '#addons/loopback/loopback.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 import { written } from '#plugins/loader/loader.sim.ts'
-import { land } from './terrain3d.solids.ts'
-import { landOf, type Field } from './terrain3d.sim.ts'
+import { land, type Field } from './terrain3d.sim.ts'
 
 const DT = 1 / 60
 ;(globalThis as any).addEventListener = () => {}
@@ -26,14 +22,9 @@ let clock = 0
 vi.spyOn(performance, 'now').mockImplementation(() => clock)
 
 const field: Field = {
-  program: {
-    world: 600, hscale: 30, sea: 0.5, flood: false, out: 'hills',
-    nodes: [{ id: 'hills', op: 'noise', kind: 'simplex', freq: 12, seed: 3 }],
-  },
+  program: { world: 600, hscale: 30, sea: 0.5, flood: false, out: 'hills', nodes: [{ id: 'hills', op: 'noise', kind: 'simplex', freq: 12, seed: 3 }] },
   analysis: { slopeStep: 1.5, curveStep: 4, positionRadius: 18, occlusionRadius: 30, occlusionSteps: 5, cliffProbe: 12, cliffSlope: 0.5, cliffDrop: 7, flatAngle: 0.03, records: 50000 },
-  bands: [{ colour: '#3e5722', amount: 1, rules: [] }],
-  grain: { base: 0.84, range: 0.32 },
-  detail: [],
+  ground: { layers: [{ name: 'grass', map: 'grass', scale: 30 }] },
   surfaces: {},
   layers: [],
 }
@@ -57,7 +48,7 @@ const top: Scene = {
 }
 const hills: Scene = {
   world: {
-    loader: { assets: { land: { type: 'json', url: FIELD_URL, preload: true }, pad: { type: 'json', url: PAD_URL, preload: true } } },
+    loader: { assets: { land: { type: 'json', url: FIELD_URL, preload: true }, pad: { type: 'json', url: PAD_URL, preload: true }, grass: { type: 'texture', url: '/terrain3d-solids-test/grass.png' } } },
     terrain3d: { field: 'land', rings: [{ reach: 40, seg: 10 }], shadowReach: 100, budget: 1e9, seabed: false },
     solids: { kinds: { pad: 'pad' }, mods: { land: 'terrain3d' } },
   },
@@ -80,44 +71,24 @@ export const scene = file
 afterAll(() => rmSync(dir, { recursive: true }))
 const home = pathToFileURL(dir + '/').href
 
-async function open() {
+test('a pad stands on the land the page holds wherever its row moves, whatever height the row says', async () => {
   const truth = boot(structuredClone(top), { scenemanager })
   const child = (await load(truth, home)).get('hills')!
   const surface = (s: Scene) => ({ addEventListener: () => {}, style: {} as any, width: s.prefabs.engine.width, height: s.prefabs.engine.height, remove() {} })
   const page = view(link(loopback(accept(manager(truth)))), top, home, (me, s) => { me.plugins.render3d.canvas = surface(s) })
-  const frames = async (k: number) => {
-    for (let i = 0; i < k; i++) { truth.step(DT); clock += DT * 1000; await page.frame() }
-  }
-  return { child, page, frames }
-}
-
-test('the scene\'s one key gives solids terrain3d\'s land, loaded before the first step', async () => {
-  const { child } = await open()
-  expect(mod(child.world, 'solids', 'land')).toBe(land)
-})
-
-test('the land is terrain3d\'s ground as the page has it, and undefined until its field has loaded', () => {
-  const ground = { height: (x: number, z: number) => x + z }
-  expect(land({ terrain3d: { ground } } as unknown as Plugins)).toBe(ground)
-  expect(land({ terrain3d: { ground: undefined } } as unknown as Plugins)).toBeUndefined()
-})
-
-test('a pad stands on terrain3d\'s land wherever its row moves, whatever height the row says', async () => {
-  const { child, page, frames } = await open()
+  const frames = async (k: number) => { for (let i = 0; i < k; i++) { truth.step(DT); clock += DT * 1000; await page.frame() } }
   await frames(1)
   const client = page.client!
   for (let i = 0; i < 60 && !client.plugins.terrain3d.ground; i++) await frames(1)
-  const ground = client.plugins.terrain3d.ground
-  expect(ground).toBeDefined()
-  expect(land(client.plugins)).toBe(ground)
+  expect(client.plugins.terrain3d.ground).toBeDefined()
+  const truthLand = land(field)
   const pad = child.rows.find(r => r.kind === 'pad')!
   for (const [x, y, z] of [[4, 300, -2], [-37, -40, 21], [55, 0, 80]]) {
     pad.data.pos = [x, y, z]
     await frames(2)
     const at = client.plugins.solids.group(pad.id).position.toArray()
-    expect(at[1]).toBe(ground.height(x, z))
-    expect(at[1]).toBeCloseTo(landOf(field).height(x, z), 9)
-    expect(at[1]).not.toBeCloseTo(y, 3)
+    expect(at[1]).toBe(truthLand.height(x, z))
     expect([at[0], at[2]]).toEqual([x, z])
   }
+  page.close()
 })

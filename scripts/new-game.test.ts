@@ -37,7 +37,7 @@ test('a game made where there are none boots its scene, and a seat joining it ge
 })
 
 test('a name that is no lower-case name, a kind\'s of the game, a plugin\'s, an addon\'s or a game\'s there is refused, with nothing written', async () => {
-  await expect(newGame('Other', root)).rejects.toThrow('a lower-case letter and then lower-case letters and digits')
+  await expect(newGame('Other', root)).rejects.toThrow('a lower-case letter and then lower-case letters, digits and underscores')
   await expect(newGame('body', root)).rejects.toThrow('a game cannot be named body: body.sim.ts is the rule of its body kind')
   await expect(newGame('glow', root)).rejects.toThrow('a game cannot be named glow: plugins/glow is a plugin of that name')
   await expect(newGame('vault', root)).rejects.toThrow('a game cannot be named vault: addons/vault is an addon of that name')

@@ -1,7 +1,7 @@
 // The server half of flight3d: a fixed-wing aeroplane as forces and moments, a linearised
 // stability-derivative airframe with a stalling lift polar, integrated semi-implicitly. It holds no
-// library and no memory between steps: everything a plane is doing is on its row, so the server, a
-// page predicting and a replay fly the identical plane.
+// library and no memory between steps: everything a plane is doing is on its row, so the server and
+// a replay fly the identical plane.
 //
 // A plane is one `flight3d` row. It holds what changes:
 //   type                  the name of its entry in `world.flight3d.planes`: which plane it is.
@@ -43,6 +43,10 @@
 //   mods        `{ ground: '<a>' }`: the plugin whose mod `plugins/<a>/<a>.flight3d.ts` hands flight3d
 //               `ground(w, x, z)`, the height of the ground under a world x, z (`addons/scenemanager`'s
 //               mods). With none the plane flies over nothing, never touches down and never crashes.
+//   kinds       the kinds whose rows are planes, `['flight3d']` when it gives none: a game whose seat
+//               flies its own `player` row lists `player`, and that kind's rule flies it with `step` (or
+//               this kind's `tick`), so a page running the scene ahead draws the seat's plane from its
+//               copy. The browser half draws every row of these kinds.
 //
 // THE ENGINE. Thrust is `maxThrust` times the lever, falling with the air's density; a propeller's
 // (`propSpeed` > 0) also falls as propSpeed / speed above `propSpeed`, so it is power, not force, that
@@ -96,6 +100,7 @@
 // where the plane was to where it is now is checked against the ground every `sweep` metres, so a
 // plane at 300 m/s cannot pass through a ridge between two steps.
 import type { Kind, Row, W } from '#engine/engine.ts'
+import * as math from '#plugins/math/math.sim.ts'
 import { mod } from '#addons/scenemanager/scenemanager.addon.ts'
 
 export type Vec3 = number[]
@@ -146,6 +151,7 @@ export type Flight = {
   overspeed: number
   sweep: number
   mods?: Record<string, string>
+  kinds?: string[]
 }
 /** The stick as the integrator takes it. */
 export type Stick = { pitch: number; roll: number; yaw: number; airbrake: number }
@@ -187,13 +193,13 @@ export function thrustOf(t: Sheet, throttle: number, rho: number, rho0: number, 
 export function topSpeed(t: Airframe, rho: number) {
   const k = 0.5 * rho * (t.wingArea * t.cd0 + t.structureDragArea)
   const flat = Math.sqrt(t.maxThrust / k)
-  return t.propSpeed > 0 && flat > t.propSpeed ? Math.cbrt((t.maxThrust * t.propSpeed) / k) : flat
+  return t.propSpeed > 0 && flat > t.propSpeed ? math.cbrt((t.maxThrust * t.propSpeed) / k) : flat
 }
 /** The speed below which the wing cannot hold the plane up in level flight at density `rho`. */
 export const stallSpeed = (t: Airframe, gravity: number, rho: number) =>
   Math.sqrt((2 * t.mass * gravity) / (rho * t.wingArea * t.clAlpha * t.alphaStall))
 /** The air's density at height y. */
-export const densityAt = (air: Air, y: number) => air.density * Math.exp(-y / air.scaleHeight)
+export const densityAt = (air: Air, y: number) => air.density * math.exp(-y / air.scaleHeight)
 /** Plane `type` of this world's catalogue, refused naming the planes there are. */
 export function modelOf(f: Flight, type: string): Model {
   const m = f.planes[type]
@@ -220,31 +226,31 @@ function spinBy(q: Quat, [wx, wy, wz]: Vec3, dt: number): Quat {
   const ny = y + h * (w * wy + z * wx - x * wz)
   const nz = z + h * (w * wz + x * wy - y * wx)
   const nw = w - h * (x * wx + y * wy + z * wz)
-  const n = Math.hypot(nx, ny, nz, nw) || 1
+  const n = math.hypot(nx, ny, nz, nw) || 1
   return [nx / n, ny / n, nz / n, nw / n]
 }
 /** Wings level with the nose `heading` radians clockwise from −Z seen from above: a turn about up. */
-export const fromHeading = (heading: number): Quat => [0, Math.sin(-heading / 2), 0, Math.cos(-heading / 2)]
+export const fromHeading = (heading: number): Quat => [0, math.sin(-heading / 2), 0, math.cos(-heading / 2)]
 /** The nose on `heading` and `pitch` radians up from level, wings level: the heading's turn, then the
  *  pitch about the wing. */
 export function fromAttitude(heading: number, pitch: number): Quat {
   const [, y, , w] = fromHeading(heading)
-  const s = Math.sin(pitch / 2), c = Math.cos(pitch / 2)
+  const s = math.sin(pitch / 2), c = math.cos(pitch / 2)
   // (0, y, 0, w) · (s, 0, 0, c)
   return [w * s, y * c, -y * s, w * c]
 }
 /** The nose's direction for a heading, as `fromHeading` turns it. */
-export const noseOf = (heading: number): Vec3 => [Math.sin(heading), 0, -Math.cos(heading)]
+export const noseOf = (heading: number): Vec3 => [math.sin(heading), 0, -math.cos(heading)]
 
 // ---------------------------------------------------------------- the flight picture
 
 /** Speed, angle of attack and sideslip, off the plane's own state. The one place α and β are made. */
 export function windAngles(p: Pick<Plane, 'vel' | 'rot'>, air: Air): { aoa: number; slip: number; speed: number } {
-  const speed = Math.hypot(p.vel[0], p.vel[1], p.vel[2])
+  const speed = math.hypot(p.vel[0], p.vel[1], p.vel[2])
   if (speed < air.calm) return { aoa: 0, slip: 0, speed }
   const b = unrotate(p.rot, p.vel)
   const fwd = Math.abs(b[2]) // keeps both angles sane flying backwards
-  return { aoa: Math.atan2(-b[1], fwd), slip: Math.atan2(b[0], fwd), speed }
+  return { aoa: math.atan2(-b[1], fwd), slip: math.atan2(b[0], fwd), speed }
 }
 
 export type Aero = {
@@ -286,8 +292,8 @@ export function aero(p: Plane, stick: Stick, f: Flight, t: Airframe, dt: number)
   // flow lets go, then a flat plate. It keys on that angle's size, so it stalls the same upside down.
   const wing = aoa + t.incidence
   const stall = smootherstep(t.alphaStall - t.stallBlend, t.alphaStall + t.stallBlend, Math.abs(wing))
-  const cl = (1 - stall) * (t.clAlpha * wing) + stall * (t.clPostStall * Math.sin(2 * wing))
-  const sinA = Math.sin(wing)
+  const cl = (1 - stall) * (t.clAlpha * wing) + stall * (t.clPostStall * math.sin(2 * wing))
+  const sinA = math.sin(wing)
   const cd = t.cd0 + (cl * cl) / (Math.PI * aspect * t.oswald) + stall * t.cdFlatPlate * sinA * sinA + t.brakeCd * clamp(stick.airbrake, 0, 1)
   const lift = qd * S * cl
   const drag = qd * S * cd + qd * t.structureDragArea
@@ -298,7 +304,7 @@ export function aero(p: Plane, stick: Stick, f: Flight, t: Airframe, dt: number)
   const perp = (axis: Vec3): Vec3 => {
     const d = axis[0] * vh[0] + axis[1] * vh[1] + axis[2] * vh[2]
     const o = [axis[0] - vh[0] * d, axis[1] - vh[1] * d, axis[2] - vh[2] * d]
-    const n = Math.hypot(o[0], o[1], o[2])
+    const n = math.hypot(o[0], o[1], o[2])
     return n < 1e-6 ? [0, 0, 0] : [o[0] / n, o[1] / n, o[2] / n]
   }
   const liftDir = perp(up), sideDir = perp(right)
@@ -315,7 +321,7 @@ export function aero(p: Plane, stick: Stick, f: Flight, t: Airframe, dt: number)
 /** Where the path from `a` to `b` first meets the ground, checked every `sweep` metres along it and
  *  at its end, or undefined when it stays above. */
 export function impact(ground: (x: number, z: number) => number, a: Vec3, b: Vec3, sweep: number): Vec3 | undefined {
-  const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) / sweep))
+  const n = Math.max(1, Math.ceil(math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) / sweep))
   for (let i = 1; i <= n; i++) {
     const k = i / n
     const x = a[0] + (b[0] - a[0]) * k, y = a[1] + (b[1] - a[1]) * k, z = a[2] + (b[2] - a[2]) * k
@@ -330,7 +336,7 @@ const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 const scale = (a: Vec3, k: number): Vec3 => [a[0] * k, a[1] * k, a[2] * k]
-const unit = (a: Vec3): Vec3 => scale(a, 1 / (Math.hypot(a[0], a[1], a[2]) || 1))
+const unit = (a: Vec3): Vec3 => scale(a, 1 / (math.hypot(a[0], a[1], a[2]) || 1))
 // How much friction a slip buys: all of it past 0.5 m/s, a share of it below, so a wheel at rest is still.
 const slipped = (v: number) => clamp(v / 0.5, -1, 1)
 
@@ -367,7 +373,7 @@ export function contact(p: Plane, gear: Gear, ground: (x: number, z: number) => 
     const N = Math.max(0, w.spring * c - w.damper * vn)
     // The tyre's rolling direction, turned by its steering, laid in the ground's plane.
     const d = w.steer * clamp(p.yaw, -1, 1)
-    const nose = rotate(p.rot, [Math.sin(d), 0, -Math.cos(d)])
+    const nose = rotate(p.rot, [math.sin(d), 0, -math.cos(d)])
     const along = unit(sub(nose, scale(n, dot(nose, n))))
     const across = cross(along, n)
     const mu = w.roll + (w.brake ? gear.brakeGrip * clamp(p.brake, 0, 1) : 0)
@@ -418,7 +424,7 @@ export function step(p: Plane, f: Flight, dt: number, ground?: (x: number, z: nu
   const vel = [p.vel[0] + (force[0] / m) * dt, p.vel[1] + (force[1] / m) * dt, p.vel[2] + (force[2] / m) * dt]
   // A plane dies to the ground, never to the integrator: speed is capped a little over the sheet's
   // own top speed, the direction untouched, so a dive rides the cap instead of chattering on it.
-  const cap = f.overspeed * topSpeed(t, f.air.density), size = Math.hypot(vel[0], vel[1], vel[2])
+  const cap = f.overspeed * topSpeed(t, f.air.density), size = math.hypot(vel[0], vel[1], vel[2])
   if (size > cap) for (let i = 0; i < 3; i++) vel[i] *= cap / size
   p.vel = vel
   p.aileron = a.surfaces.aileron

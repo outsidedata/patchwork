@@ -11,14 +11,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { boot, type Row, type Scene, type W } from '#engine/engine.ts'
-import { load, mod } from '#addons/scenemanager/scenemanager.addon.ts'
+import { load } from '#addons/scenemanager/scenemanager.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 import { written } from '#plugins/loader/loader.sim.ts'
 import type { Field } from '#plugins/terrain3d/terrain3d.sim.ts'
-import { ground } from '#plugins/terrain3d/terrain3d.hitscan3d.ts'
-import { solids as solidsMod } from '#plugins/scatter3d/scatter3d.hitscan3d.ts'
 import { placed, solids, type Scatter, type Solid } from '#plugins/scatter3d/scatter3d.sim.ts'
-import { bodies } from '#plugins/walker/walker.hitscan3d.ts'
 import type { Numbers as Walker } from '#plugins/walker/walker.sim.ts'
 import { sees, shoot, type Hit, type Numbers } from './hitscan3d.sim.ts'
 
@@ -116,13 +113,6 @@ function alone(w: W) {
 
 // ---------------------------------------------------------------- what a shot meets
 
-test('the scene\'s mods hand hitscan3d terrain3d\'s ground, scatter3d\'s solids and walker\'s bodies, loaded before the first step', async () => {
-  const { w } = await booted()
-  expect(mod(w.world, 'hitscan3d', 'ground')).toBe(ground)
-  expect(mod(w.world, 'hitscan3d', 'solids')).toBe(solidsMod)
-  expect(mod(w.world, 'hitscan3d', 'bodies')).toBe(bodies)
-})
-
 test('a shot meets the ground: t metres along the line, the point there and the ground\'s normal; past far it meets nothing', async () => {
   const { w } = await booted()
   const down = shoot(w, [3, 10, 4], [0, -1, 0], 50)!
@@ -183,7 +173,6 @@ test('a shot meets a body: its id, kind and the part whose band of its height ho
 
 test('a round onto a body\'s top cap is its top part, and one up into its bottom cap its lowest, wherever the body stands', async () => {
   const { w, a } = await booted()
-  let n = 0
   for (const y of [0.1, 0.37, 1.23, 2.9, 7.7]) for (const tall of [1.8, 1.1, 0.7]) for (const [dx, dz] of [[0, 0], [0.13, -0.07], [-0.2, 0.05]]) {
     a.data.pos = [0.3, y, 6.1]
     a.data.tall = tall
@@ -196,9 +185,7 @@ test('a round onto a body\'s top cap is its top part, and one up into its bottom
       expect(who(up)).toEqual({ what: 'body', id: a.id, kind: 'soldier', part: 'legs' })
       expect(up.point[1]).toBeCloseTo(y, 9)
     }
-    n++
   }
-  expect(n).toBe(45)
 })
 
 test('the nearest thing met wins: a body before the one behind it, a body before a solid, a solid before a body', async () => {

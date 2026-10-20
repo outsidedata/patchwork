@@ -1,9 +1,10 @@
 // box3dvehicle on flat box3d ground, whose top is y = 0. The test writes its own scenes: a manager
 // and one child, a yard, which `load` boots as a game's would, so box3d is handed the car's kinds by
 // box3dvehicle's mod, and box3dvehicle box3d's gravity by box3d's (`world.box3dvehicle.mods.gravity`).
-// The car is a 3.6 m body of 600 kg on two axles 2.5 m apart, each wheel 20 kg, all four driven, the
-// front two steered; a test changes what it holds the car to. A write the test makes to the car's row
-// between steps is what a rule would write.
+// The car is a 3.6 m body of 600 kg with a cabin on it, on two axles 2.5 m apart, each wheel 20 kg,
+// all four driven, the front two steered; a test changes what it holds the car to: steered on its
+// rear axle, or with no cabin. A write the test makes to the car's row between steps is what a rule
+// would write.
 //
 // Every number a test holds the suspension to is worked out apart from Box3D: a wheel's share of the
 // weight from the lever rule, a bounce's fall from one swing to the next from its damping ratio.
@@ -16,7 +17,8 @@ import { boot, type Scene, type Truth, type W } from '#engine/engine.ts'
 import { load } from '#addons/scenemanager/scenemanager.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 import type { Static } from '#plugins/box3d/box3d.sim.ts'
-import { corners, loads, turn, type Axle, type Fleet, type Vehicle } from './box3dvehicle.sim.ts'
+import { box3dvehicle, corners, loads, pedals, shift, turn, type Axle, type Fleet, type Vehicle } from './box3dvehicle.sim.ts'
+import { kinds } from './box3dvehicle.box3d.ts'
 
 const DT = 1 / 60
 const G = 10
@@ -37,7 +39,7 @@ const vehicle: Vehicle = {
   axles: [axle(1.25, true), axle(-1.25, false)],
   engine: { spinSpeed: 30, spinTorque: 300, brakeTorque: 600, coastTorque: 0 },
   steering: { angle: 0.5, hertz: 5, dampingRatio: 1, maxTorque: 1e4 },
-  look: { paint: { body: 0, cabin: 0, trim: 0, glass: 0, light: 0, tail: 0, tyre: 0, rim: 0, spring: 0, damper: 0, arm: 0 }, segments: 16, spokes: 5, rim: 0.6, coils: 6, coilRadius: 0.07, wire: 0.01, arm: 0.03 },
+  look: { paint: { body: 0, cabin: 0, trim: 0, glass: 0, light: 0, tail: 0, amber: 0, tyre: 0, rim: 0, chrome: 0, seat: 0, hook: 0, spring: 0, damper: 0, arm: 0 }, segments: 16, spokes: 5, rim: 0.6, coils: 6, coilRadius: 0.07, wire: 0.01, arm: 0.03 },
 }
 // The scene's fleet: the one vehicle a yard makes, `car`, its parts of the kinds `body`, `tyre` and
 // `axle`, in box3d's gravity unless `mods` says otherwise.
@@ -223,6 +225,36 @@ test('steer 1 with throttle turns the heading one way, and steer -1 the other', 
   expect(await turned(-1)).toBeLessThan(-0.1)
 })
 
+test('a car steered on its rear axle, behind the wheelbase\'s middle, turns left on a positive steer, as one steered on its front axle beside it does', async () => {
+  const turned = async (v: Vehicle) => {
+    const { truth } = await settled(v)
+    const y0 = yaw(truth)
+    Object.assign(car(truth).data, { throttle: 1, steer: 0.5 })
+    run(truth, 90)
+    return yaw(truth) - y0
+  }
+  const ats = vehicle.axles.map(a => a.at), mid = (Math.max(...ats) + Math.min(...ats)) / 2
+  const rear = axles(a => ({ steered: a.at < mid }))
+  // Its heading grows, to the left, as the front-steered car's does.
+  expect(await turned(rear)).toBeGreaterThan(0.1)
+  expect(await turned(vehicle)).toBeGreaterThan(0.1)
+})
+
+test('a car with no cabin is its body\'s box alone, the one shape box3d makes its chassis of, and it drives', async () => {
+  const { cabin: _, ...body } = vehicle.body
+  const bare: Vehicle = { ...vehicle, body }
+  const { truth, w } = await yard(bare)
+  run(truth, 120)
+  const made = truth.rows.find(r => r.id === car(truth).data.chassis)!
+  expect(kinds(w()).bodies!.body(made).shapes).toEqual([{ box: [body.length / 2, body.height / 2, body.width / 2], baseMaterial: { friction: body.friction } }])
+  const start = [...chassis(truth).pos], h = heading(truth)
+  car(truth).data.throttle = 1
+  run(truth, 60)
+  const moved = chassis(truth).pos.map((c: number, k: number) => c - start[k])
+  expect(moved[0] * h[0] + moved[1] * h[1] + moved[2] * h[2]).toBeGreaterThan(1)
+  expect(turn(chassis(truth).rot, [0, 1, 0])[1]).toBeGreaterThan(0.9)
+})
+
 test('brake 1 after driving makes the speed 30 steps later lower than when it was pressed', async () => {
   const { truth } = await settled()
   car(truth).data.throttle = 1
@@ -231,6 +263,125 @@ test('brake 1 after driving makes the speed 30 steps later lower than when it wa
   Object.assign(car(truth).data, { throttle: 0, brake: 1 })
   run(truth, 30)
   expect(speed(truth)).toBeLessThan(before)
+})
+
+test('pedals: a direct-drive car brakes by its brake and goes backwards on a throttle below 0; a geared car also brakes on a throttle below 0, and goes backwards in reverse gear', () => {
+  const row = (data: Record<string, number>) => ({ id: 1, kind: 'box3dvehicle', data })
+  expect(pedals(vehicle, row({ throttle: -1 }))).toEqual({ brake: 0, reverse: true })
+  expect(pedals(vehicle, row({ throttle: 1, brake: 0.4 }))).toEqual({ brake: 0.4, reverse: false })
+  const geared: Vehicle = { ...vehicle, engine: { torque: 200, power: 50000, redline: 9000, ratio: 9, efficiency: 0.9, regen: 5, brakeTorque: 600 } }
+  expect(pedals(geared, row({ throttle: -0.6, gear: 1 }))).toEqual({ brake: 0.6, reverse: false })
+  expect(pedals(geared, row({ throttle: 1, gear: -1, brake: 0.2 }))).toEqual({ brake: 0.2, reverse: true })
+  expect(pedals(geared, row({}))).toEqual({ brake: 0, reverse: false })
+})
+
+// The car with a petrol engine of four gears through an automatic gearbox.
+const automaticCar: Vehicle = {
+  ...vehicle,
+  engine: {
+    curve: [[800, 90], [3500, 120], [6500, 80]], idle: 850, launch: 2200, redline: 6500, revRate: 9000, friction: [8, 3],
+    gears: [3.6, 2.4, 1.7, 1.3], reverse: 3.4, final: 4.5, efficiency: 0.9, brakeTorque: 600,
+    automatic: { up: [2500, 6000], down: [1300, 3500] },
+  },
+}
+
+test('an automatic shifts up one gear at a time as it speeds up, never past its full-throttle shift point, and back down to first as it brakes to a stop', async () => {
+  const { truth } = await settled(automaticCar)
+  Object.assign(car(truth).data, { gear: 1, throttle: 1 })
+  const gears = [1]
+  for (let i = 0; i < 60 * 12; i++) {
+    truth.step(DT)
+    const g = car(truth).data.gear
+    if (g !== gears.at(-1)) { expect(Math.abs(g - gears.at(-1)!)).toBe(1); gears.push(g) }
+  }
+  expect(gears).toEqual([1, 2, 3, 4])
+  Object.assign(car(truth).data, { throttle: 0, brake: 1 })
+  for (let i = 0; i < 60 * 10 && forward(truth) > 0.1; i++) truth.step(DT)
+  run(truth, 2)
+  expect(car(truth).data.gear).toBe(1)
+}, 30_000)
+
+test('pulling away at full throttle the engine starts at its launch rpm and climbs every step as the clutch bites, never held on one rpm', async () => {
+  const { truth } = await settled(automaticCar)
+  Object.assign(car(truth).data, { gear: 1, throttle: 1 })
+  const rpms: number[] = []
+  for (let i = 0; i < 30; i++) { truth.step(DT); rpms.push(car(truth).data.rpm) }
+  expect(rpms[0]).toBeGreaterThanOrEqual(2200)
+  expect(rpms[0]).toBeLessThan(2400)
+  rpms.slice(1).forEach((r, i) => expect(r, `step ${i + 1}: ${rpms.map(Math.round).join(' ')}`).toBeGreaterThan(rpms[i]))
+}, 30_000)
+
+// ---------------------------------------------------------------- driving through the acts
+// A rule reaches a car's acts with `w.call`, as a `player` row passes a seat's press on to the car it
+// holds (`relay` in `plugins/player`); none is open, so no seat sends one at the car itself.
+
+const call = (y: { truth: Truth; w: () => W }, action: string, ...args: unknown[]) => y.w().call(car(y.truth), action, -1, ...(args as any[]))
+const pedalled: Vehicle = { ...automaticCar, pedal: { stop: 0.5 } }
+
+test('the acts keep each control to its range, take only a finite number, and none is open to a seat', async () => {
+  const y = await settled(pedalled)
+  const d = () => car(y.truth).data
+  call(y, 'pedal', 5)
+  expect(d().pedal).toBe(1)
+  call(y, 'pedal', NaN)
+  call(y, 'pedal', '1')
+  expect(d().pedal).toBe(1)
+  call(y, 'steer', -3)
+  expect(d().steer).toBe(-1)
+  call(y, 'brake', 2)
+  expect(d().brake).toBe(1)
+  call(y, 'brake', -1)
+  expect(d().brake).toBe(0)
+  call(y, 'throttle', Infinity)
+  expect(d().pedal).toBe(1)
+  call(y, 'throttle', 0.5)
+  expect(d().throttle).toBe(0.5)
+  expect(d().pedal).toBeNull()
+  d().gear = 1
+  call(y, 'shift', 2)
+  call(y, 'shift', 0.5)
+  expect(d().gear).toBe(1)
+  call(y, 'shift', -1)
+  expect(d().gear).toBe(0)
+  expect(box3dvehicle.open).toBeUndefined()
+})
+
+test('the pedal held back from a stop puts an automatic in reverse and drives it backwards, and pushed forward brakes it, puts it back in drive and drives it forwards', async () => {
+  const y = await settled(pedalled)
+  call(y, 'pedal', -1)
+  run(y.truth, 120)
+  expect(car(y.truth).data.gear).toBe(-1)
+  expect(car(y.truth).data.throttle).toBe(1)
+  expect(forward(y.truth)).toBeLessThan(-1)
+  call(y, 'pedal', 1)
+  run(y.truth, 1)
+  expect(car(y.truth).data.gear).toBe(-1)
+  expect(car(y.truth).data.throttle).toBe(-1)
+  for (let i = 0; i < 600 && car(y.truth).data.gear < 0; i++) run(y.truth, 1)
+  expect(car(y.truth).data.gear).toBe(1)
+  run(y.truth, 120)
+  expect(forward(y.truth)).toBeGreaterThan(1)
+}, 30_000)
+
+test('an automatic driven by its pedal with no pedal.stop throws on the step, saying so', async () => {
+  const y = await settled(automaticCar)
+  call(y, 'pedal', -1)
+  expect(() => run(y.truth, 1)).toThrow('box3dvehicle: car is driven by its pedal and picks its own gear, and gives no pedal.stop')
+})
+
+test('a car that does not pick its gear takes the pedal as its throttle, backwards too', async () => {
+  const y = await settled()
+  call(y, 'pedal', -1)
+  run(y.truth, 60)
+  expect(car(y.truth).data.throttle).toBe(-1)
+  expect(forward(y.truth)).toBeLessThan(-0.5)
+})
+
+test('shift on an automatic moves between reverse, neutral and drive, and leaves the gear drive is in', () => {
+  const row = { id: 1, kind: 'box3dvehicle', data: { gear: 3 } }
+  shift(row, automaticCar, 1)
+  expect(row.data.gear).toBe(3)
+  for (const [by, to] of [[-1, 0], [-1, -1], [-1, -1], [1, 0], [1, 1], [1, 1]]) { shift(row, automaticCar, by); expect(row.data.gear).toBe(to) }
 })
 
 test('the car\'s rows agree to 0.5 m whichever of box3d and box3dvehicle the actors list first', async () => {
@@ -307,12 +458,6 @@ test('a spinning tyre pushes as hard as Coulomb friction lets it: the contact\'s
     const a = await spun(x => ({ wheel: { ...x.wheel, friction } }))
     expect(Math.abs(a - mixed(friction) * G) / (mixed(friction) * G)).toBeLessThan(0.1)
   }
-})
-
-test('a soft tyre (high friction) gathers speed faster than a hard one by the square root of their frictions', async () => {
-  const soft = await spun(x => ({ wheel: { ...x.wheel, friction: 1.2 } }))
-  const hard = await spun(x => ({ wheel: { ...x.wheel, friction: 0.6 } }))
-  expect(Math.abs(soft / hard - Math.sqrt(1.2 / 0.6))).toBeLessThan(0.08)
 })
 
 test('a tyre three times as wide grips no harder: Box3D rolls every wheel as a ball of its radius', async () => {

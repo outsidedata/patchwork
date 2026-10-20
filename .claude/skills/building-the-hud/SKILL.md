@@ -1,6 +1,6 @@
 ---
 name: building-the-hud
-description: Use in core, or any clone of it, when drawing anything over the game - a score, health, lives, ammo, a timer, a health bar or nameplate over a thing, a minimap, an inventory, a menu, a pause or game-over screen, a dialog or modal, a settings screen for the volume or mute, chat and party frames, a cutscene's bars and lines. That covers the `ui` plugin (`world.ui` panels, keys and styles, `show`, `button`, `bar`, `iris`, `pin`, `surface`, modals, `open`/`dismiss`/`opened`, focus), the `store` plugin for values only the page keeps, a picture the HUD shows (`"for": "ui"`), reading what the HUD shows off the rows the seat is sent, and testing a HUD on a page in node. Also use it when the HUD does not show, throws `ui has not ticked yet` or `holds a child show did not hand out`, a menu takes no keys, or Escape will not leave a pause screen.
+description: Use in core, or any clone of it, when drawing anything over the game - a score, health, lives, ammo, a timer, a health bar or nameplate over a thing, a minimap, an inventory, a menu, a pause or game-over screen, a dialog or modal, a settings screen for the volume or mute, chat and party frames, a cutscene's bars and lines. That covers the `ui` plugin (`world.ui` panels, keys and styles, `show`, `button`, `bar`, `iris`, `pin`, `surface`, modals, `open`/`dismiss`/`opened`, focus), the `store` plugin for values only the page keeps, a picture the HUD shows (`"for": "ui"`), reading what the HUD shows off the rows the seat is sent (the seat's own score, health, ammo and lives off its own `player` row, `possessed` or `mine`, drawn the frame after the key on a page that runs ahead), and testing a HUD on a page in node. Also use it when the HUD does not show, throws `ui has not ticked yet` or `holds a child show did not hand out`, a menu takes no keys, or Escape will not leave a pause screen.
 ---
 
 # Building the HUD
@@ -38,15 +38,25 @@ skills instead:
 
 ## Where each piece goes
 
-- The value shown changes while the game runs, so it is a field of a row. A new system is a new kind,
-  never a field added to a kind that exists for another reason: a score is a kind of its own, never a
-  `score` field on the body or on the `player` row (`designing-a-kind`). A score the seats share is
-  one `actors` entry. A score each seat has is a public row of that kind which the seat's `player` row
-  spawns in its `before` and keeps by id, and which ends itself in its own `before` once no `player`
-  row names it, as the generated `body` does (`addons/player/player.addon.ts`). A score carried in
-  from the last scene arrives on the `player` row as `arrive` and waits in one field of it, `carried`
-  say, only until `before` spawns the seat's tally from it; the count that changes is the tally's
-  (`scene-flow`, step 7).
+- The value shown changes while the game runs, so it is a field of a row. Which row is the prime
+  directive's first question, Row or local:
+  - The seat's own state, its health, ammo, score, lives, laps, progress, is a field of its `player`
+    row, since the `player` row is the thing the seat plays as (`designing-a-seat`). Every seat is sent
+    every `player` row, and a page running the scene ahead draws its own from the copy that runs ahead
+    (`addons/predict`), so a readout of it changes on the frame after the press that changed it. A
+    score only its own seat may read is listed in the scene's `security` block,
+    `{ "player": { "score": "me" } }` with `masks: []` on the player prefab, never moved to another
+    row to hide it. A seat's own state is never kept on a row of another kind, a tally the `player`
+    row spawns say (`designing-a-seat`).
+  - A value the seats share, a team's score, the round's clock, is a kind of its own with one `actors`
+    entry. A new system is a new kind, never a field added to a kind that exists for another reason
+    (`designing-a-kind`).
+  - A value carried in from the last scene arrives on the `player` row as `arrive`, which writes it
+    onto the row's own field, `score` say, where it goes on changing (`scene-flow`, What crosses a
+    move).
+  - What only this page feels, a flash as the seat's own health drops, a number counting up to the
+    score, is local: the look keeps what it last drew in its module and works the flash out from the
+    row's field, and nothing of it is a row.
 - A value only the page uses and the server never reads, the volume, the mute, a brightness, a theme,
   is a key of the store. The store is the page's: the server never reads it, writes it or is sent it.
 - How one of the game's things looks, its readout included, is that kind's actor, `<kind>.client.ts`
@@ -82,6 +92,8 @@ skills instead:
 - The page: nothing. `index.html` and `client.html` as `yarn new-game` writes them already make a
   canvas for `ui` over the game's whenever the scene lists it (the `MOUNT` lines of
   `extensions/games/games.route.ts`), and the editor's game view does the same (`editor/session.ts`).
+  `client.html` wraps its link in `predict` (the prime directive's The pages), which the template does
+  not write yet; a game's `client.html` is put in that shape before its HUD is checked over a network.
   A page mounts things: no rule, number, readout, listener or scene name. `dev.html`, the testbed, is
   the one page that may add readouts of its own while something is being found out, and nothing of it
   reaches the game.
@@ -91,19 +103,26 @@ skills instead:
 A look is handed its own row each frame, and `plugins.wire.rows` holds every row the seat was sent.
 The HUD can only show what the seat is sent:
 
-- A `player` row is sent to its own seat alone (`addons/player/player.addon.ts`). Its look runs on that
-  seat's page and on no other, and a value on it is seen by that seat only. A value every seat must see
-  is on a row every seat is sent. A public row per seat is sent to every seat, so its look runs on
-  every page once per seat: a look that draws only the seat's own tells it by the id the seat's
-  `player` row keeps, the one `player` row in `plugins.wire.rows`, and one that draws them all, a
-  scoreboard, places each by its own row.
+- Every `player` row is sent to every seat (`addons/player/player.addon.ts`), so its look runs on every
+  page once per seat, and a value on it is seen by every seat unless the scene's `security` block
+  lists it. The seat's own is the one that carries `mine: true`, a field no other seat is sent.
+  `player.client.ts` draws the seat's own readouts behind `if (row.data.mine)`; any other kind's look
+  or a plugin finds the seat's own row with `possessed(plugins.wire.rows)`, imported from
+  `#plugins/player/player.plugin.ts`, never with `rows.find(r => r.kind === 'player')`, which is
+  whichever seat's row came first. A scoreboard that draws every seat places each `player` row by its
+  own fields.
+- On a page that runs the scene ahead (`client.html`, wrapping `predict`), every row is the copy's,
+  so a readout of anything a press changed shows it the frame after the key.
 - Under a `security` block, a field the seat was not sent is not a key of the row's `data` at all, so
   a look that reads one tests for it with `in`.
 - Under `interest` a seat is sent only the rows near it, and under `vision` only what its team sees
   (`addons/interest/interest.addon.ts`, `addons/vision/vision.addon.ts`). A minimap drawn from
   `plugins.wire.rows` shows those rows and no others.
-- A value a rule sets for one step and clears is missed whenever two packets land in one frame. An
-  event the page shows once is raised on a ledger (`designing-a-kind`, `sound`).
+- A value a rule sets for one step and clears is missed whenever two packets land in one frame. The
+  HUD's answer to the seat's own thing is read off the seat's own `player` row as its fields change: a
+  hit flash is the row's `health` lower than the look last saw it, a shot's kick is `ammo` lower, and
+  a sound of it is raised `from` the row and rides its `voiced` list (`sound`). An event of another
+  kind's row the page shows once is raised on a ledger (`designing-a-kind`, `sound`).
 
 ## What the ui plugin does
 
@@ -117,7 +136,7 @@ The HUD can only show what the seat is sent:
   },
   "keys": { "up": "ArrowUp", "down": "ArrowDown", "left": "ArrowLeft", "right": "ArrowRight", "press": ["Enter", " "], "back": "Escape" },
   "styles": {
-    "score": { "fontFamily": "monospace", "fontSize": 20, "fill": 16777215 },
+    "score": { "fontFamily": "monospace", "fontSize": 20, "fill": 16777215, "stroke": { "color": 0, "width": 3, "join": "round" } },
     "title": { "fontFamily": "monospace", "fontSize": 28, "fill": 16777215 },
     "button": { "size": [64, 32], "radius": 4, "fill": { "color": 3355443 }, "focus": { "color": 7829367 }, "text": { "fontFamily": "monospace", "fontSize": 16, "fill": 16777215 } },
     "wide": { "size": [136, 32], "radius": 4, "fill": { "color": 3355443 }, "focus": { "color": 7829367 }, "text": { "fontFamily": "monospace", "fontSize": 16, "fill": 16777215 } },
@@ -142,6 +161,11 @@ The HUD can only show what the seat is sent:
 - `style(name)` hands back a copy of one of `styles`, an options object passed as it is to PixiJS or
   to `button` and `bar`. A style may carry more than they read, as `volume` above carries the bar's
   `fill` and `muted` colours for the look to pick from.
+- A text style's outline, `stroke`, always carries `"join": "round"`, as `score` above does. PixiJS
+  draws it with the canvas's `strokeText`, whose corners are mitred by default: at every sharp point
+  of a glyph (the tips of W, V, A, M and 1, a serif's ends) the outline runs out up to 10 times its
+  width, and a 3 px outline grows spikes all round the words. A round join keeps the outline on the
+  glyph.
 
 An actor puts a thing on a panel with `ui.show(panel, key, make)` in its `tick`, every frame it wants
 the thing shown. `make` runs the first time and the same object comes back every frame after, for the
@@ -204,7 +228,7 @@ A panel whose entry says `modal` has the input while it shows anything. A see-th
 size of the canvas lies under it, so every click lands on the modal; every key from the keyboard goes
 to the UI but `back` on a screen the game puts up (below); no gamepad key reaches the game at all
 (below); and the player plugin, which asks `ui.modal()` each frame, lets go of every key the game held
-and of the pointer lock, so a body walking when the screen came up stops. Of two modals showing
+and of the pointer lock, so a seat's `player` row walking when the screen came up stops. Of two modals showing
 things, the one on the higher layer has the input, and of two on one layer the one `world.ui` lists
 later. When a modal takes the input the focus goes to the first interactive thing on it, in the order
 its things were first shown, so the thing to focus first is shown first; when a modal over it closes
@@ -241,8 +265,9 @@ player looks at while the game goes on is one the player opens.
 
 ## A HUD plugin of the game's own
 
-A HUD drawn from the rows of several of the game's kinds, a status bar of one kind's health, another's
-ammo and a third's score, or a minimap of every body and door, is a plugin of the game's own: a system
+A HUD drawn from the rows of several of the game's kinds, a status bar of the seat's own `player` row's
+health and ammo beside the round's clock and the boss's health, or a minimap of every `player` row and
+door, is a plugin of the game's own: a system
 of one game's (`plugins/shipped/shipped.plugin.ts`, and the prime directive's third home question).
 
 - Its browser half is `games/<game>/plugins/<name>/<name>.plugin.ts`, exporting `export function
@@ -276,15 +301,43 @@ Building it is `building-a-plugin`.
 
 ## The work in order
 
-The example all the way through: a coin a body takes raises a score shown in the corner, Escape
-pauses, and the pause screen sets the volume.
+The example all the way through: a coin a seat's `player` row takes raises that seat's score, shown in
+its corner, Escape pauses, and the pause screen sets the volume. A game made with `yarn new-game`
+starts with a `player` row that spawns a `body` and forwards `move` to it; that `body` is folded into
+the `player` row first, its fields onto the `player` prefab, its rule into `player.sim.ts`, its look
+into `player.client.ts`, and `body` gone from the sim, the scene, the data file and the test
+(`designing-a-seat`). The template is the editor's, which is on hold; it is never the model.
 
 1. Ask the person making the game what the HUD shows, where, and what each screen does. That is
    content, and it is theirs.
-2. The value on a row, by `designing-a-kind`: here a score the seats share, a `tally` kind,
-   `{ "count": 0 }` in the scene's prefabs and one `actors` entry, whose act `add(worth)` the coin's
-   rule calls, `w.call(w.find('tally'), 'add', -1, worth)`, with its `<kind>.sim.test.ts`. A score each
-   seat has is a row per seat, spawned by its `player` row (Where each piece goes).
+2. The value on a row. Here the seat's own score: a `score` field of the `player` prefab,
+   `"player": { "seat": 0, "pos": [0, 0], "move": [0, 0], "score": 0 }`, beside the fields of the thing
+   the seat plays as (`designing-a-seat`). The coin's rule raises it through an act of the `player` row
+   that does nothing when a seat sent it, so no seat sends itself points (`designing-a-seat`, Acts a
+   seat can send):
+
+   ```ts
+   // player.sim.ts, among its acts
+   score(me, _w, seat, worth: number) {
+     if (seat >= 0) return
+     me.data.score += worth
+   },
+
+   // coin.sim.ts
+   after(me, _dt, w) {
+     const { reach, worth } = def(w, me.kind)
+     const [x, y] = me.data.pos
+     const p = w.all('player').find(p => math.hypot(p.data.pos[0] - x, p.data.pos[1] - y) <= reach)
+     if (!p) return
+     w.call(p, 'score', -1, worth)
+     w.end(me)
+   },
+   ```
+
+   Each with its `<kind>.sim.test.ts`, a seat sending `score` at its own row among them, refused and
+   changing nothing. A score the seats share, a team's, is a kind of its own with one `actors` entry,
+   a `tally` with `{ "count": 0 }` and an act `add` the coin's rule calls the same way
+   (`designing-a-kind`), drawn by the tally's own look.
 3. The scene file, `games/<game>/<scene>.scene.json`: list `ui` in `plugins`, and `store` when a
    screen sets page-only values. A plugin that draws on the ui in its `afterTick` goes before `ui`.
 4. `world.ui` in the same file: a panel per region (the `hud` corner, the `pause` modal), the six keys,
@@ -293,7 +346,8 @@ pauses, and the pause screen sets the volume.
    shown there, keyed by the kind whose look draws it, and the name of any picture it draws:
 
    ```json
-   "tally": { "picture": "coin.ui", "icon": [0, 4], "count": [24, 0] },
+   "player": { "speed": 240, "size": 32, "colour": "#e8c547",
+               "hud": { "picture": "coin.ui", "icon": [0, 4], "score": [24, 0] } },
    "pause": { "title": { "at": [24, 16], "text": "Paused" }, "bar": { "at": [24, 92] },
               "down": { "at": [24, 116], "text": "-" }, "up": { "at": [96, 116], "text": "+" },
               "mute": { "at": [168, 116], "text": "Mute" }, "resume": { "at": [24, 156], "text": "Resume" },
@@ -315,7 +369,11 @@ pauses, and the pause screen sets the volume.
    "coin.ui": { "type": "texture", "url": "/games/<game>/assets/coin.png", "for": "ui", "preload": true }
    ```
 
-7. The look, `games/<game>/tally.client.ts`, everything in `tick`:
+7. The look, `games/<game>/player.client.ts`, everything the HUD shows in `tick`. The look is loaded
+   once for every `player` row the page is sent; it draws the thing for every row, so each seat sees
+   the others, and shows the HUD only for the row that is `mine`, so a page shows its own seat's score
+   and never every seat's on top of each other (`designing-a-seat`, The look). On a page running the
+   scene ahead, this row is the copy's, so the score turns over on the frame after the coin is taken:
 
    ```ts
    import type * as PIXI from 'pixi.js'
@@ -323,28 +381,37 @@ pauses, and the pause screen sets the volume.
    import type { Plugins } from '#engine/browser.ts'
    import { def } from '#plugins/loader/loader.sim.ts'
 
-   export function setup() {}
-
-   export function tick(row: Row, plugins: Plugins) {
-     const { ui } = plugins
-     const { Sprite, Text } = ui.PIXI as typeof PIXI
-     const d = def(plugins.wire, row.kind)
-     const texture = plugins.loader.get(d.picture)
-     if (texture) ui.show('hud', 'icon', () => new Sprite(texture)).position.set(d.icon[0], d.icon[1])
-     const count = ui.show('hud', 'count', () => new Text({ text: '', style: ui.style('score') }))
-     count.position.set(d.count[0], d.count[1])
-     count.text = `${row.data.count}`
+   export function setup(row: Row, plugins: Plugins) {
+     // the thing made for every seat's row, and its keys bound only for the row that is `mine`
    }
 
-   export function remove() {}
+   export function tick(row: Row, plugins: Plugins) {
+     // the thing placed from `row`, for every seat's row
+     if (!row.data.mine) return
+     const { ui } = plugins
+     const { Sprite, Text } = ui.PIXI as typeof PIXI
+     const d = def(plugins.wire, row.kind).hud
+     const texture = plugins.loader.get(d.picture)
+     if (texture) ui.show('hud', 'icon', () => new Sprite(texture)).position.set(d.icon[0], d.icon[1])
+     const score = ui.show('hud', 'score', () => new Text({ text: '', style: ui.style('score') }))
+     score.position.set(d.score[0], d.score[1])
+     score.text = `${row.data.score}`
+   }
+
+   export function remove(plugins: Plugins) {
+     // the thing dropped, and the keys unbound for the row that was `mine`
+   }
    ```
+
+   A look of another kind, or a HUD plugin of the game's own, reads the same field off
+   `possessed(plugins.wire.rows)` (Reading what the HUD shows).
 
 8. A screen the game puts up. A `pause` kind, `{ "on": false }` and one `actors` entry, whose act
    `toggle` turns `on` over and which lists no `open`. The seat reaches it through its own `player`
    row: `player.sim.ts` gains `pause(_me, w, seat) { w.call(w.find('pause'), 'toggle', seat) }`, and
-   `player.client.ts` binds the key, `press: { Escape: ['pause'] }`. The press writes nothing but a row
-   whose act it called, so the player plugin runs it ahead and the screen is up the frame of the press.
-   Every rule that must stop honours it, as the body's `tick` returns while `w.find('pause').data.on`.
+   `player.client.ts` binds the key, `press: { Escape: ['pause'] }`. The press goes up the wire, and
+   the screen is up when the packet that carries the row's `on` arrives. Every rule that must stop
+   honours it, as the `player` row's `tick` returns while `w.find('pause').data.on`.
    The key bound to `pause` is a keyboard key that is `world.ui`'s `back`: on a screen the game put up
    the UI leaves `back` to the game and takes every other key, so a pause key that is not `back`
    pauses and then cannot play again, and no gamepad key reaches the game while the screen is up
@@ -352,7 +419,7 @@ pauses, and the pause screen sets the volume.
    button, which a pad reaches under `control` once `world.ui.keys` names the pad's keys beside the
    keyboard's (`"press": ["Enter", " ", "Pad0"]`), since the UI acts only on the keys it names. The
    look, `pause.client.ts`, shows the screen while the row is on, the thing to focus first shown
-   first (its imports, `setup` and `remove` as in step 7):
+   first (its imports as in step 7, with an empty `setup` and `remove`):
 
    ```ts
    export function tick(row: Row, plugins: Plugins) {
@@ -442,9 +509,17 @@ imports `editor/` at all.
 
 - The HUD drawn in `index.html`, or a readout or listener added to a page. A page mounts things; the
   HUD is a kind's look or a plugin of the game's own.
-- The value shown put on the `player` row or the body because it was near. It is a kind of its own:
-  the `player` row is the seat's handle, not a store of the game's state, and that holds for a score
-  only its own seat should see as much as for one every seat sees (`designing-a-kind`).
+- The seat's own score, health, ammo or lives kept on a row of another kind, a tally or a body the
+  `player` row spawns. It is a field of the seat's `player` row, listed in `security` when only its own seat may read it (`designing-a-seat`).
+- The seat's own row found with `rows.find(r => r.kind === 'player')`. That is whichever seat's row
+  came first, so a seat's HUD shows another seat's score. `player.client.ts` draws the HUD behind
+  `if (row.data.mine)`; anything else uses `possessed(plugins.wire.rows)`.
+- The HUD drawn for every `player` row in `player.client.ts`. Every seat's readout is shown on one
+  key, and the second `show` throws `ui showed <panel> <key> twice in one frame`. It is drawn only for
+  the row that is `mine`.
+- A hit flash or a pickup's glow of the seat's own thing raised on a ledger or a row of its own: a
+  second row for what the look already has. The look sees the change on the seat's own `player` row's fields, health
+  lower than it last drew it, and works the flash out itself, as local state in its module.
 - `ui.show` in `setup`. It throws `ui has not ticked yet` for a row in the first packet, and for a row
   born later the `tick` that shows the same key throws `ui showed <panel> <key> twice in one frame`.
   `store.get` in `setup` throws for a row in the first packet. Everything is shown and read in `tick`.
@@ -482,8 +557,8 @@ imports `editor/` at all.
 - A row's value copied into the store to show it on the next scene, a score on a game-over screen.
   The store holds only what the page alone keeps; what a seat carries crosses a move as `go`'s args
   (`scene-flow`, What crosses a move).
-- In a test, an arrow pressed while a modal is up to walk the body: it moves the focus, and the body
-  does not move.
+- In a test, an arrow pressed while a modal is up to walk the seat's `player` row: it moves the focus,
+  and the row does not move.
 
 ## How it is proven
 
@@ -498,7 +573,7 @@ Each file written has its test beside it, named after it, `.test.ts`, run in nod
 - The look, `<kind>.client.test.ts`, on a page made as `index.html` makes one:
   `view(link(loopback(accept(manager(truth)))), file, import.meta.url, mount)`, stepping the truth and
   calling `frame()`, as `plugins/store/store.plugin.test.ts` makes its pages. Read what it shows off
-  the panel by key, `ui.panel('hud').getChildByLabel('count').text`, and the picture's texture against
+  the panel by key, `ui.panel('hud').getChildByLabel('score').text`, and the picture's texture against
   `plugins.loader.get` of the ui's entry and not the game's. For a screen: the press of its key
   (`ui.took(e)` false on a screen the game puts up), `ui.modal()`, `ui.focused(...)` on the thing shown
   first, a button tapped with `emit('pointertap', ...)` or the focus moved and pressed with
@@ -523,11 +598,18 @@ Each file written has its test beside it, named after it, `.test.ts`, run in nod
   texture for one url, under which the two would be one. A test never reads a `Text`'s size.
 - Any test that presses a key the player plugin handles, the pause key bound in `player.client.ts`
   among them, or clicks something that sends through it, a mouse button a table binds or a button on
-  a screen whose tap calls `plugins.player.<act>()` (the Resume button), holds the page's clock,
-  `vi.spyOn(performance, 'now')` moved a step with each step it takes, since the player plugin counts
-  the steps between packets on it, and pins the step the press lands on: the row as it was on the
-  step before, and changed on that step (`input-and-seats`, How it is proven). It never steps a count
-  of frames, `step(2)` say, and reads the rows within a few steps.
+  a screen whose tap calls `plugins.player.<act>()` (the Resume button), pins the step the press
+  lands on: the row as it was on the step before, and changed on that step (`input-and-seats`, How it
+  is proven). It never steps a count of frames, `step(2)` say, and reads the rows within a few steps.
+- A readout of the seat's own state is checked on a page that runs the scene ahead, as `client.html`
+  runs it, beside the game's `<game>.predict.test.ts` (`designing-a-seat`, The proof): two pages made
+  with `predict(link(loopback(accept(manager(truth)), time, net)), file, base, mount)` on a clock the
+  test moves, one on a clean wire and one on each of the network panel's bad ones. The seat presses
+  what changes the field, a shot that spends ammo or a walk onto a coin; on the frame after the frame
+  the press was sent on, its page's `player` row (`possessed(page.client.plugins.wire.rows)`) holds
+  the new value and its HUD shows it, read off the panel by key, and the other seat's page shows its
+  own HUD unchanged. A readout read off any row but the seat's own `player` row fails this on every
+  bad wire.
 - A test that attaches the game to the editor's session (`session.attach`) in jsdom is a
   `.view.test.tsx` instead, run with `yarn test:view <file>`.
 - Once the tests pass, break the thing on purpose and see its test fail: change `world.ui`'s `back`,
@@ -537,7 +619,9 @@ Each file written has its test beside it, named after it, `.test.ts`, run in nod
 
 Then play it: `yarn editor <game>`, open `localhost:5173/games/<game>/index.html`, take a coin and see
 the score change, pause, move through the screen with the keys and the pointer, change the volume and
-hear it, and leave the screen with the same key. How it looks is checked in Chrome
+hear it, and leave the screen with the same key. Then run `<game>.server.ts` on node, open
+`client.html` in two tabs, and see each tab's score turn over on the frame after its own seat takes a
+coin, and the other tab's stay its own. How it looks is checked in Chrome
 (`.claude/skills/good-webviews/`): the HUD, and each screen in every state it has, closed and open,
 muted and not, a screenshot of each read for every line standing inside its background and every
 label inside its button. The work is not done until what those shots showed is reported.
@@ -545,15 +629,18 @@ label inside its button. The work is not done until what those shots showed is r
 ## Questions never asked
 
 - Should the page draw this? No: a kind's look, or a plugin of the game's own.
-- Can the score be a field of the `player` row? No: a kind of its own, a row per seat the `player` row
-  spawns, or one `actors` entry the seats share.
+- Can the seat's own score, health or ammo be a field of its `player` row? Yes: that is where it goes,
+  listed in `security` when only its own seat may read it. A score the seats share is a kind of its
+  own with one `actors` entry.
+- Can the seat's own score go on a row the `player` row spawns, to keep the `player` row small? No: the seat's
+  own state is a field of its `player` row (`designing-a-seat`).
 - Can this place, size or word go in the look's code? No: the kind's definition, and the panel's
   place in `world.ui`.
 - Can the HUD draw the texture the game decoded? No: its own `"for": "ui"` entry.
 - Can the volume go on a row or to the server? No: the store.
 - Should the `ui` plugin get a setting so this game's HUD can…? No: this game's kind draws it.
 - Should a HUD component come from `editor/ui/`? No: that is the editor's.
-- Should the controls screen go here? No: `input-and-seats`.
+- Should the controls screen go here? No: `building-a-controls-screen`.
 - Do you want the full version? Always.
 
 Ask the person making the game what the HUD shows and what each screen does. That is content, and it

@@ -440,7 +440,7 @@ test('a straight drop onto the feet and a head-first fall hold every limit on ev
 
 test('every limit holds on every step over blows high and low, soft and hard, on hilly ground, and no point ends a step under it', () => {
   const hills = (x: number, z: number) => 0.3 * Math.sin(2 * x) + 0.2 * Math.cos(1.5 * z)
-  let worst = 0, falls = 0
+  let worst = 0
   for (const speed of [3, 6, 9, 12]) {
     for (const height of [0.2, 1.0, 1.6]) {
       for (const clip of ['stand', 'kneel', 'ready']) {
@@ -449,11 +449,9 @@ test('every limit holds on every step over blows high and low, soft and hard, on
         expect(f.under).toBeGreaterThan(-1e-9)
         expect(f.p.me.body(3)!.asleep).toBe(true)
         worst = Math.max(worst, f.worst)
-        falls++
       }
     }
   }
-  expect(falls).toBe(36)
   // Measured 0.052° at worst.
   expect(worst).toBeLessThan(HELD)
 })

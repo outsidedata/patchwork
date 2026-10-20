@@ -59,6 +59,13 @@
 // shimmer, whatever the zoom.
 // A scene with no `world.render2d` has no world: its actors draw on the stage in canvas pixels.
 //
+// Between steps. Each frame, just before it draws, every thing on the stage is put between where the
+// last two steps left it, as far as the frame's wire says (`steps`, `engine/browser.ts`, Drawing
+// between steps): its position in a straight line, its turn the short way round, its scale; the
+// world and each layer, which the camera places, then go to the whole screen pixel nearest, as every
+// draw puts them; and once the frame is drawn each thing is put back where it was set. A frame whose
+// tick was not run, as a test that draws render2d alone runs it, draws everything where it is set.
+//
 // Parallax, as Tiled's layers have it. `parallax(name, fx, fy)` sets a layer's factor, across and
 // down the screen, from the next draw on; `world.render2d`'s `parallax` is its starting value, and a
 // layer given none has [1, 1]. When the camera's looked-at point moves some pixels on the screen, a
@@ -92,7 +99,7 @@
 // It is a PixiJS filter over the whole canvas on each such layer, one per size and shared by every
 // layer at that size.
 import * as PIXI from 'pixi.js'
-import type { Plugins } from '#engine/browser.ts'
+import { mixing, steps, type Plugins } from '#engine/browser.ts'
 
 type V2 = [number, number]
 type Layer = string | { name: string; sort?: boolean; parallax?: V2 }
@@ -187,6 +194,20 @@ export function render2d() {
   let ratio: MediaQueryList | undefined // true at the page's pixel ratio, until it changes
   const squares = new Map<string, number>() // each layer's mosaic size, once `mosaic` gives one
   const mosaics = new Map<number, PIXI.Filter>() // the mosaic filter of each size drawn
+  let wire: Plugins['wire'] | undefined // the wire as this frame's tick found it
+  // Every thing's position, turn and scale on the stage after the last two steps (Between steps).
+  const between = steps<PIXI.Container>(
+    c => [c.position.x, c.position.y, c.rotation, c.scale.x, c.scale.y],
+    (c, p) => { c.position.set(p[0], p[1]); c.rotation = p[2]; c.scale.set(p[3], p[4]) },
+    mixing([2]),
+    (c, on) => { if (on !== undefined) c.visible = on; return c.visible },
+  )
+  // The stage and everything on it.
+  const all = (c: PIXI.Container, out: PIXI.Container[] = []) => {
+    out.push(c)
+    for (const child of c.children) all(child, out)
+    return out
+  }
   // The mosaic filter of a size, made the first time a layer is drawn at it.
   const crush = (size: number) => {
     let f = mosaics.get(size)
@@ -261,6 +282,7 @@ export function render2d() {
       )
     },
     tick(plugins: Plugins) {
+      wire = plugins.wire
       if (world || table) return
       const scene = plugins.wire.scene
       const p = scene.world?.render2d as Table | undefined
@@ -396,7 +418,20 @@ export function render2d() {
       me.canvas.style.display = ''
       if (!renderer) return
       if (clear !== undefined) renderer.background.color = clear
-      renderer.render(stage)
+      if (wire) {
+        between.place(all(stage), wire)
+        // The camera between two steps stays on a whole screen pixel, the world's and each layer's.
+        if (world) {
+          const z = world.scale.x
+          world.position.set(Math.round(world.position.x), Math.round(world.position.y))
+          for (const c of layers.values()) c.position.set((Math.round(world.position.x + z * c.position.x) - world.position.x) / z, (Math.round(world.position.y + z * c.position.y) - world.position.y) / z)
+        }
+      }
+      try {
+        renderer.render(stage)
+      } finally {
+        between.restore()
+      }
     },
     // The renderer and its WebGL context go, with the mosaic filters, and the canvas leaves the page.
     // A renderer still being made when the client closes is destroyed the moment it arrives, and

@@ -17,9 +17,16 @@
 //     how often it bounces there, its dampers' ratios to critical, each wheel's load and the gap
 //     under the body; or, in a scene that names no gravity, that it names none (`WEIGHTLESS`).
 //
+// The grid shows every field the file's `world.box3dvehicle` holds, a vehicle's `look.model` among
+// them: its `at` as three numbers and its `scale` as a number, as the look's other fields, and its
+// `asset` as a field of its own type, `box3dvehicle.model` (bound to `vehicles.*.look.model.asset`),
+// a choice of the `model` entries of the scene's loader catalogue (`modelChoices`), the name there
+// marked when it is none of them.
+//
 // What the panel's sliders, its readouts and its grid do is done by functions here, which they and
 // the commands call alike: a car's inputs set by `drive`, its suspension read by `suspension`, and a
-// value of the design written as the editor's `worldGridEdits` holds a grid's fields.
+// value of the design written as the editor's `worldGridEdits` holds a grid's fields, a model's
+// `asset` refused unless it names a `model` entry of the catalogue (`unmodelled`).
 //
 // Its commands, for an LLM calling them (`editor/mcp.ts`), each doing what a person does here, on
 // any scene with cars, whatever the game view shows, since all of it is the rows and the files:
@@ -29,12 +36,14 @@
 //   vehicle.drive   a car's throttle, brake and steer set on the live row from this step on, as the
 //                   sliders set them;
 //   vehicle.design  values of the scene's `world.box3dvehicle` written, each a field the grid shows,
-//                   of the shape of the one there.
+//                   of the shape of the one there, a model's `asset` a `model` entry of the scene's
+//                   catalogue.
 // Each write is one undo, answering the state it left.
 import { z } from 'zod'
 import { reading, worldGridEdits, written, type Edits, type Editor } from '#editor/editor.ts'
 import type { Row, Truth } from '#engine/engine.ts'
-import { Vehicle as Panel } from './box3dvehicle.components.tsx'
+import { entriesOf } from '#plugins/loader/loader.extension.tsx'
+import { ModelName, Vehicle as Panel } from './box3dvehicle.components.tsx'
 import { corners, design, pull, ride, type Fleet, type Ride, type Vehicle } from './box3dvehicle.sim.ts'
 
 export const KIND = 'box3dvehicle'
@@ -81,6 +90,23 @@ export function rideOf(t: Truth): Record<string, ({ axle: number } & Ride)[]> | 
   return Object.fromEntries(Object.entries(fleet.vehicles).map(([name, v]) => [name, ride(v, g).map((r, i) => ({ axle: i, ...r }))]))
 }
 
+// The type of the field a vehicle's `look.model.asset` is drawn as.
+export const MODEL = 'box3dvehicle.model'
+const MODEL_ASSET = /^vehicles\.[^.]+\.look\.model\.asset$/
+
+// What a model field offers: each `model` entry of the catalogue, `models`, and the name it holds,
+// marked when it is none of them.
+export const modelChoices = (value: string, models: string[]) =>
+  [...new Set([value, ...models])].map(n => ({ value: n, label: models.includes(n) ? n : `${n} (not in the catalogue)` }))
+
+// Why `values`, by their paths in `world.box3dvehicle`, are refused: a model's `asset` that is no
+// `model` entry of the catalogue, `models`; undefined when none is.
+export function unmodelled(values: Record<string, unknown>, models: string[]): string | undefined {
+  const bad = Object.entries(values).filter(([path, v]) => MODEL_ASSET.test(path) && !models.includes(v as string))
+  if (!bad.length) return undefined
+  return `${bad.map(([path, v]) => `${path} is ${JSON.stringify(v)}`).join(', ')}, and the catalogue's models are ${models.join(', ') || 'none'}`
+}
+
 // Car `id` of scene `scene`, refused naming the scene's cars.
 function carOf(ed: Editor, scene: string, id: number): Row {
   const cars = carsOf(ed.sceneOf(scene, KIND))
@@ -91,6 +117,8 @@ function carOf(ed: Editor, scene: string, id: number): Row {
 
 export function box3dvehicle(ed: Editor) {
   ed.panel({ id: 'box3dvehicle', title: 'Vehicle', area: 'right', component: Panel })
+  ed.field(MODEL, ModelName)
+  ed.bind(KIND, { 'vehicles.*.look.model.asset': MODEL })
 
   const scene = z.string().describe('a scene with cars')
   const id = z.number().int().describe('a car, by its row id')
@@ -141,10 +169,13 @@ export function box3dvehicle(ed: Editor) {
     input: z.object({
       scene: z.string().describe('a scene with a world.box3dvehicle'),
       values: z.record(z.string(), z.union([z.number(), z.boolean(), z.string(), z.array(z.number())])).describe('values by their paths in world.box3dvehicle joined by dots, as "vehicles.jeep.engine.final" or "vehicles.jeep.axles.0.at": numbers, booleans, strings, or lists of as many numbers'),
-    }).describe('Writes values of a scene\'s world.box3dvehicle, as the Vehicle panel\'s grid does, the car made again from them: one undo, each refused unless it is a field the grid shows and of the shape of the one there. Answers the design and each axle\'s ride.'),
+    }).describe('Writes values of a scene\'s world.box3dvehicle, as the Vehicle panel\'s grid does, the car made again from them: one undo, each refused unless it is a field the grid shows and of the shape of the one there, and a vehicle\'s look.model.asset unless it names a model entry of the scene\'s loader catalogue. Answers the design and each axle\'s ride.'),
     run: async ({ scene, values }, e) => {
       const { file, value: design } = ed.worldOf(scene, KIND)
-      await written(e, worldGridEdits(ed, KIND, file, design, values))
+      const edits = worldGridEdits(ed, KIND, file, design, values)
+      const refused = unmodelled(values, entriesOf(ed, scene, 'model'))
+      if (refused) throw new Error(refused)
+      await written(e, edits)
       return { scene, file, design: ed.worldOf(scene, KIND).value, ride: rideOf(ed.sceneOf(scene)) }
     },
   })

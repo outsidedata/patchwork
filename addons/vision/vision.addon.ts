@@ -1,8 +1,9 @@
 // Team vision, fog of war: a piece on a truth that sends each seat only the rows its team sees. A
 // row is sent to a seat when the row is its team's own, or when it stands on a cell a row of its
 // team sees, within that seer's sight. A row of a kind the block lists in `always` is sent to every
-// seat wherever it is, and so is a row with no place: a manager, the ground, a player row, anything
-// that is not a thing on the map. A row that walks out of sight is in the seat's next packet's
+// seat wherever it is, and so is a row with no place: a manager, the ground, anything that is not a
+// thing on the map. A `player` row is the thing its seat plays as, and stands where its place says
+// like any other row; its team is the slot in its `seat`. A row that walks out of sight is in the seat's next packet's
 // `ended`, and one that walks back in is in its `born`, as if it had been spawned again. Vision
 // limits what is sent, never what the rules know: the truth holds every row, and a rule that must
 // act only on what a team sees asks `sees`.
@@ -29,7 +30,8 @@
 // `always` kinds.
 //
 // A rule asks `sees(w.world, slot, row)`: whether the team of that slot sees the row, its own rows
-// always. On a world no vision is attached to, the page's copy of the rules say, it is true. What a
+// always. On a world no vision is attached to, a truth before `addons/player` first seats a seat on
+// it, it is true. What a
 // team is sent of any rows, with or without a seat, is `visible` over the grids `sight` makes of them,
 // which is what `show` asks, and what the editor's Vision panel shows (`vision.extension.tsx`).
 //

@@ -100,6 +100,7 @@
 // its `file`, and whoever opens a store closes it. `node:sqlite` is reached only inside `sqlite`,
 // so the page, which imports this file and calls only `indexeddb`, never loads it.
 import type { Arg, Row, Truth } from '#engine/engine.ts'
+import { onRewind, rewinding } from '#addons/rewind/rewind.addon.ts'
 
 export type Match = Record<string, Arg>
 export type Store = {
@@ -133,7 +134,7 @@ function declared(truth: Truth, me: Row): Map<string, Spec> {
 export function persist(truth: Truth, store: Store): Persist {
   const mine = truth.rows.filter(r => r.kind === 'persist')
   if (mine.length !== 1) throw new Error(`${mine.length} persist rows, need 1`)
-  const me = mine[0]
+  let me = mine[0]
   const kinds = declared(truth, me)
   const every: number = me.data.every
 
@@ -252,13 +253,25 @@ export function persist(truth: Truth, store: Store): Persist {
     show: (_seat, row) => row !== me,
     hide: () => [],
     accept: () => true,
+    // A load landing changes the truth between steps, so a rewind never runs a step again from
+    // before one (`addons/rewind`): the steps it runs again ran with no load out, and do so again.
     advance: () => {
       if (broke) throw broke
-      return out.size === 0
+      return out.size === 0 || rewinding(truth)
     },
     spawn: track,
   })
+  // The steps a rewind runs again write nothing: what they come to is written after the step that
+  // follows, as the rows then stand. The rows are new objects once it has, which are tracked in place
+  // of those they replace.
+  onRewind(truth, () => {
+    me = truth.rows.find(r => r.id === me.id) ?? me
+    const now = new Map(truth.rows.map(r => [r.id, r]))
+    for (const [id, row] of tracked) tracked.set(id, now.get(id) ?? row)
+    for (const row of truth.rows) track(row)
+  })
   truth.onStep(() => {
+    if (rewinding(truth)) return
     ended()
     let left = false
     for (let s = 0; s < truth.seats; s++) if (truth.closed(s) && !closed.has(s)) { closed.add(s); left = true }

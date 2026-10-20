@@ -64,10 +64,11 @@ test('each page that dials gets a seat and loses it on close, and one with no se
   const server = await serve(PORT, accept(manager(truth)))
   const url = `ws://localhost:${PORT}`
   const players = () => room.rows.filter(r => r.kind === 'player').map(r => r.data.seat).sort()
-  // The seats a page's player rows name, off the first envelope it hears after this.
+  // The seat a page's own player row names, off the first envelope it hears after this: every page
+  // is sent every player row, and its own is the one that is `mine`.
   const seenBy = (page: ReturnType<typeof link>) => new Promise<number[]>(r => {
     let done = false
-    page.hear((d: Down) => { if (!done) { done = true; r(d.packet.rows.filter(x => x.kind === 'player').map(x => x.data.seat)) } })
+    page.hear((d: Down) => { if (!done) { done = true; r(d.packet.rows.filter(x => x.kind === 'player' && x.data.mine === true).map(x => x.data.seat)) } })
   })
 
   // One after the other: two sockets dialled at once connect in either order.
@@ -138,6 +139,33 @@ test('a send before the socket is open waits for it', async () => {
   const page = dial<number, never>(`ws://localhost:${PORT + 1}`)(() => {})
   page.send(1); page.send(2); page.send(3)
   await vi.waitFor(() => expect(heard).toEqual([1, 2, 3]))
+  page.close()
+  await server.close()
+})
+
+// Bytes cross as the bytes they are, each way: a `Uint8Array` at the top of a message, in an object,
+// in an array, empty, and a node `Buffer` that is a slice of a larger one. Everything around them
+// crosses as JSON does, and a message of plain JSON between two of bytes arrives in its order.
+test('a Uint8Array anywhere in a message crosses as its bytes, in its place, each way and in order', async () => {
+  const pattern = (n: number, k: number) => Uint8Array.from({ length: n }, (_, i) => (i * k + 3) & 255)
+  const pool = Buffer.from(pattern(4096, 13))
+  const message = () => ({
+    held: { 4: { image: pattern(1_300_000, 31), live: { gravity: [0, -10, 0] } } },
+    list: [1, pattern(3, 11), 'x', new Uint8Array(0)],
+    sliced: pool.subarray(1000, 1500),
+  })
+  const want = [{ before: 1 }, { ...message(), sliced: new Uint8Array(pool.subarray(1000, 1500)) }, { between: 2 }, pattern(16, 3)]
+  const heard: unknown[] = []
+  const server = await serve<unknown, unknown>(0, send => ({ take: up => { heard.push(up); send(up) }, close() {} }))
+  const got: unknown[] = []
+  const page = dial<unknown, unknown>(`ws://localhost:${server.port}`)(down => { got.push(down) })
+  page.send({ before: 1 })
+  page.send(message())
+  page.send({ between: 2 })
+  page.send(pattern(16, 3))
+  await vi.waitFor(() => expect(got.length).toBe(4))
+  expect(heard).toEqual(want)
+  expect(got).toEqual(want)
   page.close()
   await server.close()
 })

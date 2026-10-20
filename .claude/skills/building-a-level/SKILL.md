@@ -1,6 +1,6 @@
 ---
 name: building-a-level
-description: Use in core, or any clone of it, when laying out the place a game is played in: a level, map, stage, room, arena or dungeon, its ground, walls and collision. Covers a Tiled map (`.tmj`, `.tsj`) as a data file in `assets/` the scene names, the `tilemap` plugin (`world.tilemap`, `blocked`, `slide`, `sweep`, `clear`, `edits`) on render2d's world, the other plugins that hold ground and layout (`grid`, `terrain3d`, `scatter3d`, `solids`, `nav`, `mapgen`, the `interest` addon), placing actors and each seat's `start` on a level (`actors`, `<level>.actors.json`, `actorsFile`), levels generated from a seed, a game of many levels, a game's own level tool, and the editor's Actors, Hierarchy, Inspector and Tiles panels. Also when a body walks through a wall, a start stands in one, part of a level cannot be reached, or the map does not draw.
+description: Use in core, or any clone of it, when laying out the place a game is played in: a level, map, stage, room, arena or dungeon, its ground, walls and collision. Covers a Tiled map (`.tmj`, `.tsj`) as a data file in `assets/` the scene names, the `tilemap` plugin (`world.tilemap`, `blocked`, `slide`, `sweep`, `clear`, `edits`) on render2d's world, the other plugins that hold ground and layout (`grid`, `terrain3d`, `scatter3d`, `solids`, `nav`, `mapgen`, the `interest` addon), placing actors and each seat's `start` on a level (`actors`, `<level>.actors.json`, `actorsFile`), levels generated from a seed, a game of many levels, a game's own level tool, and the editor's Actors, Hierarchy, Inspector and Tiles panels. Also when the seat's `player` row walks through a wall, a start stands in one, part of a level cannot be reached, or the map does not draw.
 ---
 
 # Building a level
@@ -13,7 +13,11 @@ scene names, which a ground plugin draws and its rules ask. Nothing in it makes 
 are everything that has a row: the scene file's `actors` entries, then those of the
 `<level>.actors.json` its `actorsFile` names. A level drawn by hand is its map and the actors
 written in its scene file. A level a generator makes is the two files it writes, loaded the same
-way. Nothing makes a level while the game runs. A road or a track that no ground plugin draws is no
+way. Nothing makes a level while the game runs. Several scenes played on one level share a
+`<name>.partial_scene.json` of the level, its ground, its world and the actors every one of them
+places alike, and each `<scene>.scene.json` names it as `"extends"` and holds only what is its own
+(`scene-flow`, Scenes that share most of what they hold); never a copy of the level in each scene
+file. A road or a track that no ground plugin draws is no
 part of that environment: it is an actor, a kind with one `actors` entry (Where a level's pieces
 go).
 
@@ -55,9 +59,10 @@ on it. It does not cover:
   list in a definition and never an object in the map. It is a `start` actor per slot, an `actors`
   entry `{ "is": "start", "slot": <n>, "pos": [...] }` of the `start.sim.ts` that `yarn new-game`
   writes (`export const start: Kind = {}`: no rule, no drawing), standing on the level in the
-  level's own units, where a body of the size the seat plays stands clear of every wall. The seat's
-  `player` row finds its own in `before`, `w.find('start', s => s.data.slot === me.data.seat)`. A
-  scene has as many starts as it has slots.
+  level's own units, where the seat's `player` row, of the size its definition gives, stands clear
+  of every wall. The seat's `player` row is the thing the seat plays as (`designing-a-seat`) and
+  stands itself on its own start in `before`, `w.find('start', s => s.data.slot === me.data.seat)`,
+  spawning nothing. A scene has as many starts as it has slots.
 - Everything else with a row is an actor too: an `actors` entry of its kind. A Tiled object in the
   map makes no row; the map's object layers are for rules that ask about a fixed area.
 - A road or a track that no ground plugin draws, a kart's circuit say, is a kind with one `actors`
@@ -65,7 +70,8 @@ on it. It does not cover:
   its numbers, its width and its colours, and names the data file of its points, a catalogue entry
   of its own in `assets/`. Its look draws it: its own `<kind>.client.ts`, or the browser half of a
   plugin of the game's own when the drawing is shared with other kinds (`designing-a-kind`, Shared
-  code and systems). A rule that asks it, how far along it a body is or which way is out of it,
+  code and systems). A rule that asks it, how far along it a `player` row or a rival is or which way
+  is out of it,
   calls a function of the game's own plugin handed that row, which reads the row's definition and
   the file it names; a rule never reads the road's definition itself. A plugin of the game's own
   handed no row has no definition to read, so the road's numbers are never that plugin's
@@ -95,7 +101,8 @@ Each one's header says what it reads and from where; read it before using the pl
 - `terrain3d`, 3D ground: a field file, the `json` entry `world.terrain3d.field` names, a height
   program, colour bands and painted layers. It has no row. The Terrain panel and its brush write the
   field file. Other plugins stand on it through its mods, `terrain3d.<p>.ts` beside it (walker,
-  box3d, scatter3d, solids, hitscan3d, ocean3d among them), named in `world.<p>.mods`.
+  box3d, scatter3d, solids, hitscan3d, ocean3d among them), named in `world.<p>.mods`. The whole of
+  it is `using-terrain3d`.
 - `scatter3d`, trees, grass and boulders, each where a hash of its cell puts it, from the packs of
   `world.scatter3d`, on the ground its mods name; the solid ones are walked round
   (`scatter3d.walker.ts`). No row; the Scatter panel edits it.
@@ -120,7 +127,13 @@ Each one's header says what it reads and from where; read it before using the pl
 ## The work in order: a tilemap level
 
 The game `yarn new-game <name>` writes is one scene, `main`, on render2d with no world of its own,
-so its points are the canvas's pixels. Giving it a level:
+so its points are the canvas's pixels. Its `player` row spawns a `body` and forwards `move` to it;
+that is the editor's template, which is on hold, and never the model. Before a level is laid, the
+`body` is folded into the `player` row: its `pos`, `move` and definition onto the `player` prefab and
+definition, its rule into `player.sim.ts`, whose `before` stands the row on its start in place of
+spawning one, its look into `player.client.ts`, drawn for every row and keyed only for the row that is
+`mine`, and `body` taken out of the sim, the scene and the test (`designing-a-seat`). The mover below
+is that `player` row. Giving it a level:
 
 1. Ask the person making the game what the level is: its shape, where each seat starts, what stands
    where, how it plays. That is content, and it is theirs.
@@ -167,8 +180,8 @@ so its points are the canvas's pixels. Giving it a level:
    beside the prefabs the scene had, and the scene's sim lists `tilemap`, imported from
    `#plugins/tilemap/tilemap.sim.ts`. The `start` is the one `yarn new-game` wrote, its `pos`
    changed from the canvas's middle, `[480, 270]`, to a cell of the map; never a second entry for
-   its slot, since `w.find` hands the `player` row the first start of the slot, and the body would
-   be spawned on the old one, off the map. The catalogue entry is `preload`, so the loader has the
+   its slot, since `w.find` hands the `player` row the first start of the slot, and the row would
+   stand on the old one, off the map. The catalogue entry is `preload`, so the loader has the
    map before the first step, and `nearest` for pixel art. `tilemap` is listed before `render2d`.
    render2d's `ground` lays the cells out as Tiled does, `[[w, 0], [0, h]]` for an orthogonal map of
    w × h pixel tiles and `[[w/2, h/2], [-w/2, h/2]]` for an isometric one, or the tilemap throws.
@@ -179,10 +192,10 @@ so its points are the canvas's pixels. Giving it a level:
 
 4. The level's units are now the game's. With a world every point is in the level's cells, x along
    a row and y down the rows, so the pixels `yarn new-game` wrote are wrong: the start it put at the
-   canvas's middle, `[480, 270]`, is far off the map and is placed again on it; the body's `speed`
-   is cells a second and its `size` in pixels gives way to a `radius` in cells; and
-   `body.client.ts`, which drew a square on `render2d.stage` at `pos` as pixels, draws on a layer of
-   the world (`render2d.layer('things')`) at `render2d.place(pos)`, ordered by
+   canvas's middle, `[480, 270]`, is far off the map and is placed again on it; the `player`
+   definition's `speed` is cells a second and its `size` in pixels gives way to a `radius` in cells;
+   and `player.client.ts`, which drew a square on `render2d.stage` at `pos` as pixels, draws on a
+   layer of the world (`render2d.layer('things')`) at `render2d.place(pos)`, ordered by
    `render2d.depth(pos)` and sized from `render2d.ground()`. render2d answers `ground`, `place` and
    `depth` only from its first tick on, so a look asks them in its `tick`, never in `setup`.
 
@@ -190,7 +203,7 @@ so its points are the canvas's pixels. Giving it a level:
    it, with the tilemap row's edits in it:
 
    ```ts
-   // body.sim.ts: a circle of `radius` cells running `speed` cells a second along `move`
+   // player.sim.ts: the seat's thing, a circle of `radius` cells running `speed` cells a second along `move`
    tick(me, dt, w) {
      const [x, y] = me.data.move
      if (!x && !y) return
@@ -216,10 +229,7 @@ so its points are the canvas's pixels. Giving it a level:
    of the tilemap's row with `w.call`, which writes the cell. `tilemap` has no act today
    (`export const tilemap: Kind = {}` in `plugins/tilemap/tilemap.sim.ts`), so the job that first
    changes a cell builds it there, general, with its test in
-   `plugins/tilemap/tilemap.sim.test.ts` and the header saying it, and then calls it. A press whose
-   rule calls it waits for the packet, as any call on a plugin's row does (`input-and-seats`,
-   Prediction and ledgers). The page runs the body's per-step rule ahead on the same map: the loader
-   decodes it in the page before the client is made.
+   `plugins/tilemap/tilemap.sim.test.ts` and the header saying it, and then calls it.
 
 6. Place what stands on it: a `start` per slot, and an `actors` entry for each door, chest or
    monster, with the fields it starts with, its kind in the scene's sim with a prefab. They go in the
@@ -361,14 +371,14 @@ below is a tool of its MCP endpoint (`.mcp.json`), with each `.` a `_`.
 
 What a level should do is the person's. Core gives tools for checking what makes it read and play:
 
-- every start stands clear of the walls: `clear`, for the radius of what the seat plays;
+- every start stands clear of the walls: `clear`, for the radius of the seat's `player` row;
 - nothing is drawn that nobody can reach: nav's `field` over a `grid` of `blocked`, from each start,
   is Infinity where no way leads; mapgen joins every generated floor into one;
-- how far things are by the way a body walks, not as the crow flies: `field` is the cost of the way
+- how far things are by the way a mover walks, not as the crow flies: `field` is the cost of the way
   from every cell to a goal; mapgen's `stairs.apart`, `away` and `apart` set it for a generated level,
   and a test holds it for one drawn by hand;
-- what can be seen from where: nav's `sight`, with a body's radius; in 3D, `cover3d`'s `spots`, where
-  a body hides from a threat behind solids;
+- what can be seen from where: nav's `sight`, with a mover's radius; in 3D, `cover3d`'s `spots`, where
+  a mover hides from a threat behind solids;
 - a level cut into rooms, a room being a fixed area of the level, so level data: `roomcamera` holds
   the view inside the room an actor hands it and scrolls from room to room;
 - a level too big to send whole: the `interest` addon, once `addons/player` attaches it (The plugins
@@ -381,10 +391,13 @@ What a level should do is the person's. Core gives tools for checking what makes
   map's tiles throws too.
 - The pixels left in: the start at `[480, 270]`, a `speed` of 240, a square of `size` 32, all read
   as cells. The start test catches the start; a `speed` of 240 is 240 cells a second.
-- The body still drawn on `render2d.stage` at `pos`, or `place` asked in `setup`, which throws.
+- The `player` row still drawn on `render2d.stage` at `pos`, or `place` asked in `setup`, which
+  throws.
+- The generated `body` kept as the mover, the `player` row spawning it and forwarding `move`. It is folded into the `player`
+  row (The work in order).
 - A tile layer named for no layer of `world.render2d.layers`: render2d throws `render2d has no
   layer <name>`.
-- Floor left as empty cells. `blocked` says a cell with no tile blocks, so a body stops at the edge
+- Floor left as empty cells. `blocked` says a cell with no tile blocks, so a mover stops at the edge
   of every cell left unpainted.
 - Starts, enemies or pickups put in the map's object layer or on `world`. They are actors.
 - The map's path written in code, or the map fetched. It is a catalogue entry, read with `tiled`.
@@ -425,13 +438,13 @@ async function level() {
   return { map, edits, seats: room.scene.seats!, starts: room.rows.filter(r => r.kind === 'start') }
 }
 
-test('every start stands clear of the walls for a body', async () => {
+test('every start stands clear of the walls for the player', async () => {
   const { map, edits, seats, starts } = await level()
   expect(starts.map(s => s.data.slot)).toEqual(Array.from({ length: seats }, (_, slot) => slot))
-  for (const s of starts) expect(clear(map, edits, s.data.pos, defs.body.radius)).toBe(true)
+  for (const s of starts) expect(clear(map, edits, s.data.pos, defs.player.radius)).toBe(true)
 })
 
-test('every cell a body can stand in is reachable from every start', async () => {
+test('every cell the player can stand in is reachable from every start', async () => {
   const { map, edits, starts } = await level()
   const nav = grid(map.width, map.height, (c, r) => blocked(map, edits, c, r), 1, map.width + map.height)
   const open = [...nav.open.keys()].filter(c => nav.open[c])
@@ -442,13 +455,13 @@ test('every cell a body can stand in is reachable from every start', async () =>
 })
 ```
 
-The mover's test, `games/<game>/<kind>.sim.test.ts`: a seat joins with `connection`, its `move` is
-sent with `seat.take` as the page sends it (the press helper of `designing-a-kind`), and the body
-is driven into walls. Driven at a wall it stops touching the wall's face, a radius off the first
+The mover's test, `games/<game>/player.sim.test.ts`: a seat joins with `connection`, its `move` is
+sent with `seat.take` at its `player` row as the page sends it (the press helper of
+`designing-a-kind`), and the `player` row is driven into walls. Driven at a wall it stops touching the wall's face, a radius off the first
 blocking cell; driven slantwise into one it slides along it, at the share of its speed that points
 along the wall; driven every way for hundreds of steps, `clear` holds at every step and it never
 leaves the map. The map is read with `prepared`, as above, and every number comes from the
-definitions and the map. Every place it drives the body from or to, a cell beside a start, a wall's
+definitions and the map. Every place it drives the row from or to, a cell beside a start, a wall's
 row, is found on the map by the test, never typed.
 
 A level that must be winnable is proven in the scene's test by a search the test runs over the map
@@ -468,14 +481,15 @@ gid>` across its mouth, fails the reachability test, naming the cells cut off. P
 
 ```
 yarn vitest run games/<game>/<scene>.sim.test.ts
-yarn vitest run games/<game>/<kind>.sim.test.ts
+yarn vitest run games/<game>/player.sim.test.ts
 yarn vitest run games/<game>/<game>.sim.test.ts
 yarn tsc
 ```
 
 Then play it: `yarn editor <game>`, and `http://localhost:5173/games/<game>/index.html`. The map is
-drawn, the body stands on its start, and held keys walk it up to every wall and along it, never
-through. In the editor the Actors panel lists the starts, and `tiles.read` answers the map. A 404
+drawn, the seat's `player` row stands on its start, and held keys walk it up to every wall and along
+it, never through. Against `<game>.server.ts` on `client.html`, which runs the scene ahead, it moves
+on the frame after the key and stops at a wall on the frame it reaches it. In the editor the Actors panel lists the starts, and `tiles.read` answers the map. A 404
 for `<kind>.client.ts` of a kind with no look (`start`, `tilemap`, `loader`, `scenemanager`) is the
 client finding no actor for it, as it should. A blank page whose console shows a 504 for a file
 under `node_modules/.vite/deps` is the dev server optimizing a dependency: reload.

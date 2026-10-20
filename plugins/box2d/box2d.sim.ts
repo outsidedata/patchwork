@@ -34,8 +34,6 @@
 //   chunk              the ground's chunks, in whatever numbers the `ground` mod reads (below).
 //   mods               `{ ground: '<a>' }`: the plugin whose mod `ground(w, key)` hands back the
 //                      ground's chunk at `key` as a Static (`addons/scenemanager`'s mods).
-//   rollback           how many steps of Box2D snapshots the world keeps, for a page that runs its
-//                      own steps to go back to (below). Left out, none.
 //
 // A Body is b2BodyDef's fields that are not where the body is or how it moves — `type` (`dynamic`,
 // `kinematic` or `static`), `linearDamping`, `angularDamping`, `gravityScale`, `sleepThreshold`,
@@ -90,8 +88,6 @@
 //            scene's `ground` mod and drops each key it holds that is no longer listed; a key listed
 //            step after step is built once. It knows nothing of what the chunks are for: a rule
 //            writes the list. A body or a query's answer names every chunk 0.
-//            `step`, written by box2d after each step while `world.box2d.rollback` is set, is how many
-//            steps the world has run.
 //   a body   `pos`, `rot`, `vel`, `spin` (the angular velocity, a number) and `awake`, which box2d
 //            writes after every step. A rule may write any of them, and a body whose row was written
 //            since box2d last wrote it is moved so (b2Body_SetTransform, b2Body_SetLinearVelocity,
@@ -132,27 +128,14 @@
 //
 // The first step the box2d row ticks it makes its Box2D world and keeps it for as long as the row
 // lives: Box2D carries contact impulses, sleep timers and islands from one step to the next, and
-// that is the solver's memory, not the game's state. Every step, before the world steps: a body
-// whose row has ended leaves the world, a joint whose row ended or whose body went leaves it, a row
-// with no body or joint gets one, and every row's changes are pushed into Box2D. After the step,
-// every body's and joint's row is written. So the rows are all the state a seat is sent and a rule
-// reads and writes, and two runs of the same presses land on the same bytes. `world.box2d` is read
-// when the world is made, a kind's entry when each of its bodies or joints is. The world is freed
-// when its row is collected.
-//
-// Going back. A page that predicts runs its own steps over its own rows and, when a packet shows the
-// server's rows differ, writes them into its rows and runs the steps again from there
-// (`plugins/player`, whole steps). The rows put every body back, but not Box2D's memory: its contact
-// impulses and sleep timers are the page's of a later step. With `world.box2d.rollback` set to n, the
-// world keeps a snapshot of itself (b2World_GetSnapshot) after each of its last n steps, and the box2d
-// row carries `step`. A box2d row whose `step` is not the world's own was written back to an earlier
-// step: the world is restored to its snapshot of that step (b2World_Restore), with what box2d held of
-// its bodies and joints then, and the rows' changes are pushed from there. A step older than the
-// snapshots it keeps is taken from the rows alone, and so is a page's world when it arrives: rows
-// carry none of Box2D's memory, so a page that arrives to a stack still settling corrects on each
-// packet until it sleeps, and a body striking bodies that rested since before it arrived may cost a
-// correction or two. Box2D's own switches for that memory are `enableWarmStarting` and
-// `contactRecycleDistance` on `world.box2d`, and `enableContactRecycling` on a kind.
+// that is the solver's memory, not the game's state. Box2D's own switches for that memory are
+// `enableWarmStarting` and `contactRecycleDistance` on `world.box2d`, and `enableContactRecycling`
+// on a kind. Every step, before the world steps: a body whose row has ended leaves the world, a
+// joint whose row ended or whose body went leaves it, a row with no body or joint gets one, and
+// every row's changes are pushed into Box2D. After the step, every body's and joint's row is
+// written. So the rows are all the state a seat is sent and a rule reads and writes, and two runs
+// of the same presses land on the same bytes. `world.box2d` is read when the world is made, a
+// kind's entry when each of its bodies or joints is. The world is freed when its row is collected.
 //
 // The queries — castRayClosest, castRay, castShape, overlapShape, overlapAABB, castMover,
 // collideMover, contacts, massOf, pointVelocity, boundsOf, counters, stateHash — ask the world as the
@@ -168,6 +151,7 @@ import type { Kind, Row, W } from '#engine/engine.ts'
 import type { Wire } from '#engine/browser.ts'
 import { json } from '#plugins/loader/loader.sim.ts'
 import { mod } from '#addons/scenemanager/scenemanager.addon.ts'
+import type { Memory } from '#addons/rewind/rewind.addon.ts'
 
 export const b2 = await Box2D()
 
@@ -261,7 +245,6 @@ export type World = { subStepCount: number; static: Static[]; kinds: Record<stri
   capacity: Partial<ReturnType<typeof b2.b2DefaultWorldDef>['capacity']>
   chunk: unknown
   mods: Record<string, string>
-  rollback: number
 }>
 
 export type Motion = { pos: Vec2; rot: Rot; vel: Vec2; spin: number; awake: boolean }
@@ -437,21 +420,17 @@ export function outline(list: Static[], i: number, shape: Shape, from?: W | Wire
 // wrote.
 type Held = Motion & { id: b2BodyId; kind: string; live: Record<string, unknown>; sensors: boolean; contacts: boolean; hits: boolean; touching: Map<number, number>; visitors: Map<number, number> }
 type Tied = { id: b2JointId; type: JointType; a: number; b: number; live: Record<string, unknown> }
-// What box2d holds beside Box2D's world, which a snapshot of the world is taken with.
-type Tables = {
+// Box2D's world, and what box2d holds beside it.
+type Made = {
+  world: b2WorldId
+  statics: b2BodyId[]
   bodies: Map<number, Held>
   joints: Map<number, Tied>
   owner: Map<string, number> // a body's or a shape's key to the row, or -(i + 1) for static body i
   oneWay: Map<string, Vec2>
   chunks: Map<string, b2BodyId> // the ground's chunks the world holds, by key
   live: Record<string, unknown>
-}
-type Made = Tables & {
-  world: b2WorldId
-  statics: b2BodyId[]
   events: ReturnType<typeof b2.createEventsBuffer>
-  step: number
-  snapshots: Map<number, { image: Uint8Array; tables: Tables }>
 }
 
 // Keyed by the box2d row, so each truth has its own world.
@@ -487,12 +466,81 @@ function make(me: Row, w: W): Made {
   if (d.contactRecycleDistance !== undefined) b2.b2World_SetContactRecycleDistance(world, d.contactRecycleDistance)
   const m: Made = {
     world, statics: [], bodies: new Map(), joints: new Map(), owner: new Map(), oneWay: new Map(), chunks: new Map(),
-    live: {}, events: b2.createEventsBuffer(), step: 0, snapshots: new Map(),
+    live: {}, events: b2.createEventsBuffer(),
   }
   d.static.forEach((s, i) => m.statics.push(place(m, s, -(i + 1), w)))
   b2.b2World_SetPreSolveCallback(world, oneWay(m), null)
   made.set(me, m)
-  unmade.register(me, { world, events: m.events })
+  unmade.register(me, { world, events: m.events }, m)
+  return m
+}
+
+// What a truth's snapshot does not carry of box2d (`Memory` in the scenemanager addon): the whole
+// Box2D world as Box2D's own snapshot image (bodies, shapes, contacts with their warm starting
+// impulses, islands, sleep, the broad phase), and box2d's tables beside it, which row each body,
+// shape and joint is and what box2d last pushed from each row. The image is the bytes Box2D wrote, a
+// `Uint8Array`, kept as they are from step to step and carried as they are across the socket; the
+// tables are plain JSON.
+type Memo = {
+  image: Uint8Array
+  statics: b2BodyId[]
+  bodies: [number, Omit<Held, 'touching' | 'visitors'> & { touching: [number, number][]; visitors: [number, number][] }][]
+  joints: [number, Tied][]
+  owner: [string, number][]
+  oneWay: [string, Vec2][]
+  chunks: [string, b2BodyId][]
+  live: Record<string, unknown>
+}
+// A memo handed to a box2d row of a truth loaded from a snapshot, for its next step to restore.
+const taken = new WeakMap<Row, Memo>()
+
+// The world of the row a truth held before it loaded a snapshot, moved to the row of the same id
+// that the load put in its place, so the restore puts the image into the world there is rather than
+// a new one: a server that rewinds every few steps, or a page that takes the server's truth back,
+// would otherwise make a world each time, and Box2D holds a fixed number of worlds.
+function move(was: Row, me: Row) {
+  const m = made.get(was)
+  if (!m) return
+  made.delete(was)
+  made.set(me, m)
+  unmade.unregister(m)
+  unmade.register(me, { world: m.world, events: m.events }, m)
+}
+
+// The image is Box2D's own copy, made for this call (b2World_GetSnapshot hands back a fresh array),
+// so only the tables are cloned off the live ones.
+function hold(me: Row): Memo | undefined {
+  const m = made.get(me)
+  if (!m) return undefined
+  const image = b2.b2World_GetSnapshot(m.world)
+  if (!image.length) throw new Error('box2d: the world is mid step and cannot be saved')
+  return { image, ...structuredClone({
+    statics: m.statics,
+    bodies: [...m.bodies].map(([id, h]) => [id, { ...h, touching: [...h.touching], visitors: [...h.visitors] }]),
+    joints: [...m.joints],
+    owner: [...m.owner],
+    oneWay: [...m.oneWay],
+    chunks: [...m.chunks],
+    live: m.live,
+  }) as Omit<Memo, 'image'> }
+}
+
+// The row's world, or one made for it, put back to the memo's image (Box2D keeps the world's
+// callbacks through a restore), and box2d's tables taken from the memo, every id re-pointed at this
+// world, since a body's id names the world it is in.
+function restore(me: Row, w: W): Made {
+  const memo = taken.get(me)!
+  taken.delete(me)
+  const m = made.get(me) ?? make(me, w)
+  if (!b2.b2World_Restore(m.world, memo.image)) throw new Error('box2d: the snapshot image would not restore')
+  const here = <T extends { world0: number }>(id: T): T => ({ ...id, world0: m.world.index1 - 1 })
+  m.statics = memo.statics.map(here)
+  m.bodies = new Map(memo.bodies.map(([id, h]) => [id, { ...h, id: here(h.id), touching: new Map(h.touching), visitors: new Map(h.visitors) }]))
+  m.joints = new Map(memo.joints.map(([id, j]) => [id, { ...j, id: here(j.id) }]))
+  m.owner = new Map(memo.owner)
+  m.oneWay = new Map(memo.oneWay)
+  m.chunks = new Map(memo.chunks.map(([key, id]) => [key, here(id)]))
+  m.live = memo.live
   return m
 }
 
@@ -553,41 +601,6 @@ function unplace(m: Made, id: b2BodyId) {
 
 const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1]
 const worldVector = (body: b2BodyId, v: Vec2) => b2.b2Body_GetWorldVector([0, 0], body, v)
-
-// ---------------------------------------------------------------- going back
-
-// A copy of what box2d holds beside the world, which no later step changes.
-function tablesOf(t: Tables): Tables {
-  return {
-    bodies: new Map([...t.bodies].map(([id, h]) => [id, { ...h, ...copy(h), live: structuredClone(h.live), touching: new Map(h.touching), visitors: new Map(h.visitors) }])),
-    joints: new Map([...t.joints].map(([id, j]) => [id, { ...j, live: structuredClone(j.live) }])),
-    owner: new Map(t.owner),
-    oneWay: new Map(t.oneWay),
-    chunks: new Map(t.chunks),
-    live: structuredClone(t.live),
-  }
-}
-
-// After a step: the world's step counted on the row, and a snapshot of it kept for `rollback` steps.
-function keep(m: Made, me: Row, rollback: number) {
-  m.step++
-  me.data.step = m.step
-  m.snapshots.set(m.step, { image: b2.b2World_GetSnapshot(m.world), tables: tablesOf(m) })
-  m.snapshots.delete(m.step - rollback)
-}
-
-// Before a step: a box2d row written back to an earlier step the world holds a snapshot of puts the
-// world back there.
-function back(m: Made, me: Row) {
-  const to = me.data.step
-  if (to === undefined || to === m.step) return
-  const s = m.snapshots.get(to)
-  if (!s) { m.step = to; return }
-  if (!b2.b2World_Restore(m.world, s.image)) throw new Error(`Box2D refused its own snapshot of step ${to}`)
-  Object.assign(m, tablesOf(s.tables))
-  m.step = to
-  for (const n of m.snapshots.keys()) if (n > to) m.snapshots.delete(n)
-}
 
 // ---------------------------------------------------------------- bodies
 
@@ -937,11 +950,19 @@ function events(m: Made, rows: Map<number, Row>, joints: Map<number, Row>) {
 
 // ---------------------------------------------------------------- the step
 
-export const box2d: Kind = {
+export const box2d: Kind & Memory = {
+  // The world and box2d's tables handed out as they stand, the world untouched: for a page that runs
+  // the scene ahead, and for every step a server that rewinds keeps (`addons/rewind`).
+  hold(me) { return hold(me) },
+  // On a truth loaded from a snapshot, the page's copy or a server rewinding: restored from on its
+  // next step, into the world the row it replaced had, when it had one.
+  take(me, memo, was) {
+    if (was) move(was, me)
+    taken.set(me, memo as Memo)
+  },
   tick(me, dt, w) {
     const d: World = w.world.box2d
-    const m = made.get(me) ?? make(me, w)
-    if (d.rollback) back(m, me)
+    const m = taken.has(me) ? restore(me, w) : made.get(me) ?? make(me, w)
     for (const [fields, set] of WORLD_LIVE) {
       if (!fields.some(f => f in me.data && !equal(me.data[f], m.live[f]))) continue
       set(m.world, ...fields.map(f => me.data[f] ?? (d as any)[f] ?? (b2.b2DefaultWorldDef() as any)[f]))
@@ -1001,7 +1022,6 @@ export const box2d: Kind = {
       if (t) pullJoint(t, row.data)
       else { delete row.data.measured; delete row.data.strained }
     }
-    if (d.rollback) keep(m, me, d.rollback)
   },
   acts: {
     // Blows the world apart on the next step: an impulse per length of each shape's outline within

@@ -25,13 +25,13 @@
 // Every page is the same as every game's but for the files it imports.
 //
 //   POST make  { name, scene, width, height }: the files written, refused with nothing written for a
-//              name that is no lower-case letter then letters and digits, one of its kinds' (`start`,
+//              name that is no lower-case letter then letters, digits and underscores, one of its kinds' (`start`,
 //              `player`, `body`), a plugin's or an addon's, a game's that is there, a scene named as the game, and a size that is no whole
 //              number of pixels from 1 to 8192. Answers { files, port }. `make` is exported for
 //              `scripts/new-game.ts`, which hands it the disk.
 import type { RouteFiles, Router } from '#editor/server/routes.ts'
 
-const NAME = /^[a-z][a-z0-9]*$/
+const NAME = /^[a-z][a-z0-9_]*$/
 const SCENE = /^[a-z0-9][a-z0-9-]*$/
 // The kinds a new game has: a game named as one would write its manager's sim over that kind's rule.
 const KINDS = ['start', 'player', 'body']
@@ -282,8 +282,9 @@ export function gameFiles(name: string, scene: string, width: number, height: nu
       'const loop = async now => {',
       '  owed += Math.min((now - last) / 1000, 0.25)',
       '  last = now',
+      '  page.input()',
       '  while (owed >= dt) { truth.step(dt); owed -= dt }',
-      '  await page.frame()',
+      '  await page.frame(owed / dt)',
       '  requestAnimationFrame(loop)',
       '}',
       'requestAnimationFrame(loop)',
@@ -366,7 +367,7 @@ type Disk = Pick<RouteFiles, 'list' | 'read'> & { write(rel: string, data: strin
 export async function make(body: unknown, files: Disk) {
   const b = body as { name?: unknown; scene?: unknown; width?: unknown; height?: unknown } | null
   const name = b?.name, scene = b?.scene, width = b?.width, height = b?.height
-  if (typeof name !== 'string' || !NAME.test(name)) throw new Error(`a game's name is a lower-case letter and then lower-case letters and digits, and not ${JSON.stringify(name)}`)
+  if (typeof name !== 'string' || !NAME.test(name)) throw new Error(`a game's name is a lower-case letter and then lower-case letters, digits and underscores, and not ${JSON.stringify(name)}`)
   if (typeof scene !== 'string' || !SCENE.test(scene)) throw new Error(`a scene's name is lower-case letters, digits and dashes, and not ${JSON.stringify(scene)}`)
   if (scene === name) throw new Error(`the scene cannot be named ${name}: ${name}.scene.json is the game's manager`)
   for (const [k, v] of [['width', width], ['height', height]] as const)

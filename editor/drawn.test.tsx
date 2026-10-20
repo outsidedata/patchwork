@@ -113,7 +113,7 @@ test('nothing read outside a hook, or in the hook before, counts in the next', (
   expect(layer.children.map(tagOf)).toEqual([undefined, undefined])
 })
 
-test('a watched row is a plain row to whatever copies it, as a plugin that predicts clones the rows, and writes reach the row', () => {
+test('a watched row is a plain row to whatever copies it, by structuredClone, JSON or a spread, and writes reach the row', () => {
   undo = drawn()
   const rows = [{ id: 6, kind: 'pad', data: { at: [1, 2] } }]
   const [copied] = client(rows, (p, layer) => {

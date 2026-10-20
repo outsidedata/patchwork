@@ -8,7 +8,7 @@
 // the camera stood and looked each time it was asked to draw.
 import { afterAll, expect, test, vi } from 'vitest'
 import * as THREE from 'three'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -189,27 +189,12 @@ test('it stays still while another owner holds the claim, and is back on the row
 
 // ---------------------------------------------------------------- the order
 
-test('its tick throws when it is listed before render3d, before player when player is listed, or with no render3d camera', () => {
+test('its tick throws when it is listed before render3d, or with no render3d camera', () => {
   const run = (order: string[], prefab?: unknown) => () => page(order, prefab === undefined ? { camera: CAMERA } : prefab).frame()
   expect(run(['chasecamera3d', 'render3d'])).toThrow('chasecamera3d is listed before render3d')
-  expect(run(['player', 'chasecamera3d', 'render3d'])).toThrow('chasecamera3d is listed before render3d')
-  expect(run(['render3d', 'chasecamera3d', 'player'])).toThrow('chasecamera3d is listed before player')
-  expect(run(['chasecamera3d', 'player', 'render3d'])).toThrow('chasecamera3d is listed before')
   expect(run(['chasecamera3d'])).toThrow('the scene does not list render3d')
   expect(run(['render3d', 'chasecamera3d'], null)).toThrow('the scene gives no render3d prefab')
   expect(run(['render3d', 'chasecamera3d'])).not.toThrow()
-  expect(run(['player', 'render3d', 'chasecamera3d'])).not.toThrow()
-  expect(run(['render3d', 'player', 'chasecamera3d'])).not.toThrow()
-})
-
-// ---------------------------------------------------------------- the source
-
-// Nothing in the file eases, clamps, rolls a die or keeps a clock: the camera is the row's pose and
-// nothing else.
-test('the source holds no lerp, exp, max, min, clamp, random or clock', () => {
-  const code = readFileSync(new URL('./chasecamera3d.plugin.ts', import.meta.url), 'utf8')
-  for (const banned of ['lerp(', 'Math.exp', 'Math.max', 'Math.min', 'Math.random', 'clamp', 'performance.now', 'Date.now'])
-    expect(code.includes(banned), banned).toBe(false)
 })
 
 // ---------------------------------------------------------------- a booted scene

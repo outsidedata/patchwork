@@ -1,6 +1,6 @@
 // volley3d's extension: the Patterns 3D panel, the Fire Pattern 3D tool, and the types of a patterns
 // file's fields (`volley3d.sim.ts` says what the file holds and what every field of a pattern means;
-// `volley3d.plugin.ts` how a page draws a round and fires one of its own).
+// `volley3d.plugin.ts` how a page draws a round and fires one of its alone).
 //
 // The panel (`volley3d.components.tsx`) works on the patterns file of the scene selected, else of the
 // one the game view shows, else of the first scene that names volley3d in its `plugins`: the json
@@ -30,8 +30,8 @@
 // goes. So how a pattern flies reads without firing it.
 //
 // The preview. While the game view shows the panel's scene and the panel is open, the selected
-// pattern is fired through the view's client's volley3d as a round of the page's alone (`fire` with
-// no key), never a row, from `height` metres over the loop's point: the last point the Fire Pattern 3D
+// pattern is fired through the view's client's volley3d as a round of the page's alone (`fire`),
+// never a row, from `height` metres over the loop's point: the last point the Fire Pattern 3D
 // tool was pressed at on that scene, else the ground under the middle of the view. It is fired along
 // the preview's heading, from a dial, degrees from the world's +z toward its +x, as a walker's heading
 // turns, raised `elevation` degrees over level. With Loop on it is fired again after the first frame

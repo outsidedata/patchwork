@@ -1,6 +1,6 @@
 ---
 name: designing-a-kind
-description: Use in core, or any clone of it, when adding a thing with rules to a game, a new kind (an enemy, a pickup, a coin, a door, a switch, a score, a counter, a spawner), writing its `<kind>.sim.ts` rule or `<kind>.client.ts` look, or making things in a game act on each other (picks up, hits, opens, counts, spawns, ends). Also when deciding whether a value goes on a row, in a kind's definition (`def`, `assets/<game>.json`), on `world` or in a prefab; whether a thing is one `actors` entry or many, or spawned; how one kind finds or changes another (`w.find`, `w.all`, `w.get`, `w.call`, `open`, `w.spawn`, `w.end`, before/tick/after); when several kinds share code through a game's own plugin in `games/<game>/plugins/<name>/`; and when a rule needs random numbers (`world.seed`, `w.die`).
+description: Use in core, or any clone of it, when adding a thing with rules to a game, a new kind (an enemy, a pickup, a coin, a door, a switch, a score, a counter, a spawner), writing its `<kind>.sim.ts` rule or `<kind>.client.ts` look, or making things in a game act on each other (picks up, hits, opens, counts, spawns, ends). Also when deciding whether a value is a seat's own (a field of its `player` row: its score, health, ammo) or no seat's (a kind of its own: a team's total, a shared tally), whether an act on the `player` row could be sent by the seat itself, whether a value goes on a row, in a kind's definition (`def`, `assets/<game>.json`), on `world` or in a prefab; whether a thing is one `actors` entry or many, or spawned; how one kind finds or changes another (`w.find`, `w.all`, `w.get`, `w.call`, `open`, `w.spawn`, `w.end`, before/tick/after); when several kinds share code through a game's own plugin in `games/<game>/plugins/<name>/`; and when a rule needs random numbers (`world.seed`, `w.die`).
 ---
 
 # Designing a kind
@@ -11,17 +11,21 @@ each thing of it is a row. The engine's whole API for a kind is the top of `engi
 (`Kind`, `Hook`, `Act`, `W`) and of `engine/browser.ts` (`Actor`, `Plugins`, `Wire`), with the order
 a step runs in shown by `engine/engine.test.ts`. The engine is frozen: nothing here edits it. The
 game `yarn new-game` writes (its files are listed in the header of
-`extensions/games/games.route.ts`) holds a working kind to read first: `body.sim.ts`,
-`body.client.ts`, the `body` entry of `assets/<game>.json`, and the `player.sim.ts` and
-`start.sim.ts` it stands on.
+`extensions/games/games.route.ts`) still makes the seat's square a `body` row its `player` row spawns,
+the pattern that drew every game's thing a round trip after its key; it is folded into `player`
+before anything else (`starting-a-game`, Fold the body into the player row), and the `body` files are
+never read as a model. Once folded, its working kinds to read first are `player.sim.ts` and
+`player.client.ts`, the `player` entry of `assets/<game>.json`, and the `start.sim.ts` it stands on;
+how the seat's own kind is built is `designing-a-seat`.
 
 ## When it applies
 
 It applies to a game's own thing that has a rule or a look, and to kinds acting on each other. It
 does not cover:
 
-- a seat: its `player` row, binding keys or a pad, what a seat may send, where it starts and what
-  it plays there. That is `input-and-seats`.
+- a seat: binding keys or a pad, what a seat may send, where it starts. That is `input-and-seats`.
+  Its `player` row, the thing the seat plays as with every field of its own, and how its rule and
+  look are built, is `designing-a-seat`.
 - building a plugin, a top-level one or the browser half or row of a game's own. That is
   `building-a-plugin`. When this work shows a plugin is needed, the plugin is built there and
   used here.
@@ -64,14 +68,16 @@ never on `world` or in a definition: it is a `start` actor per slot, which `yarn
 
 1. Ask the person making the game what the thing does: what the monster does, when the door
    opens, what the coin is worth. That is content, and it is theirs. Ask nothing else.
-2. Decide whether it is a new kind. A new system is a new kind, never a field added to a kind
-   that exists for another reason: a score is a `tally` kind, never a `score` field on the body
-   or on the `player` row. The `player` row is the seat's handle, the row its presses reach and
-   where it keeps the id of what it plays, and holds none of the game's state, a score only its own
-   seat should see included. A value carried in from the last scene waits in one of its fields only
-   until its `before` spawns the seat's own count from it (`scene-flow`, step 7). Name the kind by
-   what it is, a lower-case identifier that is not the game's name (`<game>.sim.ts` is the
-   manager's) and not a plugin's (the page would load that plugin's file as its look).
+2. Decide whether it is a new kind, and whose it is. A new system is a new kind, never a field
+   added to a kind that exists for another reason. But what a seat owns is no new system: it is a
+   field of that seat's `player` row, the thing the seat plays as. Its place, health, ammo, lives and
+   score, its laps, its hand of cards: each a field of its `player` row (`designing-a-seat`). A score only its own seat may read stays on that row and is listed in
+   the scene's `security` block, never moved to another row to hide it. A value carried in from the
+   last scene arrives as `arrive` on that row's own field and goes on changing there (`scene-flow`,
+   step 7). A value no seat owns is a kind of its own: a team's total, the coins left in the level, a
+   match's clock, a shared `tally`. Name the kind by what it is, a lower-case identifier that is not
+   the game's name (`<game>.sim.ts` is the manager's) and not a plugin's (the page would load that
+   plugin's file as its look).
 3. Its definition: an entry keyed by the kind in `assets/<game>.json`, every fixed number of it.
 4. Its prefab: `prefabs.<kind>` in the scene file, every field that changes at its starting value,
    `{}` when it has none (a kind with no prefab throws `no prefab for <kind>`: at boot for an
@@ -124,7 +130,7 @@ A `Kind` is `{ before?, tick?, after?, acts?, open? }`, and a rule runs in those
   (`plugins/scenemanager/scenemanager.sim.ts`). A kind reached only through rules or through the
   `player` row lists no `open`.
 - Arguments that came from a seat, straight or passed on through `w.call`, came from outside the
-  program, and the act checks them, as the generated `body.sim.ts`'s `move` checks its two numbers
+  program, and the act checks them, as the folded `player.sim.ts`'s `move` checks its two numbers
   and `go` refuses a scene it does not name. An act only rules call takes its arguments as typed.
 - `w.spawn(kind, data)` makes a row of a kind with a prefab, `data` over the prefab's fields, and
   returns it. A row spawned during the passes runs from the next step's `before`; one spawned by an
@@ -137,14 +143,13 @@ A `Kind` is `{ before?, tick?, after?, acts?, open? }`, and a rule runs in those
 - The engine copies a prefab into each row, but not the data handed to `w.spawn`. A row spawned
   with another row's array, or with an entry of `w.world.scenemanager.actors` as its data, holds
   that very array, and a write into it in place moves the other row, or the entry every later
-  spawn from it starts from. So a rule spawns with copies, `{ pos: [...start.data.pos] }`, as the
-  generated `player.sim.ts` does, and writes an array or object field whole, `me.data.pos = [x, y]`,
-  as the generated `body.sim.ts` and `plugins/walker/walker.sim.ts` do. A row booted from an
+  spawn from it starts from. So a rule spawns with copies, `w.spawn('shot', { pos: [...me.data.pos] })`,
+  takes a copy of another row's array, `me.data.pos = [...start.data.pos]`, as the folded
+  `player.sim.ts` does, and writes an array or object field whole, `me.data.pos = [x, y]`, as its
+  `tick` and `plugins/walker/walker.sim.ts` do. A row booted from an
   `actors` entry holds that entry's arrays too, but the scenemanager hands the engine its own copy
   of the scene's list on every boot (`addons/scenemanager/scenemanager.addon.ts`), so a write there
   moves only that boot's copy.
-- A kind's rule file is also run in the page: the player plugin imports `<kind>.sim.ts` beside the
-  page for every kind it is sent rows of, to run a seat's presses ahead (`plugins/player`).
 
 ## The look
 
@@ -164,11 +169,17 @@ loader catalogue, `world.loader.assets`, and `plugins.loader`, and nothing else:
 code, no fetch, no decode of its own. Art the UI draws, on its own canvas, is an entry of its own
 with `"for": "ui"`, and a file both draw is two entries. How art comes in is `bringing-in-art`.
 
-The client imports the file once per row, as `<kind>.client.ts?row=<id>`, so what it drew, held in
-a variable at the top of the file, is that row's alone, as the generated `body.client.ts` holds
-its square. Rows are numbered from 1 in every scene, and the module is kept by that address, so a
-later client of any scene of the game with a row of that kind and id finds the same module. The look
-sets every such variable in `setup`, never where it is declared.
+The client imports the file once per row, as `<kind>.client.ts?row=<id>&client=<c>`, `c` the
+client's own number, so what it drew, held in a variable at the top of the file, is that row's
+alone, as the folded `player.client.ts` holds its square, and no other client, a second seat's in
+the same tab or the next scene's, runs that module. The look sets every such variable in `setup`,
+never where it is declared.
+
+A look is set up for every row of its kind the page is sent, other seats' among them. The `player`
+look draws every seat's thing and binds keys and moves the camera only for the row that is `mine`
+(`designing-a-seat`, The look). A HUD, a camera or any look that wants the seat's own row finds it
+with `possessed(plugins.wire.rows)` from `#plugins/player/player.plugin.ts`, never
+`rows.find(r => r.kind === 'player')`, which is whichever seat's row came first.
 
 ## Kinds acting on each other
 
@@ -198,6 +209,14 @@ One kind never imports another's file. They meet through the rows:
   read it does nothing for anyone with `-1`: `go` on the `scenemanager` row keys the move by the
   seat's number on that truth, so a hook that sends a seat on passes the number its `player` row
   kept from the `arrive` act it was handed (`plugins/scenemanager/scenemanager.sim.ts`).
+- Changing a seat's `player` row. A seat may send any act its own `player` row has (`answer` in
+  `engine/engine.ts`), so an act there that other kinds call to change it, `hurt`, `award`, `heal`,
+  `gain`, `power`, is one the seat could send itself: `award(99)` from the page. Each such effect is
+  an act that returns at once when a seat sent it, `if (seat >= 0) return`, called by rules with
+  `-1`; or a plain function of a game plugin that other kinds call, handed the player row, when the
+  same effect serves several kinds (`designing-a-seat`, Acts a seat can send). Either way the field
+  has its rule in one place. Only the acts the seat's keys send take a seat's message, and each
+  checks its args.
 - Making and taking away. `w.spawn` and `w.end`, on any kind.
 - Asking a plugin. A rule takes what a plugin's function hands back. A value the plugin works out
   and drops, as volley2d's `strike` works out each bullet's heading and hands back hits without it
@@ -207,28 +226,16 @@ One kind never imports another's file. They meet through the rows:
 - Events the page plays once, a sound or an effect, are raised on a ledger plugin's row through its
   function or act (`sound(w, cue, at, from)` or `play` in `plugins/audio/audio.sim.ts`), never as a
   field a kind sets for one step: a page reads only the last packet a frame takes, so a field set
-  for one step is missed whenever two packets land in one frame. The scene names the ledger's kind
-  in `world.player.ledgers`. How a game's sounds are raised and played is the `sound` skill.
+  for one step is missed whenever two packets land in one frame. A sound raised `from` a `player`
+  row rides that row's own `voiced` list instead of the ledger, so the seat's own jump or shot is
+  heard on the frame after the key, drawn from the copy that runs ahead; a rule of the seat's thing
+  raises its sounds `from` it. How a game's sounds are raised and played is the `sound` skill.
 
-The player plugin runs a seat's presses ahead on the page, on the rows that seat is sent
-(`plugins/player/player.plugin.ts`). By default it runs a press's act, and after it the per-step
-rule of each row a press wrote, only when the run writes nothing but that row and the rows whose
-acts it called; what a run writes to a ledger's row, or calls on it, is dropped and the rest is
-still run. A run that spawns, ends a row, rolls the die, writes `w.world`, or calls an act on a row
-of a plugin's kind, whose rule has no file beside the page (`go` on the `scenemanager` row), is not
-run ahead, and the page draws the server's packet instead. So in that default a rule that writes
-another row's fields straight, rather than calling its act, is never run ahead. A scene with
-`world.player.steps` true runs whole steps on the page instead, every row's passes, writes to any
-row included, and still runs no step that spawns, ends a row, rolls the die or writes `w.world`.
-
-A rule the page runs ahead sees only the rows its seat is sent. A `w.find` or `w.get` there of a row
-the seat is not sent, another seat's `player` row or a row a `vision` block hides, throws on the
-page, and nothing catches it. So a rule that a press or a predicted row runs asks for such a row
-with `w.all(kind)`, as it asks for a row that may have ended.
-
-For example, a coin a body picks up and a tally the pickup raises. The coin's definition is
-`{ "reach": 24, "worth": 5, "size": 16, "colour": "#f2a93b" }`, its prefab `{ "pos": [0, 0] }`,
-with an `actors` entry per coin; the tally's prefab is `{ "count": 0 }`, with one entry.
+For example, a coin a seat's `player` row picks up: its worth goes to that seat's own `score`, a
+field of its `player` row, and the coins taken in the level, which no seat owns, to a `tally`. The
+coin's definition is `{ "reach": 24, "worth": 5, "size": 16, "colour": "#f2a93b" }`, its prefab
+`{ "pos": [0, 0] }`, with an `actors` entry per coin; the `player` prefab holds `"score": 0`; the
+tally's prefab is `{ "taken": 0 }`, with one entry.
 
 ```ts
 // coin.sim.ts
@@ -236,24 +243,33 @@ export const coin: Kind = {
   after(me, _dt, w) {
     const { reach, worth } = def(w, me.kind)
     const [x, y] = me.data.pos
-    if (!w.all('body').some(b => Math.hypot(b.data.pos[0] - x, b.data.pos[1] - y) <= reach)) return
-    w.call(w.find('tally'), 'add', -1, worth)
+    const by = w.all('player').find(p => math.hypot(p.data.pos[0] - x, p.data.pos[1] - y) <= reach)
+    if (!by) return
+    w.call(by, 'award', -1, worth)
+    w.call(w.find('tally'), 'add', -1, 1)
     w.end(me)
   },
 }
 
+// player.sim.ts, among its acts: rules award points, a seat never does.
+award(me, _w, seat, worth: number) {
+  if (seat >= 0) return
+  me.data.score += worth
+},
+
 // tally.sim.ts
 export const tally: Kind = {
   acts: {
-    add(me, _w, _seat, worth: number) {
-      me.data.count += worth
+    add(me, _w, _seat, n: number) {
+      me.data.taken += n
     },
   },
 }
 ```
 
-The coin reads the bodies in `after`, once they have moved this step. The tally lists no `open`, so
-no seat can send it `add`.
+The coin reads the `player` rows in `after`, once they have moved this step. `award` returns for a
+seat's message, so a seat cannot send itself points, and the seat's page draws its new score off its
+own row on the frame after the touch. The tally lists no `open`, so no seat can send it `add`.
 
 ## Shared code and systems
 
@@ -276,11 +292,9 @@ prefab holds those changing fields, because the engine boots no row without one.
 
 A rule several kinds share is a `Kind` exported from the plugin's server half, named for what it is,
 `rock`, and never the plugin's own name: what a server half exports under its plugin's name is the
-kind of that plugin's own row (`building-a-plugin`), and a row of a kind named as a plugin the scene
-lists or ships is a plugin's to the page's prediction, which asks no rule file for it
-(`plugins/player/player.plugin.ts`). Each kind's rule file is one line handing it out under the
-kind's name, and each kind has its own definition, which the shared rule reads with `def(w,
-me.kind)`.
+kind of that plugin's own row (`building-a-plugin`). Each kind's rule file is one line handing it
+out under the kind's name, and each kind has its own definition, which the shared rule reads with
+`def(w, me.kind)`.
 
 A look several kinds share is the plugin's browser half, never a file the kinds' looks import or
 re-export: a look is imported once per row, and a module they share would be one for every row. Two
@@ -309,35 +323,59 @@ child scene's `world` is the manager's with its own over it, so a `seed` in the 
 seeds every scene, each with a generator and a counter of its own. Only `w.die()` moves it, so a
 step booted again and replayed with the same inputs rolls the same numbers, which is how the
 recorder goes back (`addons/recorder/recorder.addon.ts`). `Math.random` in a rule rolls numbers no
-replay gets back and no page agrees with. A step that rolls is not run ahead on the page. A roll
+replay gets back and no page agrees with. A roll
 that must not move the scene's generator, and is the same on every machine for one row on one
 step, is `seeded` from `engine/engine.ts` over a hash of the row's id and a step counter the row
 keeps on itself: `seeded(Math.imul(me.id, 0x9e3779b1) ^ me.data.step)()`, with `step` a field of
 the prefab its `before` adds one to. `chance` in `plugins/audio/audio.sim.ts` is the same hash
 over the audio ledger's own `step`, for any row of a scene with that ledger.
 
+## Maths in a rule
+
+A rule runs on the server's node, and again in every page that runs its scene ahead
+(`world.predict`, `going-multiplayer`). JavaScript leaves `Math.sin`, `cos`, `tan`, `asin`, `acos`,
+`atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `exp`, `expm1`, `log`, `log1p`,
+`log2`, `log10`, `pow`, `**`, `cbrt` and `hypot` to each engine, and node and Chrome differ in the last
+bit on 2 to 16 in every 100 inputs of each but `hypot`, so a page's copy computed with them ends a
+hair from the server's. A rule imports `plugins/math`, `import * as math from
+'#plugins/math/math.sim.ts'`, and calls `math.sin(a)` where it would call `Math.sin(a)` and
+`math.pow(a, b)` where it would write `a ** b`: each hands back the same bits on every engine. What
+`Math` computes exactly stays on `Math`: `sqrt`, `abs`, `floor`, `ceil`, `round`, `trunc`, `sign`,
+`min`, `max`, `fround`, `imul`, `clz32` and the constants, `PI` and the rest. Core's three is
+`outsidedata/three.js`, whose `src/math` turns every angle with a copy of the same code, so a rule
+may use three's vectors, quaternions, matrices, `Euler` and `MathUtils` (`setFromAxisAngle`, `slerp`,
+`angleTo` and all); the rest of three, its curves and its scene graph, calls `Math` as the engine has
+it and stays out of rules. `games/games.test.ts` fails on a rule of any game that breaks either, and
+`plugins/math/math.sim.test.ts` on a plugin's server half. A look only draws, and may use `Math`.
+
 ## What goes wrong
 
 - A rule in `tick` reads another row's move a step late. A coin's touch test written in `tick`
-  took the coin one step after the body reached it; in `after` it took it on the step.
+  took the coin one step after the seat's square reached it; in `after` it took it on the step.
 - A fixed number put on the prefab, a row or the code, because it was close. It goes in the
   definition, `world` or a data file.
-- A new system added as a field of a kind that exists: a score on the body or the `player` row.
-  It is a kind of its own. The `player` row is the seat's handle, not a store of the game's state,
-  so a score is never on it, one only its own seat should see as much as one every seat sees.
-- A rule writing another kind's fields straight. The field then has rules in two files, and by
-  default the page never runs the step ahead. It calls that kind's act.
+- A new system added as a field of a kind that exists for another reason: a team's total or a
+  match's clock on a monster, or on one seat's `player` row. A value no seat owns is a kind of its
+  own.
+- What a seat owns, its health, ammo, lives or score, kept on a row its `player` row spawns, or on a
+  shared kind keyed by slot. It is a field of its `player` row. One only its own seat may read is listed in
+  `security`, never moved to another row to hide it (`designing-a-seat`).
+- An act on the `player` row that other kinds call to change it, with no refusal of a seat: the seat
+  sends it to itself. It returns for `seat >= 0`, or is a game plugin's function.
+- A look that finds the seat's own row with `rows.find(r => r.kind === 'player')`: that is whichever
+  seat's row came first. It is `possessed(rows)`.
+- A rule writing another kind's fields straight. The field then has rules in two files. It calls
+  that kind's act.
 - A row spawned with another row's array, or with an entry of `w.world.scenemanager.actors`, and
   then written in place, moving the other row or the entry with it. Spawn with copies.
 - Memory kept in a variable at the top of the rule file or on `w.world`. It goes on the row.
-- `w.find` or `w.get` asked for a row that may have ended, or, in a rule the page runs ahead, a row
-  the seat is not sent, which throws. Ask with `w.all`.
+- `w.find` or `w.get` asked for a row that may have ended, which throws. Ask with `w.all`.
 - The kind left out of the scene's `sim`, which throws `no code for kind <kind>` at boot for an
   `actors` entry and a TypeError at a spawned row's first step; or given no prefab, which throws
   `no prefab for <kind>` at boot or at the `w.spawn` call.
 - A look that draws by a number of its own, or keeps a variable set where it is declared rather
   than in `setup`: a ring's starting angle and a line's field order and gaps are numbers too.
-- A rule or a look reading another kind's definition, `def(w, 'body')` or `def(w, other.kind)`. A
+- A rule or a look reading another kind's definition, `def(w, 'player')` or `def(w, other.kind)`. A
   touch that needs both sizes is a function of the game's own plugin, handed the other row.
 - Two kinds sharing code by one importing the other. It is a plugin of the game's own.
 - A look shared by re-export or by importing a `.plugin.ts`, one module for every row. The plugin's
@@ -358,6 +396,7 @@ node. It boots the game's manager as the page boots it and reads what the kind w
 import { expect, test } from 'vitest'
 import { boot, type Arg, type Scene } from '#engine/engine.ts'
 import { connection, load, manager, type Down } from '#addons/scenemanager/scenemanager.addon.ts'
+import { possessed } from '#addons/player/player.addon.ts'
 import { sim } from './<game>.sim.ts'
 import file from './<game>.scene.json' with { type: 'json' }
 import defs from './assets/<game>.json' with { type: 'json' }
@@ -372,7 +411,7 @@ test('<what the kind does, in a sentence>', async () => {
   let seq = 0
   const press = (action: string, ...args: Arg[]) => {
     const last = heard[heard.length - 1]
-    const me = last.packet.rows.find(r => r.kind === 'player')!
+    const me = possessed(last.packet.rows)!
     seat.take({ scene: last.scene, seat: last.seat, msg: { seq: ++seq, n: last.packet.n, id: me.id, action, args } })
   }
   truth.step(DT)
@@ -384,7 +423,13 @@ Then it drives the seat with `press`, steps with `truth.step(DT)`, and reads the
 `room.rows`, and off the last packet in `heard` to show the seat is sent them. Every number it
 checks against comes from `defs` and the rows, never written again in the test. Where the pass
 matters it pins the step a thing happens on, stepping one step at a time. A seat sending an act it
-may not send, at a row it does not own, is checked to change nothing. Once the test passes, break
+may not send, at a row it does not own, is checked to change nothing, and so is a seat sending its
+own `player` row an act only rules may call (`award`, `hurt`): the step runs and the row is as it
+was. Messages are numbered from 1 for each visit, as the client numbers them: a scene that runs
+ahead takes a seat's messages in order from 1, and one numbered past a gap waits for ever. A kind
+that changes what the seat's own thing does also shows on screen by the frame after the key, which
+the game's press test, `<game>.predict.test.ts`, holds (`going-multiplayer`, How it is proven).
+Once the test passes, break
 the rule on purpose, move it to the wrong pass or drop the act, and see the test fail. A test
 never fakes what a plugin should do.
 
@@ -422,7 +467,10 @@ reported.
   changes.
 - Can this fixed number ride on the row, or sit in the prefab, because the row is easy to reach?
   No: the definition. A row is copied to every seat every step.
-- Should this new behaviour be a field on a kind that exists? No: a new system is a new kind.
+- Should this new behaviour be a field on a kind that exists? No: a new system is a new kind. What a
+  seat owns, its score, health or ammo, is a field of its `player` row.
+- Can a seat's own state live on a row its `player` row spawns, to hide it or to tidy it? No: a field
+  of the `player` row, listed in `security` when only that seat may read it.
 - Can one kind's rule or look import another's? No: a plugin of the game's own, which both import.
 - Can a rule read another kind's definition for a touch test? No: the game's own plugin, handed that
   row, reads its definition.

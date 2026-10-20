@@ -43,6 +43,25 @@ cover:
   `assets/` keeps what they are made from, which the game never reads: the rip art is cut from, and
   the script that draws, writes or cuts a file, kept there so the file can be made again
   (prime-directive, Names and tests).
+- A model or texture a game ships is built, never raw: a glb packed by gltfpack (meshopt geometry,
+  WebP textures) and a loose texture as `.webp`. The raw parts it is made from (source glbs,
+  full-size texture sets, packs) live in the library, `PATCHWORK_LIBRARY`, never in the game.
+  `games/<game>/assets/<game>.bake.ts` makes every built file from the library and the scripts beside
+  the art, and `yarn bake <game>` runs it (`scripts/bake.ts`: its tools `blender`, `pack`, `webp`,
+  `scratch`, `library`; `pack` is `-cc -kn -km -ke -vpf -tw`, so node and material names, extras and
+  float positions survive for a look that instances a mesh's geometry; a glTF mesh's own name does
+  not, so a mesh found by name is a node of one primitive). What of it is committed, and the check
+  run before every commit, is `committing-a-game`. `yarn health` checks the machine first. The
+  loader decodes both with no setup: meshopt and `EXT_texture_webp` in a glb, and a `.webp` texture
+  entry like a jpg.
+- Art whose licence lets a game ship it but forbids handing the files on (an itch.io pack, a bought
+  set) is never in the repo as itself. The pack is kept as downloaded in the library under
+  `vendor/<pack>/`, which is never committed, and the script that cuts it seals every picture it
+  makes into one wad with `seal` from `plugins/loader/loader.sim.ts`, written in `assets/`. The scene
+  names the wad in `world.loader.wads`, beside `assets`, and the loader opens it in memory: every
+  file in it is at its own path from the wad's folder, so the catalogue, the sheets and the maps name
+  `hero.png` as ever and never know it came from a wad. The header of `loader.sim.ts` has the
+  format. It hides the files and no more: the key ships with core.
 - Its entry is a key of `world.loader.assets` in the scene file: `{ "type", "url", "preload"?, ... }`.
   The `url` is the file's path from the repo's root, with a leading `/`, written as the file is
   named, spaces and all: `"/games/<game>/assets/coin.json"`, as `yarn new-game` writes its
@@ -56,7 +75,7 @@ cover:
   once, in `<game>.scene.json`'s `world.loader`, and a scene that needs one more entry names them
   all in its own.
 - Which entry a thing draws is never written in code. A kind's actor reads the entry's name off its
-  definition, `"image": "body"` in `assets/<game>.json`, read with `def`. A plugin's kinds name it
+  definition, `"image": "hero"` in `assets/<game>.json`, read with `def`. A plugin's kinds name it
   in the plugin's table on `world`, `world.sprite2d.kinds.<kind>.sheet` or
   `world.anim.kinds.<kind>.model`, or on the row when it changes while the game runs, as a sprite2d
   row's own `sheet` does.
@@ -149,18 +168,25 @@ Its prefab holds `pos`, `frame` and `ft`, and the sheet's entry has `preload`, s
 sheet on its first step.
 
 **The kind's own actor.** `<kind>.client.ts` draws through the renderer the scene lists and asks
-the loader for the thing. The generated `body.client.ts` draws a square of its definition's colour;
-drawn from a picture instead, it is:
+the loader for the thing. The thing a seat plays as is its `player` row (`designing-a-seat`), so its
+look is `player.client.ts`, which the page loads once for every `player` row it is sent and which
+draws the thing for every one of them, so each seat sees the others. `yarn new-game` still writes a
+`body.client.ts` that the `player` row's spawned `body` draws with; that is the editor's template,
+never the model, and it is folded into `player.client.ts` first, with the rest of the `body`. Its
+square of the definition's colour, drawn from a picture instead, is:
 
 ```ts
-// body.client.ts: the picture its definition's `image` names, a `texture` entry, drawn `size`
-// pixels square, the point `anchor` of it (fractions of it across and down) on the row's `pos`.
+// player.client.ts: the seat's thing, for every seat's `player` row: the picture its definition's
+// `image` names, a `texture` entry, drawn `size` pixels square, the point `anchor` of it (fractions
+// of it across and down) on the row's `pos`. Keys and the camera are only for the row that is `mine`.
 import type { Row } from '#engine/engine.ts'
 import type { Plugins } from '#engine/browser.ts'
 import { def } from '#plugins/loader/loader.sim.ts'
+import type { Binds } from '#plugins/player/player.plugin.ts'
 
 let sprite: any
 let image: string
+let ours = false
 
 export function setup(row: Row, plugins: Plugins) {
   const d = def(plugins.wire, row.kind)
@@ -170,6 +196,10 @@ export function setup(row: Row, plugins: Plugins) {
   sprite.width = d.size
   sprite.height = d.size
   plugins.render2d.stage.addChild(sprite)
+  ours = row.data.mine === true
+  if (ours) plugins.player.bind({
+    stick: [{ keys: ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'], send: (x, y) => ['move', x, y] }],
+  } satisfies Binds)
   tick(row, plugins)
 }
 
@@ -183,11 +213,12 @@ export function tick(row: Row, plugins: Plugins) {
 export function remove(plugins: Plugins) {
   plugins.render2d.stage.removeChild(sprite)
   sprite.destroy()
+  if (ours) plugins.player.unbind()
 }
 ```
 
 - Its definition in `assets/<game>.json` holds every number it draws by: `{ "speed": 240, "size":
-  32, "image": "body", "anchor": [0.5, 0.5] }`. Where the picture stands on `pos` is one of them,
+  32, "image": "hero", "anchor": [0.5, 0.5] }`. Where the picture stands on `pos` is one of them,
   never a number in the actor.
 - What it draws is made in `setup` and held in a variable at the top of the file, since the page
   imports the file once per row. The variable is set in `setup`, never where it is declared.
@@ -332,7 +363,15 @@ type touches, as the types there now touch them:
 - A test that only checks a sprite exists, which passes with the wrong picture or the wrong url. It
   checks the texture is the loader's, and the url asked for against the literal path from the
   repo's root: checked against the entry's own url it passes with the slash missing.
-- A plugin's sprite and the generated `body.client.ts` square both left drawing one kind.
+- A plugin's sprite and the look's own square both left drawing one kind: the `player` row under
+  `world.sprite2d.kinds.player` with `player.client.ts` still drawing the square it took from the
+  generated `body.client.ts`.
+- The seat's thing drawn as a kind of its own that the `player` row spawned, a `body` or a `hero`
+  with its own `<kind>.client.ts`. The thing is the `player` row, drawn by `player.client.ts`.
+- `player.client.ts` drawing only the row that is `mine`: every other seat sees nothing of it. It
+  draws every `player` row and binds keys only for its own.
+- A kind a plugin draws by table that is the seat's thing: its table entry is for `player`
+  (`world.sprite2d.kinds.player`, `world.anim.kinds.player`), never for a kind the `player` row spawns.
 
 ## How it is proven
 
@@ -387,7 +426,10 @@ the texture lands: the stand-in can wait on a promise the test resolves. After t
 texture is the loader's (`toBe` the stand-in), its size is the definition's, and the stand-in's
 size differs from the drawn size so the check means something. Its anchor is the definition's,
 its position where the row stands, and it follows the row as the row moves. When the row ends,
-`room.end(row)` then a frame or two, the sprite is destroyed and the texture is not.
+`room.end(row)` then a frame or two, the sprite is destroyed and the texture is not. For
+`player.client.ts`, a second seat joins the same truth with `connection(manager(truth), () => {})`,
+and the page draws a sprite for both `player` rows while it binds keys for its own row alone. (Two
+pages on one truth in one node process share each row's module, so one page is read.)
 
 A kind a plugin draws has its rule's test, `<kind>.sim.test.ts`. It shows the frame moves on by
 the durations the sheet gives, every number read from the sheet file, and goes round again. In the

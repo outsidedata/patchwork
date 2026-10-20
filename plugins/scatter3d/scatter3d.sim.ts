@@ -10,6 +10,7 @@
 //             `terrain3d.scatter3d.ts`): `ground` this half's (`placed`), `land` the browser half's
 //             (its header).
 //   cutout coverage budget  the browser half's card numbers and its placing budget (its header).
+//   hollows   the most boxes the browser half clears at once, with a `hollows` mod (its header).
 //   remember  how many cells the server keeps for each truth: past it, the one asked for longest
 //             ago goes first, and it is placed again, the same, when it is asked for again.
 //   packs     name to a pack:
@@ -27,6 +28,9 @@
 //     lods shadow leaf  the browser half's shells, shadows and card normals (its header).
 //     density        the share of cells kept on open ground.
 //     rules          `[{ q, lo, hi }]` over the land record, each a ramp the keep is multiplied by.
+//     biomes         optional, biome name to a weight: the keep is multiplied by Σ weight·share, each
+//                    share the land record's `biome:<name>`, so a pack grows at its weight in each
+//                    biome it names, none in one it leaves out, and thins out across their borders.
 //     clearing       metres from the origin inside which no cell is kept.
 //     size           [base, spread]: an instance's scale.
 //     vary           how far an instance's grey tint strays from 1.
@@ -43,7 +47,8 @@
 // across z, and hₖ is `unit(i, j, seed + k)`, a hash of the three as a fraction in [0, 1):
 //   the point  x = (i + h₁)·cell, z = (j + h₂)·cell: jittered over the whole cell;
 //   the keep   none within `clearing` metres of the origin; otherwise kept when
-//              h₀ < density·cover(x, z)·Π ramp(rule, x, z), so ground whose cover is 0, a road,
+//              h₀ < density·cover(x, z)·Π ramp(rule, x, z)·Σ weight·share (with `biomes`), so ground
+//              whose cover is 0, a road,
 //              keeps nothing, and an inverted ramp (lo > hi) on height is a treeline;
 //   the yaw    2π·h₃;
 //   the tint   1 + vary·(2·h₄ − 1), a grey;
@@ -56,18 +61,21 @@
 // `solids(w, x, z, r, ground)` is `{ x, z, radius, tall? }` for every kept instance of a row with
 // `solid` whose circle reaches within r of (x, z): its centre within r + solid·size; `tall` is
 // tall·size when the row gives one. It reads its numbers off
-// the truth's `world.scatter3d`, and remembers each truth's cells, refused ones too. It starts over
-// when those numbers change, compared by content and never by identity, and it reads the ground's `edits()` on every question: a new land drops every cell, and a
-// layer whose version moved drops each cell whose square meets that layer's rect.
+// the truth's `world.scatter3d`, and remembers each truth's cells, refused ones too, up to `remember`
+// of them, the oldest placed forgotten first. It checks those numbers and starts over when the truth's
+// `world.scatter3d` is another object, and it reads the ground's `edits()` on every question: a new
+// land drops every cell, and a layer whose version moved drops each cell whose square meets that
+// layer's rect.
 //
 // `placed(w)` is the ground `world.scatter3d.mods.ground` names (`terrain3d.scatter3d.ts`), for the
-// mods that place instances on the server (`scatter3d.walker.ts`, `scatter3d.hitscan3d.ts`); it
-// throws when the scene names none.
+// mods that place instances on the server (`scatter3d.walker.ts`, `scatter3d.hitscan3d.ts`,
+// `scatter3d.box3d.ts`); it throws when the scene names none.
 //
 // Each pack is checked when its numbers are read: its rules through the ground's `rules`, which
 // throws naming a rule whose `q` is no key of the land record, and its cell, lods, weights and
 // asset or shape here, each throwing a sentence that names the pack.
 import type { W } from '#engine/engine.ts'
+import * as math from '#plugins/math/math.sim.ts'
 import { mod } from '#addons/scenemanager/scenemanager.addon.ts'
 
 export type Rule = { q: string; lo: number; hi: number }
@@ -80,9 +88,9 @@ export type Pack = {
   asset?: string; shape?: Shape; colour?: string; surface?: RockSurface
   rows: Record<string, { weight: number; solid?: number; tall?: number }>
   cell: number; reach: number; seed: number; lods: number[]; shadow: number; leaf: number
-  density: number; rules: Rule[]; clearing: number; size: [number, number]; vary: number
+  density: number; rules: Rule[]; biomes?: Record<string, number>; clearing: number; size: [number, number]; vary: number
 }
-export type Scatter = { mods?: { ground?: string; land?: string }; cutout: number; coverage: number; budget: number; remember: number; packs: Record<string, Pack> }
+export type Scatter = { mods?: { ground?: string; land?: string; hollows?: string | string[] }; hollows?: number; cutout: number; coverage: number; budget: number; remember: number; packs: Record<string, Pack> }
 export type Edits = { land: object; layers: { version: number; rect: number[] }[] }
 export type Ground = {
   height(x: number, z: number): number
@@ -90,6 +98,14 @@ export type Ground = {
   ramp(rule: Rule, x: number, z: number): number
   rules(list: Rule[], what: string): Rule[]
   edits(): Edits
+  // The page's land alone: whether the land itself is on the scene yet, which the browser half keeps
+  // its instances off the scene until, so the land and what stands on it arrive together; and the
+  // place the land has prepared, `[x, z]`, or undefined, whose cells the browser half places ahead.
+  shown?(): boolean
+  prepared?(): number[] | undefined
+  // The page's land alone, when it has workers: the module at `url`'s `task(ground, input)` run on the
+  // land in one, its output handed back; undefined where it has none.
+  task?(url: string, input: unknown): Promise<unknown> | undefined
 }
 export type Cell = { i: number; j: number; x: number; z: number; row: string; size: number; yaw: number; tint: number }
 export type Solid = { x: number; z: number; radius: number; tall?: number }
@@ -103,16 +119,30 @@ export function hash(i: number, j: number, seed: number): number {
 }
 export const unit = (i: number, j: number, seed: number) => hash(i, j, seed) / 4294967296
 
+// A pack's biomes as a rule on each one's share, with its weight.
+const made = new WeakMap<Record<string, number>, [Rule, number][]>()
+const biomeRules = (biomes: Record<string, number>) => {
+  let got = made.get(biomes)
+  if (!got) made.set(biomes, (got = Object.entries(biomes).map(([name, weight]) => [{ q: `biome:${name}`, lo: 0, hi: 1 }, weight])))
+  return got
+}
+
 export function place(pack: Pack, i: number, j: number, ground: Ground): Cell | undefined {
   const { cell, seed } = pack
   const x = (i + unit(i, j, seed + 1)) * cell, z = (j + unit(i, j, seed + 2)) * cell
-  if (Math.hypot(x, z) < pack.clearing) return undefined
+  if (math.hypot(x, z) < pack.clearing) return undefined
   // The ramps only ever lower the keep, so a cell is refused the moment it falls under h₀.
   const h0 = unit(i, j, seed)
   let keep = pack.density * ground.cover(x, z)
   if (!(h0 < keep)) return undefined
   for (const rule of pack.rules) {
     keep *= ground.ramp(rule, x, z)
+    if (!(h0 < keep)) return undefined
+  }
+  if (pack.biomes) {
+    let w = 0
+    for (const [rule, weight] of biomeRules(pack.biomes)) w += weight * ground.ramp(rule, x, z)
+    keep *= w
     if (!(h0 < keep)) return undefined
   }
   const rows = Object.entries(pack.rows)
@@ -141,16 +171,29 @@ export function check(s: Scatter, ground: Ground) {
     for (const [row, r] of Object.entries(p.rows)) if (!(r.weight >= 0)) throw new Error(`${what} row ${row} weighs ${r.weight}`)
     for (const [row, r] of Object.entries(p.rows)) if (r.tall !== undefined && !(r.tall > 0)) throw new Error(`${what} row ${row} stands ${r.tall} tall`)
     ground.rules(p.rules, what)
+    if (p.biomes) ground.rules(biomeRules(p.biomes).map(([rule]) => rule), `${what} biomes`)
   }
 }
 
 // The solid instances of `packs` whose circle reaches within r of (x, z), each cell asked of `cellOf`.
+// How far past r a pack's solid instance may stand, each pack's worked out once: undefined for a pack
+// with no solid row drawn.
+const margins = new WeakMap<Pack, number | undefined>()
+const marginOf = (pack: Pack) => {
+  if (margins.has(pack)) return margins.get(pack)
+  const solid = Object.values(pack.rows).filter(row => row.solid !== undefined && row.weight > 0)
+  const m = solid.length ? Math.max(...solid.map(row => row.solid!)) * (pack.size[0] + pack.size[1]) : undefined
+  margins.set(pack, m)
+  return m
+}
+
 export function solidsOver(packs: Record<string, Pack>, cellOf: (name: string, pack: Pack, i: number, j: number) => Cell | undefined, x: number, z: number, r: number): Solid[] {
   const out: Solid[] = []
-  for (const [name, pack] of Object.entries(packs)) {
-    const solid = Object.values(pack.rows).filter(row => row.solid !== undefined && row.weight > 0)
-    if (!solid.length) continue
-    const R = r + Math.max(...solid.map(row => row.solid!)) * (pack.size[0] + pack.size[1])
+  for (const name in packs) {
+    const pack = packs[name]
+    const margin = marginOf(pack)
+    if (margin === undefined) continue
+    const R = r + margin
     const i0 = Math.floor((x - R) / pack.cell), i1 = Math.floor((x + R) / pack.cell)
     const j0 = Math.floor((z - R) / pack.cell), j1 = Math.floor((z + R) / pack.cell)
     for (let j = j0; j <= j1; j++) {
@@ -159,7 +202,7 @@ export function solidsOver(packs: Record<string, Pack>, cellOf: (name: string, p
         const row = c && pack.rows[c.row]
         if (!c || row?.solid === undefined) continue
         const radius = row.solid * c.size
-        if (Math.hypot(c.x - x, c.z - z) <= r + radius) out.push(row.tall === undefined ? { x: c.x, z: c.z, radius } : { x: c.x, z: c.z, radius, tall: row.tall * c.size })
+        if (math.hypot(c.x - x, c.z - z) <= r + radius) out.push(row.tall === undefined ? { x: c.x, z: c.z, radius } : { x: c.x, z: c.z, radius, tall: row.tall * c.size })
       }
     }
   }
@@ -168,17 +211,19 @@ export function solidsOver(packs: Record<string, Pack>, cellOf: (name: string, p
 
 // ---------------------------------------------------------------- each truth's cells
 
-type Memo = { text: string; land: object | undefined; versions: number[]; cells: Map<string, { cell: Cell | undefined; square: number[] }> }
+type Memo = { scatter: Scatter; packs: Map<string, number>; land: object | undefined; versions: number[]; cells: Map<number, { cell: Cell | undefined; square: number[] }> }
 const memos = new WeakMap<W, Memo>()
 
 const meets = (a: number[], b: number[]) => a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]
 
+// A cell's key: its pack's place in `packs`, then i and j, each offset to whole numbers below 2²¹.
+const keyOf = (pack: number, i: number, j: number) => (pack * 2097152 + (i + 1048576)) * 2097152 + (j + 1048576)
+
 function memoOf(w: W, s: Scatter, ground: Ground): Memo {
-  const text = JSON.stringify(s)
   let m = memos.get(w)
-  if (!m || m.text !== text) {
+  if (!m || m.scatter !== s) {
     check(s, ground)
-    m = { text, land: undefined, versions: [], cells: new Map() }
+    m = { scatter: s, packs: new Map(Object.keys(s.packs).map((name, k) => [name, k])), land: undefined, versions: [], cells: new Map() }
     memos.set(w, m)
   }
   const e = ground.edits()
@@ -206,16 +251,11 @@ export function placed(w: W): Ground {
 
 export function solids(w: W, x: number, z: number, r: number, ground: Ground): Solid[] {
   const s = w.world.scatter3d as Scatter
-  const { cells } = memoOf(w, s, ground)
+  const { cells, packs } = memoOf(w, s, ground)
   return solidsOver(s.packs, (name, pack, i, j) => {
-    const key = `${name} ${i} ${j}`
+    const key = keyOf(packs.get(name)!, i, j)
     const had = cells.get(key)
-    if (had) {
-      // Asked for again, it is the newest.
-      cells.delete(key)
-      cells.set(key, had)
-      return had.cell
-    }
+    if (had) return had.cell
     const cell = place(pack, i, j, ground)
     cells.set(key, { cell, square: [i * pack.cell, j * pack.cell, (i + 1) * pack.cell, (j + 1) * pack.cell] })
     if (cells.size > s.remember) cells.delete(cells.keys().next().value!)

@@ -2,7 +2,8 @@
 // instances on terrain3d's land, so a trunk a rule asks about stands where a seat sees it.
 //
 // `ground(w)`, for a scene with `world.scatter3d.mods: { ground: 'terrain3d' }`, is the server half's
-// `Ground`: `heightAt`, `paintAt`'s cover, `ramp` over the land record, its `rules` and its `edits`.
+// `Ground`: `heightAt`, `paintAt`'s cover, `ramp` over the land record, the land's own `rules`, which
+// know its biomes, and its `edits`.
 //
 // `land(plugins)`, for a scene with `world.scatter3d.mods: { land: 'terrain3d' }`, is the land as this
 // page has it, terrain3d's browser half's `ground`, which answers the same five over the client's own
@@ -12,13 +13,13 @@ import type { W } from '#engine/engine.ts'
 import type { Plugins } from '#engine/browser.ts'
 import type { Ground } from '#plugins/scatter3d/scatter3d.sim.ts'
 import type { Ground as Land } from './terrain3d.plugin.ts'
-import { edits, heightAt, paintAt, ramp, rules } from './terrain3d.sim.ts'
+import { edits, heightAt, paintAt, ramp } from './terrain3d.sim.ts'
 
 export const ground = (w: W): Ground => ({
   height: (x, z) => heightAt(w, x, z),
   cover: (x, z) => paintAt(w, x, z).cover,
   ramp: (rule, x, z) => ramp(w, rule, x, z),
-  rules,
+  rules: (list, what) => edits(w).land.rules(list, what),
   edits: () => edits(w),
 })
 

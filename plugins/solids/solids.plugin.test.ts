@@ -1,6 +1,9 @@
 // The solids' arithmetic, with numbers of the test's own: a loft and a prism, their faces pointing out
-// and their volumes the rules', and a frame turning about x, then y, then moving. How a plugin that
-// draws its models through solids draws a model's parts with them is that plugin's own test.
+// and their volumes the rules', and a frame turning about x, then y, then moving. A plugin that
+// switches a model's lamps, as a mech's headlamps go on and off, darkens the lamp paint through
+// `materials` and dims the lights that name it, and every part in that paint on every node goes dark
+// with them while the other lights burn on. How a plugin that draws its models through solids draws a
+// model's parts with them is that plugin's own test.
 // Then scenes of the test's own, in a game folder of the test's own written to a temp folder, which is
 // their home, each through a page on the loopback as `index.html` makes one, on a clock of one step a
 // frame, with render3d handed a canvas stand-in and no renderer, so every frame's placing is worked
@@ -69,22 +72,28 @@ test('a frame turns about x, then y, then moves', () => {
 test('a paint with an opacity below 1 is glass: see-through by that much, writing no depth and casting no shadow, while every other paint is solid and casts one', () => {
   const paints = { hull: { colour: '#8e98a4' }, glass: { colour: '#7fd4ff', opacity: 0.2 }, whole: { colour: '#ffffff', opacity: 1 } }
   const box = (paint: string) => ({ node: 'n', paint, loft: { axis: 'y' as const, from: 0, to: 1, a: [0, 0, 1, 1] } })
-  const { meshes: made, materials } = meshes(THREE, (m: unknown) => m, paints, ['hull', 'glass', 'whole'].map(box), 'a test')
+  const { meshes: made } = meshes(THREE, (m: unknown) => m, paints, ['hull', 'glass', 'whole'].map(box), 'a test')
   const [hull, glass, whole] = made.get('n')!
-  // Each paint's material by its name.
-  expect([materials.get('hull'), materials.get('glass'), materials.get('whole')]).toEqual([hull.material, glass.material, whole.material])
   expect([glass.material.transparent, glass.material.opacity, glass.material.depthWrite, glass.castShadow, glass.receiveShadow]).toEqual([true, 0.2, false, false, true])
   for (const m of [hull, whole]) expect([m.material.transparent, m.material.opacity, m.material.depthWrite, m.castShadow, m.receiveShadow]).toEqual([false, 1, true, true, true])
 })
 
-test('a light that names a paint carries the name, for whatever lights and darkens the paint to light it with; one that names none carries none', () => {
-  const { lights: made } = lights(THREE, [
-    { node: 'n', colour: '#ff2a2a', intensity: 3, at: [0, 1, 0], paint: 'alarm' },
-    { node: 'n', colour: '#ffffff', intensity: 5, at: [0, 2, 0] },
+test('lamps switched off by their paint: every part in the lamp paint, on every node, goes dark, and so do the lights that name it, while a light that names none burns on', () => {
+  const paints = { hull: { colour: '#8e98a4' }, lamp: { colour: '#ffb547', glow: 4 } }
+  const parts = ['left', 'right'].flatMap(node => ['hull', 'lamp'].map(paint => ({ node, paint, loft: { axis: 'y' as const, from: 0, to: 1, a: [0, 0, 1, 1] } })))
+  const { meshes: made, materials } = meshes(THREE, (m: unknown) => m, paints, parts, 'a test')
+  const lit = lights(THREE, [
+    { node: 'left', colour: '#fff4d6', intensity: 800, at: [0, 1, 0], paint: 'lamp' },
+    { node: 'right', colour: '#fff4d6', intensity: 800, at: [0, 1, 0], paint: 'lamp' },
+    { node: 'left', colour: '#ffffff', intensity: 5, at: [0, 2, 0] },
   ])
-  const [alarm, plain] = made.get('n')!
-  expect(alarm.userData.paint).toBe('alarm')
-  expect(plain.userData.paint).toBeUndefined()
+  // Off, as the plugin that holds the switch turns them.
+  materials.get('lamp').emissiveIntensity = 0
+  for (const l of lit.owned as any[]) if (l.userData.paint === 'lamp') l.intensity = 0
+  const lamp = new THREE.Color(paints.lamp.colour)
+  const lampParts = [...made.values()].flat().filter(m => m.material.color.equals(lamp))
+  expect(lampParts.map(m => m.material.emissiveIntensity)).toEqual([0, 0])
+  expect([...lit.lights.values()].flat().map(l => l.intensity)).toEqual([0, 5, 0])
 })
 
 // ---------------------------------------------------------------- a scene of the test's own

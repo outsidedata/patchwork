@@ -13,7 +13,8 @@
 // node, and go when it is done. A failure is written to the console
 // once; the tests that fail on purpose count those writes and keep them off the output.
 import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import * as THREE from 'three'
@@ -353,6 +354,35 @@ test('a glb loads in node with its texture, each model() is a scene with a skele
   expect(two.scene.getObjectByName('hips')).toBe(b.skeleton.bones[0])
   expect(a.material.map.image.width).toBe(1)
   expect(one.animations.map((c: any) => c.name)).toEqual(['rise'])
+})
+
+test('a glb packed by gltfpack with meshopt compression decodes: its triangle, its bone and its clip as they were', async () => {
+  const raw = join(folder, 'unpacked.glb'), packed = join(folder, 'packed.glb')
+  writeFileSync(raw, glb(false))
+  execFileSync(join(process.cwd(), 'node_modules/.bin/gltfpack'), ['-cc', '-kn', '-km', '-i', raw, '-o', packed])
+  const bytes = readFileSync(packed)
+  expect(JSON.parse(bytes.subarray(20, 20 + bytes.readUInt32LE(12)).toString()).extensionsRequired).toContain('EXT_meshopt_compression')
+  const me = loader()
+  me.tick({ wire: wireOf({ packed: { type: 'model', url: '/' + relative(process.cwd(), packed) } }), render3d } as any)
+  await me.load('packed')
+  const { scene, animations } = me.model('packed')
+  let skinned: any
+  scene.traverse((o: any) => { if (o.isSkinnedMesh) skinned = o })
+  expect(skinned.skeleton.bones.map((x: any) => x.name)).toEqual(['hips'])
+  skinned.updateMatrixWorld(true)
+  const at = skinned.geometry.getAttribute('position'), corner = new THREE.Vector3()
+  const corners = [0, 1, 2].map(i => corner.fromBufferAttribute(at, i).applyMatrix4(skinned.matrixWorld).toArray().map(v => Math.round(v * 1000) / 1000))
+  expect(corners).toEqual(expect.arrayContaining([[0, 0, 0], [1, 0, 0], [0, 1, 0]]))
+  expect(animations.map((c: any) => c.name)).toEqual(['rise'])
+  const track = animations[0].tracks.find((t: any) => t.name === 'hips.position')
+  // gltfpack resamples a clip at 30 Hz: the bone rises from 0 to 1 over the second, at its time.
+  expect(track.times[0]).toBe(0)
+  expect(track.times[track.times.length - 1]).toBe(1)
+  for (let i = 0; i < track.times.length; i++) {
+    expect(track.values[3 * i]).toBeCloseTo(0, 3)
+    expect(track.values[3 * i + 1]).toBeCloseTo(track.times[i], 3)
+    expect(track.values[3 * i + 2]).toBeCloseTo(0, 3)
+  }
 })
 
 test('a document put in place while a model decodes is not taken away when the decoding ends', async () => {
@@ -847,3 +877,166 @@ test('a tilemap in a scene with no render2d fails', async () => {
   me.tick({ wire: wireOf({ world: { type: 'tilemap', url } }), render3d: { THREE } } as any)
   await expect(me.load('world')).rejects.toThrow('loader world: a tilemap, and this scene names no render2d to draw it')
 })
+
+// A music project and the samples it names beside it: one in its own folder, one in a folder
+// under it, one a folder up.
+const project = () => {
+  mkdirSync(join(folder, 'song', 'kit'), { recursive: true })
+  const url = file('song/song.json', '{"tracks":[]}')
+  file('song/kit/kick.wav', new Uint8Array([1, 2, 3]))
+  file('song/snare.wav', new Uint8Array([4, 5]))
+  file('hat.wav', new Uint8Array([6]))
+  return url
+}
+const bytesOf = (b: ArrayBuffer | undefined) => [...new Uint8Array(b!)]
+
+test('beside is the bytes of a file named from the folder of an entry\'s file, nested, beside it and a folder up', async () => {
+  const me = loader()
+  me.tick({ wire: wireOf({ song: { type: 'json', url: project() } }) } as any)
+  expect(bytesOf(await me.beside('song', 'kit/kick.wav'))).toEqual([1, 2, 3])
+  expect(bytesOf(await me.beside('song', './snare.wav'))).toEqual([4, 5])
+  expect(bytesOf(await me.beside('song', '../hat.wav'))).toEqual([6])
+})
+
+test('in a page beside fetches the file once, at its path from the root, encoded once, and a second ask is the same bytes', () => asPage(async () => {
+  const url = project()
+  const me = loader()
+  me.tick({ wire: wireOf({ song: { type: 'json', url } }) } as any)
+  const kick = url.replace('song.json', 'kit/kick.wav')
+  const first = await me.beside('song', 'kit/kick.wav')
+  expect(bytesOf(first)).toEqual([1, 2, 3])
+  expect(await me.beside('song', 'kit/kick.wav')).toBe(first)
+  expect(fetchedUrls).toEqual([encodeURI(kick)])
+  await me.written(kick)
+  expect(bytesOf(await me.beside('song', 'kit/kick.wav'))).toEqual([1, 2, 3])
+  expect(fetchedUrls).toEqual([encodeURI(kick), encodeURI(kick)])
+}))
+
+test('a missing file beside an entry is undefined, writes nothing to the console, and is looked for again on every ask', () => asPage(async () => {
+  const warned: unknown[] = []
+  vi.spyOn(console, 'warn').mockImplementation((e: unknown) => { warned.push(e) })
+  const url = project()
+  const me = loader()
+  me.tick({ wire: wireOf({ song: { type: 'json', url } }) } as any)
+  const gone = url.replace('song.json', 'kit/gone.wav')
+  expect(await me.beside('song', 'kit/gone.wav')).toBeUndefined()
+  expect(await me.beside('song', 'kit/gone.wav')).toBeUndefined()
+  expect(fetchedUrls).toEqual([encodeURI(gone), encodeURI(gone)])
+  file('song/kit/gone.wav', new Uint8Array([9]))
+  expect(bytesOf(await me.beside('song', 'kit/gone.wav'))).toEqual([9])
+  expect(errors).toEqual([])
+  expect(warned).toEqual([])
+}))
+
+test('a missing file beside an entry in node is undefined too, with nothing written to the console', async () => {
+  const warned: unknown[] = []
+  vi.spyOn(console, 'warn').mockImplementation((e: unknown) => { warned.push(e) })
+  const me = loader()
+  me.tick({ wire: wireOf({ song: { type: 'json', url: project() } }) } as any)
+  expect(await me.beside('song', 'nowhere/none.wav')).toBeUndefined()
+  expect(errors).toEqual([])
+  expect(warned).toEqual([])
+})
+
+test('beside throws for a name the catalogue has no entry for, and before the first tick', () => {
+  const me = loader()
+  expect(() => me.beside('song', 'kick.wav')).toThrow('the loader has not ticked yet')
+  me.tick({ wire: wireOf({ song: { type: 'json', url: '/song.json' } }) } as any)
+  expect(() => me.beside('tune', 'kick.wav')).toThrow('loader has no tune')
+})
+
+// ---------------------------------------------------------------- wads
+
+import { encodePng, seal } from './loader.sim.ts'
+
+// A scene whose world names wads beside its catalogue.
+const wadWire = (wads: string[], assets: Record<string, any>) => ({ rows: [{ id: 1, kind: 'loader', data: {} }], scene: { world: { loader: { wads, assets } } } })
+
+// A wad of its own folder, since a wad open in the process stays open: a sheet of one 3 × 2 frame, its
+// json and its page sealed in it and neither on disk, and a picture that is no PNG.
+const wadded = async (name: string) => {
+  mkdirSync(join(folder, name))
+  const at = '/' + relative(process.cwd(), join(folder, name))
+  const data = new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 9, 9, 9, 0, 10, 20, 30, 40, 50, 60, 70, 80])
+  const page = encodePng({ width: 3, height: 2, data, text: {} })
+  const sheetJson = JSON.stringify({ frames: [{ filename: 'gem/0', frame: { x: 0, y: 0, w: 3, h: 2 }, rotated: false, trimmed: false, spriteSourceSize: { x: 0, y: 0, w: 3, h: 2 }, sourceSize: { w: 3, h: 2 } }], meta: { image: 'gem.png', size: { w: 3, h: 2 }, frameTags: [] } })
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])
+  writeFileSync(join(folder, name, 'art.wad'), await seal({ 'gem.png': page, 'gem.json': new TextEncoder().encode(sheetJson), 'photo.jpg': jpeg }))
+  return { at, wad: `${at}/art.wad`, page, data }
+}
+
+test('in node a sheet sealed in a wad is drawn by PixiJS from its own pixels, for the scene and for the ui, and no picture is asked of PixiJS\'s Assets', async () => {
+  const { at, wad, data } = await wadded('node-sheet')
+  const render2d = pixi(), hud = pixi()
+  const me = loader()
+  me.tick({ wire: wadWire([wad], { gem: { type: 'sheet', url: `${at}/gem.json`, preload: true, nearest: true }, 'gem-ui': { type: 'sheet', url: `${at}/gem.json`, preload: true, for: 'ui' } }), render2d, ui: hud } as any)
+  for (const name of ['gem', 'gem-ui']) {
+    const got = await me.load(name)
+    const source = got.pages[0].source
+    expect(source).toBeInstanceOf(PIXI.BufferImageSource)
+    expect([source.width, source.height, [...source.resource]]).toEqual([3, 2, [...data]])
+    expect(got.texture('gem/0').frame.width).toBe(3)
+  }
+  expect((await me.load('gem')).pages[0].source.scaleMode).toBe('nearest')
+  expect([render2d.asked, hud.asked]).toEqual([[], []])
+})
+
+test('in node a picture sealed in a wad is the 1×1 white data texture under render3d, and one that is no PNG is refused for PixiJS, saying so', async () => {
+  const { at, wad } = await wadded('node-three')
+  const three = loader()
+  three.tick({ wire: wadWire([wad], { gem: { type: 'texture', url: `${at}/gem.png`, preload: true } }), render3d: { THREE } } as any)
+  const tex = await three.load('gem')
+  expect(tex).toBeInstanceOf(THREE.DataTexture)
+  expect([tex.image.width, tex.image.height]).toEqual([1, 1])
+  const flat = loader()
+  flat.tick({ wire: wadWire([wad], { photo: { type: 'texture', url: `${at}/photo.jpg` } }), render2d: pixi() } as any)
+  await expect(flat.load('photo')).rejects.toThrow(`loader photo: node decodes no picture but a PNG out of a wad, and ${at}/photo.jpg is not one`)
+  expect(errors.length).toBe(1)
+})
+
+// The page's ImageBitmap, stood in for by one that writes down the bytes and the options it was handed.
+const bitmaps = () => {
+  const made: { bytes: number[]; options: any }[] = []
+  vi.stubGlobal('createImageBitmap', async (blob: Blob, options?: any) => {
+    made.push({ bytes: [...new Uint8Array(await blob.arrayBuffer())], options })
+    return { width: 3, height: 2, close() {} }
+  })
+  return made
+}
+
+test('in a page only the wad is fetched, and a picture sealed in it is decoded by the browser from its bytes: for PixiJS, for three turned over, and for the DOM', () => asPage(async () => {
+  const { at, wad, page } = await wadded('page')
+  const made = bitmaps()
+  const render2d = pixi()
+  const flat = loader()
+  flat.tick({ wire: wadWire([wad], { gem: { type: 'sheet', url: `${at}/gem.json`, preload: true } }), render2d } as any)
+  const sheet = await flat.load('gem')
+  expect(sheet.pages[0].source).toBeInstanceOf(PIXI.ImageSource)
+  expect([sheet.pages[0].source.width, sheet.pages[0].source.height]).toEqual([3, 2])
+  expect(made).toEqual([{ bytes: [...page], options: undefined }])
+  expect(render2d.asked).toEqual([])
+
+  const deep = loader()
+  deep.tick({ wire: wadWire([wad], { gem: { type: 'texture', url: `${at}/gem.png`, preload: true, wrap: 'repeat' } }), render3d: { THREE } } as any)
+  const tex = await deep.load('gem')
+  expect(tex).toBeInstanceOf(THREE.Texture)
+  expect([tex.image.width, tex.flipY, tex.colorSpace, tex.wrapS]).toEqual([3, false, THREE.SRGBColorSpace, THREE.RepeatWrapping])
+  expect(made[1]).toEqual({ bytes: [...page], options: { imageOrientation: 'flipY', premultiplyAlpha: 'none', colorSpaceConversion: 'none' } })
+
+  const srcs: string[] = []
+  vi.stubGlobal('Image', class { set src(s: string) { srcs.push(s) } decode() { return Promise.resolve() } })
+  const dom = loader()
+  dom.tick({ wire: wadWire([wad], { gem: { type: 'texture', url: `${at}/gem.png`, preload: true } }) } as any)
+  await dom.load('gem')
+  expect(srcs.length).toBe(1)
+  expect(srcs[0].startsWith('blob:')).toBe(true)
+  expect(fetchedUrls).toEqual([encodeURI(wad)])
+}))
+
+test('a wad that cannot be fetched is written to the console once by the first tick, and the pictures go on as if it held nothing', () => asPage(async () => {
+  const url = file('loose.json', '{"loose":true}')
+  const me = loader()
+  me.tick({ wire: wadWire([url.replace('loose.json', 'nowhere.wad')], { loose: { type: 'json', url, preload: true } }) } as any)
+  expect(await me.load('loose')).toEqual({ loose: true })
+  expect(errors.map(e => (e as Error).message)).toEqual([`loader wad ${url.replace('loose.json', 'nowhere.wad')}: loader could not fetch ${url.replace('loose.json', 'nowhere.wad')}: 404`])
+}))

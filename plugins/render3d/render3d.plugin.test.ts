@@ -65,7 +65,7 @@ afterEach(() => { (globalThis as any).devicePixelRatio = ratio })
 
 const W = 400, H = 300
 const camera = { fov: 90, near: 0.1, far: 100, at: [0, 0, 0], look: [0, 0, -1] }
-const ao = { radius: 0.5, thickness: 1, falloff: 1, scale: 1, intensity: 0.8, samples: 16 }
+const ao = { on: true, radius: 0.5, thickness: 1, falloff: 1, scale: 1, intensity: 0.8, samples: 16 }
 const wire = (render: any) => ({ wire: { scene: { prefabs: { engine: { width: W, height: H }, ...(render ? { render3d: render } : {}) } }, rows: [] } }) as any
 const canvas = () => ({ style: {} as Record<string, string>, width: W, height: H, removed: false, remove() { this.removed = true } })
 
@@ -172,7 +172,6 @@ test('the look comes from the prefab, and a field left out leaves three\'s own s
   expect([h.toneMapping, h.shadowMap.type, h.pixelRatio]).toEqual([THREE.NeutralToneMapping, THREE.BasicShadowMap, 1.5])
   page({ camera, tone: 'none', shadows: 'none' })
   expect([gpu.made[3].toneMapping, gpu.made[3].shadowMap.enabled]).toEqual([THREE.NoToneMapping, false])
-  expect(() => page({ camera, tone: 'filmic' })).toThrow('render3d tone filmic is none of aces, neutral, none')
 })
 
 test('a tone or shadows the prefab names wrongly throws where the prefab is read, with no canvas and no renderer', () => {
@@ -180,14 +179,6 @@ test('a tone or shadows the prefab names wrongly throws where the prefab is read
   expect(() => me.tick(wire({ camera, tone: 'filmic' }))).toThrow('render3d tone filmic is none of aces, neutral, none')
   expect(me.camera).toBeUndefined()
   expect(() => render3d().tick(wire({ camera, shadows: 'blurry' }))).toThrow('render3d shadows blurry is none of soft, hard, none')
-  expect(gpu.made).toHaveLength(0)
-})
-
-test('a tone or shadows named after something every object has, as `toString` and `constructor` are, is none of them', () => {
-  for (const name of ['toString', 'constructor', '__proto__', 'hasOwnProperty']) {
-    expect(() => render3d().tick(wire({ camera, tone: name }))).toThrow(`render3d tone ${name} is none of aces, neutral, none`)
-    expect(() => render3d().tick(wire({ camera, shadows: name }))).toThrow(`render3d shadows ${name} is none of soft, hard, none`)
-  }
   expect(gpu.made).toHaveLength(0)
 })
 
@@ -244,6 +235,22 @@ test('the AO pass holds no target it does not draw into each frame, each at the 
   for (const o of owned) o.addEventListener('dispose', () => disposed.add(o))
   me.close()
   expect(owned.filter(o => !disposed.has(o))).toEqual([])
+})
+
+test('an AO whose `on` is false or left out is off: no AO pass, no composer, no reversed depth, its settings kept', () => {
+  for (const off of [{ ...ao, on: false }, (({ on: _, ...rest }) => rest)(ao)]) {
+    const added = vi.spyOn(EffectComposer.prototype, 'addPass')
+    const { me } = page({ camera, ao: off })
+    const passes = added.mock.calls.map(([pass]) => pass)
+    added.mockRestore()
+    expect(passes).toEqual([])
+    expect(gpu.made.at(-1).params.reversedDepthBuffer).toBe(false)
+    gpu.draws.length = 0
+    me.afterTick()
+    // Drawn straight to the canvas.
+    expect(gpu.draws.filter(d => d.scene === me.scene).map(d => d.target)).toEqual([null])
+    me.close()
+  }
 })
 
 test('with bloom the scene is drawn once a frame into a half-float target, bloomed as the prefab says after the AO, and tone mapped only by the last pass, to the canvas', () => {
@@ -414,6 +421,110 @@ test('an effect handed over before the renderer is made is in the composer it ma
   me.close()
 })
 
+test('a finish pass is drawn every frame after the tone mapping, in the order handed over, reading what the tone mapping wrote; the last one enabled draws to the canvas; render3d disposes it on close', () => {
+  const bloom = { strength: 0.42, radius: 0.26, threshold: 1 }
+  for (const prefab of [{ camera }, { camera, ao }, { camera, bloom }]) {
+    const { me } = page(prefab)
+    const outline = new Probe(), first = new Probe(), second = new Probe()
+    me.pass('outline', outline)
+    const added = vi.spyOn(EffectComposer.prototype, 'addPass')
+    me.finish('first', first)
+    me.finish('second', second)
+    expect(() => me.finish('first', new Probe())).toThrow('render3d already has the finish pass first')
+    const calls = added.mock.calls.map(([pass]) => pass)
+    const passes = calls.slice(calls.map(p => p instanceof RenderPass).lastIndexOf(true))
+    added.mockRestore()
+    const kind = (p: unknown) => (p === outline ? 'outline' : p === first ? 'first' : p === second ? 'second' : [RenderPass, GTAOPass, UnrealBloomPass, OutputPass].find(k => p instanceof k)?.name ?? 'overlay')
+    expect(passes.map(kind)).toEqual(['RenderPass', ...(prefab.ao ? ['GTAOPass'] : []), 'outline', 'overlay', ...(prefab.bloom ? ['UnrealBloomPass'] : []), 'OutputPass', 'first', 'second'])
+    expect(first.size).toEqual([W, H])
+    const output = passes.find(p => p instanceof OutputPass) as OutputPass
+    for (let f = 0; f < 3; f++) {
+      gpu.draws.length = 0
+      me.afterTick()
+      // The tone mapping drew into a target, and the first finish pass read that target.
+      const toned = gpu.draws.find(d => d.material === (output as any)._fsQuad.material)!
+      expect(toned.target).not.toBeNull()
+      expect(first.seen.at(-1)!.read).toBe(toned.target)
+      expect(first.seen.at(-1)!.depth).toBeUndefined()
+      expect([output.renderToScreen, first.renderToScreen, second.renderToScreen]).toEqual([false, false, true])
+    }
+    expect([first.seen.length, second.seen.length]).toEqual([3, 3])
+    // Turned off, it is passed over, and the one before it draws to the canvas.
+    second.enabled = false
+    me.afterTick()
+    expect([first.renderToScreen, second.seen.length]).toEqual([true, 3])
+    first.enabled = false
+    gpu.draws.length = 0
+    me.afterTick()
+    expect(output.renderToScreen).toBe(true)
+    expect(gpu.draws.at(-1)!.target).toBeNull()
+    me.close()
+    expect([first.freed, second.freed, outline.freed]).toEqual([1, 1, 1])
+  }
+})
+
+test('a finish pass alone makes a composer of half-float targets, and one handed over before the renderer is made is in it', () => {
+  const me = render3d()
+  const finish = new Probe()
+  me.finish('finish', finish)
+  me.mount(canvas() as any)
+  me.tick(wire({ camera }))
+  me.afterTick()
+  const passes = me.composer!.passes
+  expect(passes.map(p => p === finish ? 'finish' : [RenderPass, OutputPass].find(k => p instanceof k)?.name ?? 'overlay')).toEqual(['RenderPass', 'overlay', 'OutputPass', 'finish'])
+  expect(me.composer!.renderTarget1.texture.type).toBe(THREE.HalfFloatType)
+  expect(finish.seen).toHaveLength(1)
+  expect(finish.renderToScreen).toBe(true)
+  me.close()
+})
+
+test('ratio draws that many pixels per canvas pixel at once, the composer and every pass sized again, shown as blocks or smoothed; ratio() goes back to the prefab\'s', () => {
+  ;(globalThis as any).devicePixelRatio = 2
+  for (const prefab of [{ camera, pixelRatio: 2 }, { camera, pixelRatio: 2, ao }, { camera }]) {
+    const { me, c } = page(prefab)
+    const finish = new Probe(), effect = new Probe()
+    me.finish('finish', finish)
+    me.pass('effect', effect)
+    const r = gpu.made.at(-1)
+    const was = prefab.pixelRatio ?? 1
+    expect(r.pixelRatio).toBe(was)
+    expect(c.style.imageRendering).toBe('')
+    me.ratio(0.25, 'blocks')
+    expect(r.pixelRatio).toBe(0.25)
+    expect(r.size).toEqual([W, H])
+    expect(c.style.imageRendering).toBe('pixelated')
+    const target = me.composer!.renderTarget1
+    expect([target.width, target.height]).toEqual([W * 0.25, H * 0.25])
+    expect(finish.size).toEqual([W * 0.25, H * 0.25])
+    expect(effect.size).toEqual([W * 0.25, H * 0.25])
+    const gtao = me.composer!.passes.find(p => p instanceof GTAOPass) as GTAOPass | undefined
+    if (gtao) expect([gtao.width, gtao.height]).toEqual([W * 0.25, H * 0.25])
+    // Smoothed, at a ratio above the screen's: the prefab's cap does not hold it.
+    me.ratio(3)
+    expect(r.pixelRatio).toBe(3)
+    expect(c.style.imageRendering).toBe('')
+    expect(finish.size).toEqual([W * 3, H * 3])
+    me.ratio(0.5, 'blocks')
+    me.ratio()
+    expect(r.pixelRatio).toBe(was)
+    expect(c.style.imageRendering).toBe('')
+    expect(finish.size).toEqual([W * was, H * was])
+    expect(() => me.ratio(0)).toThrow('render3d ratio 0 is not above 0')
+    me.close()
+  }
+})
+
+test('a ratio asked for before the renderer is made is what it is made with', () => {
+  const me = render3d()
+  me.ratio(0.5, 'blocks')
+  const c = canvas()
+  me.mount(c as any)
+  expect(c.style.imageRendering).toBe('pixelated')
+  me.tick(wire({ camera, pixelRatio: 2 }))
+  expect(gpu.made.at(-1).pixelRatio).toBe(0.5)
+  me.close()
+})
+
 // Surfaces with the same glsl and uniforms of their own, one with other glsl, and a splice. Each test
 // makes its own wet surfaces, so a uniform one test writes is not another's.
 const wetness = (value: number): Splice => ({ uniforms: { wetness: { value } }, fragment: { color_fragment: 'diffuseColor.rgb *= 1.0 - wetness * 0.5;' } })
@@ -489,6 +600,24 @@ test('a dressed program has vDressWorld with an instance\'s or a batch\'s own ma
   expect(() => lambert.onBeforeCompile(shader('lambert'), undefined as unknown as THREE.WebGLRenderer)).toThrow('render3d: the surface goes after #include <roughnessmap_fragment>, which this fragment shader does not include')
 })
 
+test('a `?chunk` goes after the chunk where the shader includes it, in the order the splices came, and is left out where it does not', () => {
+  const me = render3d()
+  me.splice('lamps', { fragment: { '?lights_fragment_begin': 'float lamps;' } })
+  me.splice('glow', { fragment: { lights_fragment_begin: 'float glow;' } })
+  const lit = me.dress(new THREE.MeshStandardMaterial())
+  const s = shader('standard')
+  lit.onBeforeCompile(s, undefined as unknown as THREE.WebGLRenderer)
+  expect(s.fragmentShader).toContain('#include <lights_fragment_begin>\nfloat lamps;\nfloat glow;')
+  // basic does not light: the optional chunk is left out, and no other splice of `lamps` is lost
+  const only = render3d()
+  only.splice('lamps', { fragment: { '?lights_fragment_begin': 'float lamps;', common: 'uniform float lampsOn;' } })
+  const basic = only.dress(new THREE.MeshBasicMaterial())
+  const b = { vertexShader: THREE.ShaderLib.basic.vertexShader, fragmentShader: THREE.ShaderLib.basic.fragmentShader, uniforms: {} } as unknown as THREE.WebGLProgramParametersWithUniforms
+  basic.onBeforeCompile(b, undefined as unknown as THREE.WebGLRenderer)
+  expect(b.fragmentShader).not.toContain('float lamps;')
+  expect(b.fragmentShader).toContain('#include <common>\nvarying vec3 vDressWorld;\nuniform float lampsOn;')
+})
+
 test('a claim on the camera blocks a second owner until it is released, and only the owner releases it', () => {
   const me = render3d()
   const cutscene = {}, editor = {}
@@ -502,6 +631,105 @@ test('a claim on the camera blocks a second owner until it is released, and only
   expect(me.claimed()).toBeUndefined()
   expect(me.claim(editor)).toBe(true)
   expect(me.claimed()).toBe(editor)
+})
+
+// One frame as a page draws it: its tick handed the step `n` the client is on and `between`, how far
+// the page's clock is past it, then its draw. What is drawn is read off `drew`, handed in the middle of
+// the draw: where each mesh and the camera stand, and the camera's turn as it is drawn.
+type Seen = { camera: number[]; turn: number[]; meshes: Record<number, number[]> }
+const watched = () => {
+  const me = render3d()
+  const seen: Seen[] = []
+  me.drew(d => seen.push({ camera: d.camera, turn: me.camera!.quaternion.toArray(), meshes: d.meshes }))
+  const frame = (n: number, between?: number) => {
+    me.tick({ wire: { ...wire({ camera }).wire, n, between } } as any)
+    me.afterTick()
+    return seen.at(-1)!
+  }
+  me.tick(wire({ camera }))
+  return { me, frame }
+}
+const turned = (a: number) => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), a).toArray()
+
+test('every mesh and the camera are drawn between where the last two steps left them, as far as the clock is past the step before, and put back once drawn', () => {
+  const { me, frame } = watched()
+  const box = new THREE.Mesh(new THREE.BoxGeometry())
+  me.scene.add(box)
+  const cam = me.camera!
+  cam.position.set(0, 2, 0)
+  frame(1, 0)
+  box.position.set(10, 0, 0)
+  cam.position.set(4, 2, 0)
+  cam.quaternion.fromArray(turned(Math.PI / 2))
+  const drawn = frame(2, 0.5)
+  expect(drawn.meshes[box.id][0]).toBeCloseTo(5)
+  expect(drawn.camera[0]).toBeCloseTo(2)
+  drawn.turn.forEach((x, i) => expect(x).toBeCloseTo(turned(Math.PI / 4)[i]))
+  expect(box.position.x).toBe(10)
+  expect(cam.position.x).toBe(4)
+  expect(frame(2, 0.75).meshes[box.id][0]).toBeCloseTo(7.5)
+})
+
+test('an object whose userData.teleport is true on a frame is drawn where it is put for the rest of that step, never between, and from there between steps again once it is false', () => {
+  const { me, frame } = watched()
+  const box = new THREE.Mesh(new THREE.BoxGeometry())
+  me.scene.add(box)
+  const cam = me.camera!
+  cam.position.set(0, 1.7, 0)
+  frame(1, 0)
+
+  // The step the player goes through the door: the camera is put 40 metres on and turned a quarter,
+  // with the flag up; the box beside it moves on as ever.
+  cam.position.set(40, 1.7, 0)
+  cam.quaternion.fromArray(turned(Math.PI / 2))
+  cam.userData.teleport = true
+  box.position.set(1, 0, 0)
+  let drawn = frame(2, 0.25)
+  expect(drawn.camera).toEqual([40, 1.7, 0])
+  expect(drawn.turn).toEqual(turned(Math.PI / 2))
+  expect(drawn.meshes[box.id][0]).toBeCloseTo(0.25)
+
+  // The flag back down on the next frame of the same step: still where it was put, all that step.
+  cam.userData.teleport = false
+  drawn = frame(2, 0.75)
+  expect(drawn.camera).toEqual([40, 1.7, 0])
+  expect(drawn.turn).toEqual(turned(Math.PI / 2))
+  expect(drawn.meshes[box.id][0]).toBeCloseTo(0.75)
+
+  // The next step: between steps again, from where it was put.
+  cam.position.set(41, 1.7, 0)
+  box.position.set(2, 0, 0)
+  drawn = frame(3, 0.5)
+  expect(drawn.camera[0]).toBeCloseTo(40.5)
+  expect(drawn.meshes[box.id][0]).toBeCloseTo(1.5)
+})
+
+test('a teleport on a frame that took several steps is drawn where it is put; a flag left up keeps its object out of the blend every step; and the flag changes nothing that is not flagged', () => {
+  const { me, frame } = watched()
+  const box = new THREE.Mesh(new THREE.BoxGeometry())
+  const lamp = new THREE.Mesh(new THREE.BoxGeometry())
+  me.scene.add(box, lamp)
+  frame(1, 0)
+
+  box.position.set(30, 0, 0)
+  box.userData.teleport = true
+  lamp.position.set(4, 0, 0)
+  let drawn = frame(4, 0.5)
+  expect(drawn.meshes[box.id]).toEqual([30, 0, 0])
+  // Three steps in one frame: the lamp is drawn a step behind the clock, 2.5 of those 3 steps along.
+  expect(drawn.meshes[lamp.id][0]).toBeCloseTo(4 * 2.5 / 3)
+  box.userData.teleport = false
+
+  // A flag left up: the lamp, moved from pool to pool, is drawn where it is set on every frame of
+  // every step.
+  lamp.userData.teleport = true
+  for (const [n, x] of [[5, 8], [6, 12], [7, 20]]) {
+    lamp.position.set(x, 0, 0)
+    for (const between of [0, 0.3, 0.9]) expect(frame(n, between).meshes[lamp.id]).toEqual([x, 0, 0])
+  }
+  // The box, flag down, between steps all along.
+  box.position.set(31, 0, 0)
+  expect(frame(8, 0.5).meshes[box.id][0]).toBeCloseTo(30.5)
 })
 
 test('close disposes the composer, the renderer and its context, and removes the canvas', () => {

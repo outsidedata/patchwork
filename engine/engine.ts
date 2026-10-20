@@ -72,8 +72,8 @@ function state(scene: Scene, sim: Sim): State {
 
 // What a kind's hooks and acts may touch. `as` runs a row's hook or act with that row as
 // `running`; a row spawned meanwhile is handed to `spawned` with the running row, and a row
-// spawned outside every hook and act with none.
-function worldFor(st: State, spawned: (row: Row, by: Row | undefined) => void) {
+// spawned outside every hook and act with none. `id` hands out the id each spawn takes.
+function worldFor(st: State, spawned: (row: Row, by: Row | undefined) => void, id: () => number) {
   let running: Row | undefined
   const as = (row: Row, f: () => void) => {
     const was = running
@@ -82,7 +82,7 @@ function worldFor(st: State, spawned: (row: Row, by: Row | undefined) => void) {
   }
   const spawn = (kind: string, data: any = {}) => {
     if (!(kind in st.prefabs)) throw new Error(`no prefab for ${kind}`)
-    const row = { id: st.nextId++, kind, data: { ...structuredClone(st.prefabs[kind]), ...data } }
+    const row = { id: id(), kind, data: { ...structuredClone(st.prefabs[kind]), ...data } }
     st.rows.push(row)
     spawned(row, running)
     return row
@@ -119,8 +119,33 @@ function worldFor(st: State, spawned: (row: Row, by: Row | undefined) => void) {
 
 // ---------------------------------------------------------------- truth
 
-type Seat = { possess: number | undefined; ack: number; inbox: Msg[]; closed: boolean; shown: Set<number> }
-export type LogEntry = { at: number; seat: number; msg: Msg }
+type Seat = { possess: number | undefined; ack: number; inbox: Msg[]; closed: boolean; shown: Set<number>; made: number }
+
+// Ids. A row spawned while a seat's message is answered, by the act it asks for or anything that act
+// calls, takes the next id of that seat's own: `SEAT_IDS + seat * PER_SEAT + k`, the seat's `k`th
+// spawn. Every other row, the scene's actors and a row a hook spawns or one spawned from outside a
+// step, takes the truth's next id, counted from 1, below `SEAT_IDS`. So the rows a seat's presses
+// make keep their ids whatever another seat's presses made, in any order: a truth loaded from an
+// earlier save that takes a late press on its step gives every row the id it had.
+const SEAT_IDS = 2 ** 40
+const PER_SEAT = 2 ** 32
+
+// The whole of a truth between two steps, as plain JSON: its step, rows, world, the die's state, the
+// id the next spawn takes, and every seat, what it possesses, its ack, the messages it holds for a
+// later step, whether it is closed, the rows its last packet showed, and how many rows its messages
+// have spawned (Ids). `load` puts a truth back to
+// exactly this, so a truth booted from the same scene and sim and loaded with it steps on exactly as
+// the one it was saved from, given the same messages on the same steps. A page that runs a scene
+// ahead of its server starts from one. A library's memory beside the rows, such
+// as a physics world's, is not in it.
+export type Snapshot = {
+  n: number
+  rows: Row[]
+  world: any
+  die: number
+  nextId: number
+  seats: { possess: number | null; ack: number; inbox: Msg[]; closed: boolean; shown: number[]; made: number }[]
+}
 
 // Attached from outside. `show`, `accept` and `advance` must all say yes. `hide` names fields of a
 // row the seat is sent without: the packet carries a copy with those fields deleted. `spawn` is
@@ -142,9 +167,19 @@ export function boot(scene: Scene, sim: Sim) {
 function truthFrom(st: State, n: number, scene: Scene, sim: Sim) {
   const seats: Seat[] = []
   const listeners: (() => void)[] = []
-  const log: LogEntry[] = []
   const pieces: Piece[] = []
-  const { w, as } = worldFor(st, (row, by) => { for (const p of pieces) p.spawn(row, by) })
+  // The seat whose message is being answered, whose own ids a spawn takes (Ids).
+  let answering: number | undefined
+  const id = () => {
+    if (answering === undefined) {
+      if (st.nextId >= SEAT_IDS) throw new Error(`the truth has spawned ${SEAT_IDS} rows, every id it may hand out`)
+      return st.nextId++
+    }
+    const seat = seats[answering]
+    if (seat.made + 1 >= PER_SEAT) throw new Error(`seat ${answering} has spawned ${PER_SEAT - 1} rows, every id it may hand out`)
+    return SEAT_IDS + answering * PER_SEAT + ++seat.made
+  }
+  const { w, as } = worldFor(st, (row, by) => { for (const p of pieces) p.spawn(row, by) }, id)
 
   const refuse = (seat: Seat, m: Msg, why: string) => { seat.ack = Math.max(seat.ack, m.seq); void why }
 
@@ -158,14 +193,14 @@ function truthFrom(st: State, n: number, scene: Scene, sim: Sim) {
     if (!act) return refuse(seat, m, 'no action')
     if (row.id !== seat.possess && !kind.open?.includes(m.action)) return refuse(seat, m, 'not yours')
     seat.ack = Math.max(seat.ack, m.seq)
-    as(row, () => act(row, w, i, ...m.args))
+    answering = i
+    try { as(row, () => act(row, w, i, ...m.args)) } finally { answering = undefined }
   }
 
   const truth = {
     n,
     scene,
     sim,
-    log,
     get rows() { return st.rows },
     get world() { return st.world },
     get seats() { return seats.length },
@@ -187,15 +222,14 @@ function truthFrom(st: State, n: number, scene: Scene, sim: Sim) {
     },
     open(possess?: number): number {
       if (possess !== undefined && !st.rows.some(r => r.id === possess)) throw new Error(`no row ${possess} to possess`)
-      seats.push({ possess, ack: 0, inbox: [], closed: false, shown: new Set() })
+      seats.push({ possess, ack: 0, inbox: [], closed: false, shown: new Set(), made: 0 })
       return seats.length - 1
     },
     close(seat: number) { seats[seat].closed = true },
     closed(seat: number) { return seats[seat].closed },
-    inbox(seat: number, msg: Msg) {
-      log.push({ at: truth.n, seat, msg })
-      seats[seat].inbox.push(msg)
-    },
+    // Held until the step it is stamped with, and gone once that step answers it: the truth keeps no
+    // message it has answered, so a server that runs for weeks holds no more than one that just began.
+    inbox(seat: number, msg: Msg) { seats[seat].inbox.push(msg) },
     // Rows this seat may see, each a copy without the fields it may not, plus which are new or
     // gone since its last packet.
     packet(seat: number): Packet {
@@ -210,6 +244,28 @@ function truthFrom(st: State, n: number, scene: Scene, sim: Sim) {
       const ended = [...s.shown].filter(id => !now.has(id))
       s.shown = now
       return { n: truth.n, ack: s.ack, rows, born, ended }
+    },
+    save(): Snapshot {
+      return structuredClone({
+        n: truth.n,
+        rows: st.rows,
+        world: st.world,
+        die: st.die.state,
+        nextId: st.nextId,
+        seats: seats.map(s => ({ possess: s.possess ?? null, ack: s.ack, inbox: s.inbox, closed: s.closed, shown: [...s.shown], made: s.made })),
+      })
+    },
+    // The world is put back key by key into the object it is, since `w.world` holds it.
+    load(s: Snapshot) {
+      const copy = structuredClone(s)
+      truth.n = copy.n
+      st.rows = copy.rows
+      st.ended.clear()
+      for (const key of Object.keys(st.world)) delete st.world[key]
+      Object.assign(st.world, copy.world)
+      st.die.state = copy.die
+      st.nextId = copy.nextId
+      seats.splice(0, seats.length, ...copy.seats.map(x => ({ possess: x.possess ?? undefined, ack: x.ack, inbox: x.inbox, closed: x.closed, shown: new Set(x.shown), made: x.made })))
     },
     attach(piece: Piece) { pieces.push(piece) },
     onStep(f: () => void) { listeners.push(f) },

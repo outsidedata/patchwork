@@ -1,4 +1,6 @@
-// The editor's server: `yarn editor [game]`. One HTTP server holding Vite, which serves the editor at
+// The editor's server: `yarn editor [game] [--port <port>]`, on 5173 unless given another (`PORT`
+// from the shell does too; 0 is any free one). A port another server holds is refused with how to
+// start on another, never a stack trace. One HTTP server holding Vite, which serves the editor at
 // `/editor/` and every game's pages, and the editor's API under `/api/`:
 //
 //   GET  /api/files?path=           a file's text
@@ -156,7 +158,8 @@ export async function start({ root = process.cwd(), port = 5173, game }: { root?
     configFile: false,
     root: files.root,
     appType: 'mpa',
-    server: { ...config.server, middlewareMode: true, hmr: false, ws: false },
+    // `allowedHosts`: a page asked for by this machine's address on the network, not `localhost`.
+    server: { ...config.server, middlewareMode: true, hmr: false, ws: false, allowedHosts: true },
     plugins: [...(config.plugins ?? []), noSocket],
   })
   const routes = new Routes(files.root, vite, {
@@ -243,7 +246,25 @@ export async function start({ root = process.cwd(), port = 5173, game }: { root?
     socket.destroy()
   })
 
-  await new Promise<void>(ok => httpServer.listen(port, 'localhost', ok))
+  // Every interface, IPv4 and IPv6, so another machine on the network plays the games' pages; the
+  // `/api` routes and the pages' socket still answer only a request named for this machine's own
+  // loopback (`ours`), so nothing off it reads or writes a file. A port another server holds is
+  // refused with how to start on another; Vite and the rest made above are closed again first.
+  await new Promise<void>((ok, fail) => {
+    httpServer.once('error', fail)
+    httpServer.listen(port, '::', () => {
+      httpServer.off('error', fail)
+      ok()
+    })
+  }).catch(async (e: NodeJS.ErrnoException) => {
+    servers.stopAll()
+    watch.close()
+    await page.close()
+    await mcp.close()
+    await vite.close()
+    if (e.code === 'EADDRINUSE') throw new Error(`port ${port} is in use by another server: start the editor on another with \`yarn editor --port <port>\`, or on any free one with \`yarn editor --port 0\``)
+    throw e
+  })
   const at = (httpServer.address() as { port: number }).port
   return {
     port: at,
@@ -261,8 +282,36 @@ export async function start({ root = process.cwd(), port = 5173, game }: { root?
   }
 }
 
+// The command line, `[game] [--port <port>]` in either order (`--port=<port>` too): the game `/editor/`
+// opens, and the port, else `PORT` from the shell, else 5173. Port 0 is any free one, printed once it
+// is open.
+export function argsOf(argv: string[]): { game?: string; port: number } {
+  let game: string | undefined
+  let given: string | undefined = process.env.PORT
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!
+    if (a === '--port') {
+      if (argv[i + 1] === undefined) throw new Error('--port takes a port: `yarn editor --port 5174`')
+      given = argv[++i]
+    } else if (a.startsWith('--port=')) given = a.slice('--port='.length)
+    else if (a.startsWith('-')) throw new Error(`no option ${a}: the editor takes \`[game] [--port <port>]\``)
+    else if (game === undefined) game = a
+    else throw new Error(`one game a server: ${game} and ${a} were both given`)
+  }
+  const port = given === undefined ? 5173 : Number(given)
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`no port ${given}: a port is a whole number from 0 to 65535`)
+  return { ...(game === undefined ? {} : { game }), port }
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const game = process.argv[2]
+  let args: ReturnType<typeof argsOf>
+  try {
+    args = argsOf(process.argv.slice(2))
+  } catch (e) {
+    console.error((e as Error).message)
+    process.exit(1)
+  }
+  const { game, port } = args
   if (game !== undefined) {
     const games = await gamesIn(process.cwd())
     const it = games.find(g => g.name === game)
@@ -271,7 +320,10 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
       process.exit(1)
     }
   }
-  const server = await start({ port: Number(process.env.PORT ?? 5173), game })
+  const server = await start({ port, ...(game === undefined ? {} : { game }) }).catch((e: Error) => {
+    console.error(e.message)
+    process.exit(1)
+  })
   console.log(`editor: ${server.url}/editor/${game ? `?game=${game}` : ''}`)
   // `node --watch` stops the server with SIGTERM to start it again on its new code, and ctrl-C with
   // SIGINT: the games it runs on node stop with it, so none is left holding its port. A close that

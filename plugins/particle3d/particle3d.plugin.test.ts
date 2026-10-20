@@ -2,15 +2,13 @@
 // the plugin a page: a stand-in loader that hands over the file, and each sheet once the test says
 // it has landed, decoded as the loader decodes one for three.js, and runs what waits on the file
 // being written when the test writes it; a three.js scene, and a camera at z 10 looking down -z, so
-// a quad's right is +x and its up is +y. At the end, particle3d is measured against particle2d.
+// a quad's right is +x and its up is +y.
 import { expect, onTestFinished, test, vi } from 'vitest'
 import * as THREE from 'three'
 import { uv } from '#plugins/loader/loader.plugin.ts'
 import { frameOf, read, type Sheet } from '#plugins/loader/loader.sim.ts'
-import { render2d } from '#plugins/render2d/render2d.plugin.ts'
-import { FIELDS as F2, REF as R2, particle2d as particle2d2, type Effects as Effects2 } from '#plugins/particle2d/particle2d.plugin.ts'
-import { FIELDS as F3, REF as R3, particle3d, type Effects, type Layer } from './particle3d.plugin.ts'
-import type { Entry, Spawn } from './particle3d.sim.ts'
+import { particle3d, type Effects } from './particle3d.plugin.ts'
+import type { Entry } from './particle3d.sim.ts'
 
 const DT = 1 / 60
 
@@ -101,7 +99,7 @@ const page = (order = ['loader', 'particle3d', 'render3d'], sheetsLanded = true,
 // Every quad drawn, read back out of the meshes' buffers: corners bottom-left, bottom-right,
 // top-right, top-left.
 const quads = (plugins: any) =>
-  plugins.render3d.scene.children.flatMap((mesh: any) => {
+  plugins.render3d.scene.children.filter((o: any) => o.isMesh).flatMap((mesh: any) => {
     const g = mesh.geometry
     const pos = g.attributes.position.array, uv = g.attributes.uv.array, col = g.attributes.color.array
     return Array.from({ length: g.drawRange.count / 6 }, (_, i) => {
@@ -124,6 +122,55 @@ const f32 = (a: number[]) => Array.from(new Float32Array(a))
 const linear = (hex: number, a: number) => { const c = new THREE.Color().setHex(hex); return f32([c.r, c.g, c.b, a]) }
 
 const entry = (id: number, effect: string, age: number, more: Partial<Entry> = {}): Entry => ({ id, effect, at: [0, 0, 0], age, life: 0, ...more })
+
+// The point lights on the scene that are shown.
+const shown = (plugins: any) => plugins.render3d.scene.children.filter((o: any) => o.isPointLight && o.visible) as THREE.PointLight[]
+
+test('a lit layer\'s every particle carries a point light where it is drawn, of its colour, faded with it; a gone particle\'s light is hidden and taken by the next', () => {
+  const { plugins, me, frame, own } = page(['loader', 'particle3d', 'lights3d', 'render3d'])
+  const mine = own()
+  mine.effects.glow = [{ n: [3, 3], life: [0.5, 0.5], dir: [0, 1, 0], spread: 0, speed: [2, 2], tint: 0xff8000, tint1: 0x0080ff, a0: 1, a1: 0, gain: 4, light: { intensity: 10, distance: 4, decay: 2 } }]
+  mine.effects.dark = [{ n: [2, 2], life: [0.5, 0.5] }]
+  me.emit('glow', [1, 2, 3], { scale: 2 })
+  me.emit('dark', [0, 0, 0])
+  frame()
+  let lights = shown(plugins)
+  expect(lights.length).toBe(3)
+  for (const l of lights) {
+    expect(l.position.toArray()).toEqual([1, 2, 3])
+    expect(l.color.getHex()).toBe(0xff8000)
+    expect([l.intensity, l.distance, l.decay, l.castShadow]).toEqual([10, 8, 2, false])
+  }
+  // a quarter of its life on: risen with its particle, cooling, fading
+  for (let f = 0; f < 15; f++) frame()
+  lights = shown(plugins)
+  const [q] = quads(plugins).filter((x: any) => x.colour[3] < 1)
+  for (const l of lights) {
+    expect(l.position.toArray().map(v => +v.toFixed(5))).toEqual(q.centre.map((v: number) => +v.toFixed(5)))
+    expect(l.intensity).toBeCloseTo(10 * q.colour[3], 5)
+    expect(l.color.r).toBeCloseTo(q.colour[0] / 4, 5)
+  }
+  // gone with its particles, and the same lights taken by the next
+  const made = plugins.render3d.scene.children.filter((o: any) => o.isPointLight)
+  for (let f = 0; f < 30; f++) frame()
+  expect(shown(plugins)).toEqual([])
+  me.emit('glow', [0, 0, 0])
+  frame()
+  expect(shown(plugins).length).toBe(3)
+  expect(plugins.render3d.scene.children.filter((o: any) => o.isPointLight)).toEqual(made)
+  // closing takes them off the scene
+  me.close(plugins)
+  expect(plugins.render3d.scene.children.filter((o: any) => o.isPointLight)).toEqual([])
+})
+
+test('a lit layer in a scene without lights3d throws, naming the effect; a light of the wrong shape throws, naming the layer', () => {
+  const bare = page()
+  bare.own().effects.glow = [{ life: [1, 1], light: { intensity: 1, distance: 1, decay: 2 } }]
+  expect(() => bare.frame()).toThrow('particle3d effect glow gives its particles light, and the scene does not list lights3d to draw them')
+  const wrong = page(['loader', 'particle3d', 'lights3d', 'render3d'])
+  wrong.own().effects.glow = [{ life: [1, 1], light: { intensity: 1, distance: -1, decay: 2 } }]
+  expect(() => wrong.frame()).toThrow('particle3d effect glow layer 0 has a light of {"intensity":1,"distance":-1,"decay":2}, and particle3d reads { intensity, distance, decay }, each 0 or more')
+})
 
 test('an effect a page emits is drawn the frame it is asked for, at its point, and moves a step each frame after', () => {
   const { plugins, me, frame } = page()
@@ -601,13 +648,6 @@ test('an effect that flies is carried from its point to its to at fly, its life 
 })
 const landed = (p: ReturnType<typeof page>) => p.me.effects.filter(e => e.name !== 'body')
 
-test('has says whether the effects file has an effect, from the tick before the actors\' on', () => {
-  const { plugins, me } = page()
-  expect(me.has('rise')).toBe(false)
-  me.tick(plugins)
-  expect([me.has('rise'), me.has('fog')]).toEqual([true, false])
-})
-
 test('a field the file, a layer or world.particle3d has that particle3d does not know throws, naming it, as does a point of the wrong count and a layer with both or neither of life and lasts', () => {
   const cases: [(f: any, own: any) => void, string][] = [
     [f => { f.layer = 'effects' }, 'particle3d\'s effects file has layer, which particle3d does not know'],
@@ -634,119 +674,3 @@ test('a field the file, a layer or world.particle3d has that particle3d does not
   expect(() => p.frame()).toThrow('particle3d effect rise layer 0 has sped, which particle3d does not know')
 })
 
-// ---------------------------------------------------------------- particle3d against particle2d
-
-// One effect, thrown by both plugins, goes the same way: the same fields do the same thing, each in
-// its own space. particle2d's page is render2d on a flat world whose points are the stage's, y down
-// the screen; particle3d's is this file's, whose camera looks down -z, so a point [x, y] of the
-// stage is [x, -y, 0] of the world, a length is a length, and a turn one way on the stage is the
-// same turn the other way in the world. Every effect here rolls the same whatever the rolls are, so
-// the two, whose generators are rolled a different number of times a particle, must agree exactly.
-const both: Record<string, { layers: Layer[]; spawn?: Spawn & { seed?: number }; frames?: number; then?(fx: any, f: number, rows: any[]): void }> = {
-  thrown: { layers: [{ life: [1, 1], dir: [1, 2, 0], spread: 0, speed: [3, 3], g: 4, drag: 0.5 }] },
-  pulled: { layers: [{ life: [1, 1], dir: [1, 0, 0], spread: 0, speed: [5, 5], pull: 9 }] },
-  paced: { layers: [{ life: [1, 1], dir: [0, 1, 0], spread: 0, speed: [6, 6], pace: [[0.1, 0.5], [0.2, 0]] }] },
-  floored: { layers: [{ life: [1, 1], dir: [1, 1, 0], spread: 0, speed: [4, 4], g: 30, origin: [0.5, 1] }], spawn: { floor: -0.5 } },
-  bursting: { layers: [{ every: 0.05, after: 0.02, life: [0.12, 0.12], dir: [0, -1, 0], spread: 0, speed: [2, 2] }], spawn: { life: 0.3 } },
-  cooling: { layers: [{ life: [0.5, 0.5], grow: 3, size: [2, 2], tint: 0xff8000, tint1: 0x0080ff, a0: 0.9, a1: 0.1, fade: 0.3 }], spawn: { scale: 1.5 } },
-  tinted: { layers: [{ life: [0.5, 0.5] }], spawn: { tint: 0x33cc66 } },
-  offset: { layers: [{ effect: 'boxed', at: [2, 1, 0] }, { life: [0.5, 0.5], box: [1, 2, 0, 1, 2, 0] }] },
-  boxed: { layers: [{ life: [0.5, 0.5], box: [-1, 3, 0, -1, 3, 0], dir: [1, 0, 0], spread: 0, speed: [1, 1] }] },
-  streaked: { layers: [{ life: [1, 1], dir: [1, 1, 0], spread: 0, speed: [3, 3], g: 5, stretch: true }] },
-  facing: { layers: [{ life: [1, 1], face: true }], spawn: { dir: [2, -1, 0] } },
-  following: { layers: [{ life: [1, 1], follow: true }, { life: [1, 1] }], then: (fx, f) => { fx.at = [f / 10, f / 20, 0] } },
-  beaming: { layers: [{ life: [0.4, 0.4], size: [0.25, 0.25], beam: true }], spawn: { to: [3, 4, 0] } },
-  flying: { layers: [{ lasts: true, follow: true, face: true }, { every: 0.05, life: [0.3, 0.3] }], spawn: { dir: [1, 1, 0], to: [3, 3, 0], fly: 30, land: [{ effect: 'tinted', tint: 0xff0000 }] } },
-  following_a_row: { layers: [{ every: 0.05, life: [0.1, 0.1] }, { lasts: true }], spawn: { from: 9 }, then: (_, f, rows) => { if (f === 20) rows.length = 0; else if (rows[0]) rows[0].data.pos = [f / 10, -f / 10, 0] } },
-}
-const flat = (v: number[]) => [v[0], -v[1]]
-const flatBox = (b: number[]) => [b[0], -b[4], b[3], -b[1]]
-const flatLayer = (l: Layer): any => {
-  if ('effect' in l) return { ...l, ...(l.at && { at: flat(l.at) }) }
-  return { ...l, ...(l.dir && { dir: flat(l.dir) }), ...(l.box && { box: flatBox(l.box) }) }
-}
-const flatSpawn = (s: Spawn & { seed?: number } = {}): any => ({
-  ...s, ...(s.dir && { dir: flat(s.dir) }), ...(s.to && { to: flat(s.to) }),
-})
-
-test('particle2d and particle3d read the same fields of an emitter, in the same order, and the same of an { effect } layer', () => {
-  expect([...F3]).toEqual([...F2])
-  expect([...R3]).toEqual([...R2])
-})
-
-test('one effect thrown by particle2d and by particle3d goes the same way, frame by frame, in each one\'s space', () => {
-  const effects3: Effects = { cap: 100, effects: Object.fromEntries(Object.entries(both).map(([n, e]) => [n, e.layers])) }
-  const effects2: Effects2 = { cap: 100, layer: 'effects', effects: Object.fromEntries(Object.entries(both).map(([n, e]) => [n, e.layers.map(flatLayer)])) }
-  for (const [name, { spawn, frames = 40, then }] of Object.entries(both)) {
-    const rows3: any[] = spawn?.from ? [{ id: 9, kind: 'thing', data: { pos: [0, 0, 0] } }] : []
-    const rows2: any[] = spawn?.from ? [{ id: 9, kind: 'thing', data: { pos: [0, 0] } }] : []
-    const three = page()
-    three.plugins.wire.rows = rows3
-    const own3 = three.own()
-    Object.assign(own3, structuredClone(effects3))
-    const two = flatPage(effects2)
-    two.plugins.wire.rows = rows2
-    const fx3 = three.me.emit(name, [0, 0, 0], { seed: 1, ...spawn })
-    const fx2 = two.me.emit(name, [0, 0], { seed: 1, ...flatSpawn(spawn) })
-    let most = 0
-    for (let f = 0; f < frames; f++) {
-      if (then) {
-        then(fx3, f, rows3)
-        then(fx2, f, rows2)
-        fx2.at = flat(fx3.at)
-        if (rows2[0] && rows3[0]) rows2[0].data.pos = flat(rows3[0].data.pos)
-        if (!rows3.length) rows2.length = 0
-      }
-      three.frame()
-      two.frame()
-      const a = quads(three.plugins).map((q: any) => {
-        const [x, y] = q.centre, turn = Math.atan2(q.br[1] - q.bl[1], q.br[0] - q.bl[0])
-        return { x, y, w: q.w, h: q.h, turn, colour: q.colour }
-      })
-      const b = two.drawn().map((s: any) => {
-        // The middle of the sprite as drawn, whatever its anchor, turned back into the world.
-        const { minX, maxX, minY, maxY } = s.getBounds()
-        const c = new THREE.Color().setHex(s.tint)
-        return { x: (minX + maxX) / 2, y: -(minY + maxY) / 2, w: Math.abs(s.width), h: Math.abs(s.height), turn: -s.rotation, colour: [c.r, c.g, c.b, s.alpha] }
-      })
-      // In order along x, then y, then the way each is turned, each to a few places.
-      const order = (p: any, q: any) => [p.x - q.x, p.y - q.y, Math.sin(p.turn) - Math.sin(q.turn), Math.cos(p.turn) - Math.cos(q.turn)].map(d => Math.round(d * 1e4)).find(d => d !== 0) ?? 0
-      a.sort(order)
-      b.sort(order)
-      expect(b.length, `${name} frame ${f}: particles`).toBe(a.length)
-      most = Math.max(most, a.length)
-      expect(two.me.effects.length, `${name} frame ${f}: effects`).toBe(three.me.effects.length)
-      a.forEach((p: any, i: number) => {
-        const q = b[i], at = `${name} frame ${f} particle ${i}`
-        expect(q.x, `${at} x`).toBeCloseTo(p.x, 4)
-        expect(q.y, `${at} y`).toBeCloseTo(p.y, 4)
-        expect(q.w, `${at} width`).toBeCloseTo(p.w, 4)
-        expect(q.h, `${at} height`).toBeCloseTo(p.h, 4)
-        expect(Math.cos(q.turn - p.turn), `${at} turn`).toBeCloseTo(1, 4)
-        q.colour.forEach((c: number, k: number) => expect(c, `${at} colour ${k}`).toBeCloseTo(p.colour[k], 4))
-      })
-    }
-    expect(fx2.life, `${name}: life`).toBeCloseTo(fx3.life, 9)
-    expect(most, `${name}: drawn`).toBeGreaterThan(0)
-  }
-})
-
-// particle2d's page, as its own test makes it: render2d on a flat world whose points are the
-// stage's, and a loader that hands over `effects`.
-const flatPage = (effects: Effects2) => {
-  const plugins: any = {
-    wire: {
-      scene: {
-        plugins: ['loader', 'particle2d', 'render2d'],
-        world: { particle2d: { effects: 'effects', hold: 0.1 }, render2d: { ground: [[1, 0], [0, 1]], up: [0, -1], zoom: 1, look: [0, 0], layers: ['effects'] } },
-        prefabs: { engine: { dt: DT, width: 400, height: 300 } },
-      },
-      rows: [] as any[],
-    },
-    render2d: render2d(),
-    loader: { on: (_: string, f: (it: any) => void) => f(effects), get: () => undefined, load: () => {}, onWritten: () => {} },
-  }
-  plugins.render2d.tick(plugins)
-  const me = particle2d2()
-  return { plugins, me, frame: () => me.afterTick(plugins), drawn: (): any[] => plugins.render2d.layer('effects').children.flatMap((c: any) => c.children) }
-}

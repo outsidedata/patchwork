@@ -7,7 +7,7 @@
 // read the frame terrain3d makes it, a scene naming none waited on, one listing the two the wrong way
 // told, and `close`.
 import { afterAll, afterEach, beforeAll, expect, test, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -125,12 +125,18 @@ afterAll(() => rmSync(dir, { recursive: true }))
 const path = (p: string) => JSON.stringify(new URL(p, import.meta.url).pathname)
 
 let files = 0
-async function page(o: { field?: Field; scatter?: Scatter; plugins?: string[] } = {}) {
+// `crate`, a game's own plugin of the test's, shipped beside the scenes: its mod for scatter3d hands
+// back the boxes its scene's `world.crate.boxes` lists, as a car's hands back its body and wheels.
+mkdirSync(join(dir, 'plugins', 'crate'), { recursive: true })
+writeFileSync(join(dir, 'plugins', 'crate', 'crate.plugin.ts'), 'export function crate() { return {} }\n')
+writeFileSync(join(dir, 'plugins', 'crate', 'crate.scatter3d.ts'), 'export const hollows = (plugins: any) => plugins.wire.scene.world.crate.boxes\n')
+
+async function page(o: { field?: Field; scatter?: Scatter; plugins?: string[]; world?: Record<string, unknown> } = {}) {
   const name = `page${++files}`
   const url = `/scatter3d-plugin-test/${name}.json`
   written(url, JSON.stringify(o.field ?? fieldOf()))
   const scene: Scene = {
-    world: { terrain3d: { field: 'place', rings: [{ reach: 40, seg: 10 }], shadowReach: 40, budget: 1e9, seabed: false }, scatter3d: o.scatter ?? scatterOf(), loader: { assets: { place: { type: 'json', url, preload: true } } } },
+    world: { terrain3d: { field: 'place', rings: [{ reach: 40, seg: 10 }], shadowReach: 40, budget: 1e9, seabed: false }, scatter3d: o.scatter ?? scatterOf(), loader: { assets: { place: { type: 'json', url, preload: true } } }, ...o.world },
     prefabs: {
       engine: { dt: DT, width: 320, height: 200 },
       scenemanager: { out: {} },
@@ -392,6 +398,85 @@ test('BLEND materials become cutout, cards bend toward the sky and gain coverage
   models.firs.scene.traverse(o => { if ((o as THREE.Mesh).isMesh && o.name === 'tall-0-leaf') theirs = (o as THREE.Mesh).material as THREE.Material })
   expect(theirs!.transparent).toBe(true)
   expect(theirs).not.toBe(t.get('needles'))
+})
+
+// A page whose scatter is handed `boxes` by crate's hollows mod, holding at most `cap` of them.
+const hollowed = (boxes: unknown[], cap: number | undefined = 4) => page({
+  scatter: { ...scatterOf({ trees: TREES, grass: GRASS }), hollows: cap, mods: { ground: 'terrain3d', land: 'terrain3d', hollows: ['crate'] } },
+  world: { shipped: { plugins: ['crate'] }, crate: { boxes } },
+  plugins: ['loader', 'scenemanager', 'terrain3d', 'shipped', 'scatter3d', 'render3d'],
+})
+// Every material of a page's field, and the surface each was dressed with.
+const dressed = (p: Awaited<ReturnType<typeof page>>) => {
+  const dress = vi.spyOn(p.plugins.render3d, 'dress')
+  p.frame()
+  return [...Object.values(p.me.packs())].flatMap(l => [...l.looks.values()].flatMap(look => look.meshes.map(m => m.material as THREE.Material)))
+    .map(m => ({ m, surface: (dress.mock.calls.find(([d]) => d === m)![1] as { surface?: Splice }).surface }))
+}
+
+test('with a hollows mod every material of the field drops a fragment inside any box handed to it, beside its own surface; with none, no material carries it', async () => {
+  const all = dressed(await hollowed([]))
+  expect(all.length).toBeGreaterThan(3)
+  for (const { surface } of all) {
+    expect(surface!.fragment!.common).toContain('uniform mat4 scHollow[ 4 ];')
+    expect(surface!.fragment!.clipping_planes_fragment).toContain('discard;')
+  }
+  // A card keeps its own surface too, its coverage and its normal.
+  const card = all.find(({ m }) => m.name === 'needles')!.surface!
+  expect(card.fragment!.normal_fragment_maps).toContain('0.500000')
+  // Every material shares the one set of uniforms, which a frame writes.
+  const uniforms = new Set(all.map(({ surface }) => (surface!.uniforms as { scHollow: unknown }).scHollow))
+  expect(uniforms.size).toBe(1)
+  // The glsl compiles into three's own standard shader at the chunks it names.
+  const shader = { uniforms: {}, vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader } as any
+  const bark = all.find(({ m }) => m.name === 'bark')!.m
+  bark.onBeforeCompile(shader, undefined as any)
+  expect(shader.fragmentShader).toMatch(/#include <clipping_planes_fragment>\nfor \( int k = 0; k < 4; k \+\+ \)/)
+  expect(shader.uniforms.scHollow.value).toHaveLength(4)
+  for (const { surface } of dressed(await page({ scatter: scatterOf({ trees: TREES, grass: GRASS }) }))) expect(surface?.fragment?.clipping_planes_fragment).toBeUndefined()
+})
+
+test('each frame the boxes nearest the camera, at most `hollows` of them, are written as the matrices that take a world point into each box\'s own cube', async () => {
+  const turned = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.6).toArray()
+  // The camera is at [0, 60, 0]: five boxes, the far one past the four it holds.
+  const boxes = [
+    { at: [3, 50, 0], rot: turned, half: [2, 1, 0.5] },
+    { at: [500, 0, 0], rot: [0, 0, 0, 1], half: [1, 1, 1] },
+    { at: [0, 55, 4], rot: [0, 0, 0, 1], half: [1, 2, 3] },
+    { at: [-6, 52, -2], rot: [0, 0, 0, 1], half: [0.4, 0.4, 0.2] },
+    { at: [10, 60, 10], rot: [0, 0, 0, 1], half: [1, 1, 1] },
+  ]
+  const p = await hollowed(boxes)
+  const all = dressed(p)
+  const u = all[0].surface!.uniforms as { scHollow: { value: THREE.Matrix4[] }; scHollows: { value: number } }
+  expect(u.scHollows.value).toBe(4)
+  // Nearest first: 6.4 m, 10.2, 10.4 and 14.1.
+  const near = [boxes[2], boxes[3], boxes[0], boxes[4]]
+  near.forEach((b, k) => {
+    const m = u.scHollow.value[k]
+    // Its middle to the cube's, a corner to the cube's corner, a point just past a face out of it.
+    expect(new THREE.Vector3(...b.at).applyMatrix4(m).length()).toBeLessThan(1e-9)
+    const corner = new THREE.Vector3(...b.half).applyQuaternion(new THREE.Quaternion(...b.rot)).add(new THREE.Vector3(...b.at))
+    const c = corner.applyMatrix4(m)
+    for (const v of [c.x, c.y, c.z]) expect(v).toBeCloseTo(1, 9)
+    const past = new THREE.Vector3(b.half[0] * 1.01, 0, 0).applyQuaternion(new THREE.Quaternion(...b.rot)).add(new THREE.Vector3(...b.at)).applyMatrix4(m)
+    expect(Math.abs(past.x)).toBeGreaterThan(1)
+  })
+  // Fewer boxes the next frame: only those are in use.
+  ;(p.t.scene.world as any).crate.boxes = boxes.slice(0, 2)
+  p.frame()
+  expect(u.scHollows.value).toBe(2)
+})
+
+test('a hollows mod with no whole `hollows` above 0, or naming a plugin the scene does not list, throws on the first frame', async () => {
+  for (const cap of [0, 2.5]) {
+    await expect(hollowed([], cap).then(p => p.frame())).rejects.toThrow(`scatter3d is handed hollows, and world.scatter3d.hollows ${cap} is not a whole number above 0, the most it clears at once`)
+  }
+  const unlisted = await page({
+    scatter: { ...scatterOf(), hollows: 2, mods: { ground: 'terrain3d', land: 'terrain3d', hollows: ['crate'] } },
+    world: { shipped: { plugins: ['crate'] }, crate: { boxes: [] } },
+  })
+  expect(() => unlisted.frame()).toThrow('scatter3d\'s hollows is crate\'s, which this scene does not list')
 })
 
 // A ground the test hands in place of terrain3d's: `height` as given plus `lift`, every cell kept

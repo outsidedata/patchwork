@@ -1,7 +1,7 @@
 // Which row each drawing is, found without the renderers knowing. `drawn` wraps PixiJS's `addChild`
 // and three.js's `add` once, before any game is opened, and tags whatever is put on a stage with a
 // row, and everything under it is that row's too. The row is found one of two ways:
-//   - The client imports every row's actor as `<kind>.client.ts?row=<id>`, so while an actor's code
+//   - The client imports every row's actor as `<kind>.client.ts?row=<id>&client=<c>`, so while an actor's code
 //     runs, itself or through a plugin it calls, that id is in the call stack.
 //   - A plugin that draws for rows, as sprite2d does, walks `wire.rows` in its own hooks and reads
 //     each row before it draws it. `watch`, handed a client's plugins, hands out every row of
@@ -72,7 +72,7 @@ export function watch(plugins: Plugins) {
     games = !plugin
   }
   // Each row as a plain object whose fields read and write the row's own, so a plugin that copies
-  // the rows, as one that predicts clones them, copies plain rows.
+  // the rows, by structuredClone, JSON or a spread, copies plain rows.
   const noted = (rows: typeof wire.rows) => rows.map(r => {
     const o = {} as typeof r
     for (const k of Object.keys(r) as (keyof typeof r)[])

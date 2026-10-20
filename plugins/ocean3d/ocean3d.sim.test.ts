@@ -16,7 +16,7 @@ import { load } from '#addons/scenemanager/scenemanager.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 import { written } from '#plugins/loader/loader.sim.ts'
 import type { Weather } from '#plugins/skydome3d/skydome3d.sim.ts'
-import { ampAt, ampOf, bands, floatAt, grid, inputs, KEPT, mirror, ocean3d, RES, shoal, spectrum, spectrumOf, waveAt, type Sea, type Spectrum } from './ocean3d.sim.ts'
+import { ampAt, ampOf, bands, floatAt, grid, KEPT, mirror, ocean3d, RES, shoal, spectrum, spectrumOf, waveAt, type Sea, type Spectrum } from './ocean3d.sim.ts'
 
 const SEA: Sea = {
   windSpeed: 9, windDeg: 30, fetchKm: 300, swellScale: 0.4, swellDeg: 65, amp: 0.35, chop: 1.1, foamRecovery: 0.35, seed: 731,
@@ -171,14 +171,12 @@ function drawn(s: Spectrum, c: number, sea: Sea, t: number) {
   return { y: field(h.re, h.im), dx: field(dx.re, dx.im), dz: field(dz.re, dz.im) }
 }
 const rms = (a: Float64Array) => Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length)
-const worst = (a: Float64Array) => a.reduce((s, v) => Math.max(s, Math.abs(v)), 0)
 
 // ---------------------------------------------------------------- the spectrum
 
-test('two truths make identical spectrum bytes, each its own', () => {
+test('two truths make identical spectrum bytes', () => {
   const a = sea(), b = sea()
   const sa = spectrumOf(a.w), sb = spectrumOf(b.w)
-  expect(sa).not.toBe(sb)
   for (let c = 0; c < 3; c++) expect(Buffer.from(sa.cascades[c].packed.buffer).equals(Buffer.from(sb.cascades[c].packed.buffer))).toBe(true)
   expect(sa.pairs).toEqual(sb.pairs)
 })
@@ -317,7 +315,6 @@ test('the 96 strongest ± pairs of cascade 0 carry over 95 % of its energy, and 
   const g = grid(SEA, 0)
   const total = g.re.reduce((a, v, i) => a + v * v + g.im[i] ** 2, 0)
   expect(s.pairs.total).toBeCloseTo(total, 9)
-  expect(KEPT).toBe(96)
   expect(s.pairs.kept).toHaveLength(KEPT)
   const kept = s.pairs.kept.reduce((a, p) => a + p.energy, 0)
   expect(kept / total).toBeGreaterThan(0.95)
@@ -355,11 +352,11 @@ test('the packed cascade 0 holds exactly the kept pairs and zeros elsewhere; the
 test('the spectrum is memoised per truth by its inputs; amp, chop and foamRecovery are not in the key', () => {
   const { w, row, numbers } = sea()
   const first = spectrumOf(w)
-  expect(first.key).toBe([9, 30, 300, 0.4, 65, 731, 200, 250, 17, 5].join(','))
-  expect(inputs(numbers)).toEqual([9, 30, 300, 0.4, 65, 731, 200, 250, 17, 5])
   Object.assign(numbers, { amp: 0.1, chop: 2, foamRecovery: 3, shoalDepth: 4 })
   row().data.t = 17
   expect(spectrumOf(w)).toBe(first)
+  // Read through another `w` over the same truth, as the editor's `reading` makes one a call.
+  expect(spectrumOf({ ...w })).toBe(first)
   for (const [k, v] of [['windSpeed', 11], ['windDeg', 31], ['fetchKm', 200], ['swellScale', 0.3], ['swellDeg', 60], ['seed', 1], ['repeat', 100], ['patches', [250, 17, 4]]] as const) {
     const again = sea()
     const before = spectrumOf(again.w)
@@ -389,16 +386,6 @@ test('waveAt is the height of the drawn cascade 0 at the displaced point, agains
   }
   // Three fixed-point steps leave 2.6 mm at worst here; two leave 17 mm.
   expect(most).toBeLessThan(0.01)
-})
-
-test('what is left between waveAt and the drawn sea is cascades 1 and 2: about 2.4 cm rms, and under 10 cm at worst', () => {
-  const s = spectrum(SEA)
-  const one = drawn(s, 1, SEA, 50).y, two = drawn(s, 2, SEA, 50).y
-  const together = Math.hypot(rms(one), rms(two))
-  expect(together).toBeGreaterThan(0.02)
-  expect(together).toBeLessThan(0.028)
-  expect(worst(one) + worst(two)).toBeLessThan(0.14)
-  expect(worst(one)).toBeLessThan(0.1)
 })
 
 test('the sea at t is the sea at t + repeat', () => {

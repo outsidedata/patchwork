@@ -35,11 +35,37 @@ with its own over them, key by key at the top level. So a prefab or a `world.<pl
 uses is written once, in the manager's file. A child that gives its own `world.loader` has only its
 own catalogue, not the manager's and its own together.
 
+### Scenes that share most of what they hold: a partial
+
+Scenes played on one place, a skirmish and its missions, a level by day and by night, share a
+partial: `<name>.partial_scene.json`, purposefully incomplete, never a scene of its own and never in
+the manager's `scenes`. Each scene, `<scene>.scene.json`, names it as `"extends"` (relative to
+itself) and holds only what is its own. When a scene loads (`extended` in
+`addons/scenemanager/scenemanager.addon.ts`, called by `child`):
+
+- its `world` and `prefabs` deep-merge onto the partial's, the scene's values winning field by field;
+- its `actors` are combined with the partial's, the partial's first;
+- the rest of the scene file (`plugins`, `seats`) is the scene's own;
+- a partial extends nothing.
+
+Whatever differs between the scenes cannot be shared: it is in none of the partial and in each
+scene. A row two scenes place differently (a yard that is a ruin in one, each scene's `start` with
+its own loadout) is an actor of each scene, not of the partial. A catalogue entry, a prefab or an
+actor added to the partial reaches every scene that extends it. A new variation is a new
+`<scene>.scene.json` naming the partial and giving only what makes it different.
+
+A scene file is read whole only through the scenemanager. Anything that imports
+`<scene>.scene.json` directly, or reads the `scene` a `<scene>.sim.ts` exports, gets the scene's own
+part without its partial; that is wrong, and it breaks. A test or a testbed that needs a scene as the
+game runs it loads it with `child` (`proving-a-game`).
+
 Each step of the manager steps every child whose entry says `suspend: false`, and every child a
 seat is on. A `suspend: true` child nobody is in is not stepped at all: its rows, its step counter
 and its die stay as they are, and it carries on from there when a seat comes back. When the last
 seat leaves such a child it is given one more step, so a row that ends itself once no `player` row
-names it (the body `yarn new-game` writes) is gone before the scene stops.
+names it, a marker the seat's rules left behind say, is gone before the scene stops. (The `body`
+`yarn new-game` writes ends itself so; it is folded into the `player` row before a game gets a second
+scene, `designing-a-seat`, and never copied as the shape of a seat.)
 
 A connection is one seat on one child at a time, and it enters `entry` first. A child that lists the
 `player` plugin seats it through `addons/player/player.addon.ts`: a `player` row holding the
@@ -65,7 +91,10 @@ the scene it is on leaves and enters again: a new `player` row and a new seat nu
 row as it was. A `suspend: true` scene it was alone in takes its one more step between the leaving
 and the entering, so what ends when no `player` row names it ends first.
 
-On the page, `view` holds one client, for the scene the seat is on. Every envelope names a scene and
+On the page, `view` holds one client, for the scene the seat is on. On `client.html`, `predict` makes
+the view itself and runs each scene that gives `world.predict` ahead of the server, drawing the seat's
+own `player` row from its copy (`addons/predict/predict.addon.ts`); a scene that gives none is drawn
+from its packets as they come. Every envelope names a scene and
 the seat's number there. On the frame after one names another scene or another number, the client is
 closed (every actor's `remove`, every plugin's `close`: the renderer gives back its canvas and its
 context, the keys stop listening, the UI's open panels go) and a new client is made, which `mount`
@@ -74,7 +103,10 @@ gives new canvases. A message sent on a visit that is over is dropped.
 ## The wire, as a game author meets it
 
 `index.html`, `client.html` and `<game>.server.ts` are written by `yarn new-game` and are the same in
-every game but the file names they import. `index.html` and `client.html` hold no scene name.
+every game but the file names they import. `client.html` wraps its link in `predict`,
+`tap(dial(url), wire => predict(link(wire), file, import.meta.url, mount))` (the prime directive's
+The pages); the template still writes it with `view` alone, and it is put in that shape before the
+game is played over a network (`publishing-a-game`). `index.html` and `client.html` hold no scene name.
 `<game>.server.ts` names the scene `yarn new-game` made in its opening comment and nowhere in its
 code; step 9 takes the name out. The page boots the manager, and `view` follows the envelopes
 wherever the seat goes, so adding a scene, changing the entry or moving seats changes no line of
@@ -120,6 +152,10 @@ name a scene (below).
    and leave them out of the scenes; never copy them into each scene. The same goes for any
    `world.<plugin>` every scene uses. A scene that catalogues a file of its own by giving its own
    `world.loader` lists the manager's entries again, since its catalogue replaces the manager's.
+   Every scene a seat plays in gives `world.predict`, so `client.html` runs it ahead and the seat's
+   own `player` row answers the key on the next frame (`going-multiplayer`, A scene run ahead): it
+   is written once in the manager's `world` when every scene is one a seat plays in, and otherwise
+   in each level's own, a scene made with New scene taking its source's with the rest of its file.
 
 3. Set the entry: `entry` in the manager's `scenemanager` prefab. The Scenes panel marks it and will
    not take it out.
@@ -166,13 +202,16 @@ name a scene (below).
    `seat` is the truth's seat number, which `out` is keyed by: the number an act is handed. It is
    not the slot in the `player` row's `seat` field. The slot can be the same on every visit while
    the seat number is new on each. A key that moves the seat is an act of the game's `player` kind
-   that calls `go` with the seat it was handed. The page does not run that act ahead, since it calls
-   a plugin's row (`plugins/player/player.plugin.ts`, Prediction), so no prediction work is needed.
+   that calls `go` with the seat it was handed.
    - A hook (`before`, `tick`, `after`) has no seat. A rule that moves a seat from a hook (time up,
      lives gone, the exit reached) passes a seat number its row kept from an act. The one that comes
      on every arrival: `player.client.ts`'s `setup` calls an act of the `player` row,
-     `plugins.player.<act>()`, which the player plugin sends on its next tick, and the act writes
-     the seat it is handed on a field of the row. The hook passes that field. `arrive` writes it
+     `plugins.player.<act>()`, which the player plugin sends at its first `input` or `tick` (a setup on
+     a client's first frame runs before the plugin has its wire), and the act writes
+     the seat it is handed on a field of the row. The hook passes that field. `player.client.ts` is
+     loaded for every `player` row the page is sent, every seat's, and `plugins.player.<act>()` sends
+     at the seat's own row, so the call stands behind `if (row.data.mine)`: without it a page of a
+     scene of four seats sends the act four times, and again each time another seat arrives. `arrive` writes it
      too, but `arrive` comes only when the `go` that brought the seat carried args.
    - `arrive` can be forged. It is an act on the row the seat possesses, so the seat can send it
      whenever it likes, and `go` is open with any args, so a seat can send itself into a level with
@@ -196,8 +235,8 @@ name a scene (below).
    `w.world.scenemanager.actors`, the scene's `actors` entries, which no packet carries. The table
    entry's `enter` act, run with each seat that enters, is where that rule decides it: when the seat
    is the scene's only one, say. A `go` to the scene the seat is on, a
-   restart key, gives a `suspend: true` scene it was alone in its one more step first, so the old
-   body ends before the new `player` row spawns one.
+   restart key, gives a `suspend: true` scene it was alone in its one more step first, so whatever
+   ends once no `player` row names it is gone before the new `player` row stands on its start.
 
    A `suspend: true` scene keeps its rows when the last seat leaves, and a `suspend: false` one keeps
    stepping, so on the server a level that was won, or stuck where nobody can go on, stays so for
@@ -219,14 +258,14 @@ name a scene (below).
    - A name every level would give alike is a field of a kind's definition.
    - What the level hands on, a score or the lives left, goes as args and arrives as `arrive` on the
      next level's `player` row, checked to the most the game can give and so forgeable up to that;
-     a value that must not be forged is a per-account record instead (step 5 says both). Each value
-     that arrives waits in one field of the `player` row, `carried` for a score say, which its prefab
-     holds as `null` or `-1`, and its `before` spawns nothing until `arrive` has written it. Then
-     `before` spawns the seat's own count from it, a per-seat `tally` (`building-the-hud`, Where each
-     piece goes), and keeps its id. The count that changes while the level plays, and how far the
-     seat has got, are that row's fields, never the `player` row's: `carried` stays what arrived and
-     nothing more. Every `go` into that level carries args, the title's button included: a `go` with
-     none brings no `arrive`, and nothing spawns.
+     a value that must not be forged is a per-account record instead (step 5 says both). `arrive`
+     writes each value onto the `player` row's own field, `score` or `lives` say, which its prefab
+     holds as `null` or `-1`, and its `before` stands the row on its start only once `arrive` has
+     written them. The count goes on changing on that field while the level plays, and how far the
+     seat has got is a field of the same row: the seat's own state is a field of the row it plays as
+     (`designing-a-seat`). Never a `tally` or a `carried` field the `player`
+     row spawns a count from. Every `go` into that level carries args, the title's button included: a
+     `go` with none brings no `arrive`, and the row never stands.
 
 8. Bind every field that names a scene. The game's own extension, `games/<game>/<game>.extension.tsx`,
    exports the function `<game>` and binds each such field to the scenemanager's field type,
@@ -241,7 +280,8 @@ name a scene (below).
    with its test beside it; the value never moves onto a row to be seen.
 
 9. Fix what assumed one scene. The `<game>.sim.test.ts` that `yarn new-game` writes connects a seat
-   and reads its body in the first scene. With a title as the entry it fails, and it is rewritten to
+   and reads its `body` in the first scene; once the `body` is folded into the `player` row it reads
+   the seat's `player` row instead. With a title as the entry it fails, and it is rewritten to
    go from the entry first. The comments `yarn new-game` writes name the one scene: `<game>.sim.ts`
    and `<game>.server.ts` say the manager holds it and every connection enters it, and
    `<scene>.sim.ts` says its scene names the definitions. In the same change the scene's name comes
@@ -272,17 +312,14 @@ Crosses:
 - The scene the seat left, which keeps its rows for the life of the process: still if it is
   `suspend: true`, stepping if it is `false`.
 
-Crosses, and must not be relied on:
-
-- A value at the top of a `<kind>.client.ts`. The page imports it per row as
-  `<kind>.client.ts?row=<id>` (`engine/browser.ts`), and the browser keeps one module per url for
-  the life of the page. Two levels that share their kinds give rows the same ids, and a scene entered
-  again gives its `actors` entries the ids they had, so a row on the next visit can be handed the
-  module the last one left, its values in it. The actor's `setup` sets every value it keeps.
-
 Does not cross:
 
-- The seat's `player` row and what the scene spawned for it: they end, and the next scene's are new.
+- A value at the top of a `<kind>.client.ts`. The page imports it per row of each client, as
+  `<kind>.client.ts?row=<id>&client=<c>` (`engine/browser.ts`), and every scene the seat enters is a
+  new client with a number of its own, so a row on the next visit runs a new module, even with the
+  id the last one had.
+- The seat's `player` row, every field of its own on it (its score, its lives), and what the scene
+  spawned for it: they end, and the next scene's are new. What the seat keeps crosses as `go`'s args.
   The seat number changes, and the slot is whichever the next scene has free.
 - Anything else on the page. The actors, the plugins' state, the keys, the UI's open panels, the
   renderer and its canvas go with the client. A plugin's browser state is inside its exported
@@ -304,7 +341,7 @@ bears on the flow:
 - With `go` in its cue file, at its end, played or skipped, every row of the kinds
   `world.cutscene.kinds` names is sent `go(go, ...arrive)` with seat −1. Each of those kinds has a
   `go` act, or the call throws; the act calls the scenemanager's `go` with the seat number its row
-  keeps, and does nothing on a row that is no seat's body.
+  keeps, and does nothing on a row no seat plays as.
 - It plays once per `cutscene` row, and the row lives as long as the truth. A seat that reaches the
   scene a second time in the same process finds it done, and nothing sends it on. A new row does not
   play it again: a scene holds one `cutscene` row, and one spawned later has a higher id than the
@@ -330,8 +367,8 @@ as the cutscene's end does for its cast. Members in different scenes cannot be m
 copy in memory. Entering a scene directly is `file.prefabs.scenemanager.entry = '<scene>'` before
 `boot(file, sim)`. A child scene's file is changed the same way by importing it, `import main from
 './main.scene.json'`: it is the module the scene's sim exports, so the manager boots the changed
-copy. The entry is entered with no args, so a scene whose `player` row waits for `arrive` spawns
-nothing when entered directly; `dev.html` writes those fields on its `player` prefab in memory.
+copy. The entry is entered with no args, so a scene whose `player` row waits for `arrive` never
+stands it when entered directly; `dev.html` writes those fields on its `player` prefab in memory.
 Nothing else overrides the entry, and nothing reads what `dev.html` set. The rest of the testbed is
 `starting-a-game`'s.
 
@@ -350,11 +387,11 @@ Nothing else overrides the entry, and nothing reads what `dev.html` set. The res
   another one. `go` takes the seat number an act was handed.
 - A hook calls `go` with a seat number nobody stored, because the seat entered with a `go` that
   carried no args and never pressed anything. The `player` actor's `setup` sends an act that stores
-  it on every arrival.
+  it on every arrival, for the row that is `mine`.
 - `arrive` writes whatever it is handed, whenever it is handed it. It fills only fields still unset,
   and checks each value as data from outside the program.
-- A level's `player` waits for `arrive`, and the title's button sends `go` with no args. Nothing
-  spawns. Every `go` into that level carries args.
+- A level's `player` waits for `arrive`, and the title's button sends `go` with no args. The row never
+  stands on its start. Every `go` into that level carries args.
 - A scene is expected to be fresh when a seat comes back. It is the same truth, as it was left. A
   level that starts over spawns its cast again by a rule.
 - `world.defs` and `world.loader` are copied into each new scene. They go up into the manager's
@@ -378,8 +415,11 @@ Nothing else overrides the entry, and nothing reads what `dev.html` set. The res
   was left, and one that enters a race already won joins a race that is over (step 6).
 - A level written to start itself over after a win without asking the person. Which way back a
   level has is theirs (step 6).
-- A value that arrived kept counting on the `player` row. It waits in `carried` only until `before`
-  spawns the seat's own count from it (step 7).
+- A value that arrived moved onto a row of its own, a `tally` the `player` row spawns, to count there.
+  It keeps counting on the `player` row's own field (step 7).
+- `player.client.ts`'s `setup` sends the act that stores the seat's number without
+  `if (row.data.mine)`. The look runs for every seat's `player` row, so the act goes once per seat on
+  the page, and again as each later seat arrives (step 5).
 - The generated `<game>.sim.test.ts` and the comments that name the one scene are left as they were
   when the entry changes. The test fails and the comments lie; the test is rewritten and the scene's
   name comes out of the comments.
@@ -395,7 +435,7 @@ Each test sits beside the file it tests and is run alone: `yarn vitest run games
   read off the map `load` hands back.
 - A kind's test, `<kind>.sim.test.ts`, works the same way. The act or hook that calls `go` moves the
   seat to the scene its definition or its scene's `world` names. A scene entered again holds what it
-  should, one body on its start, and the seat's number there is new. `arrive` sent twice, or with a
+  should, the seat's one `player` row on its start, and the seat's number there is new. `arrive` sent twice, or with a
   value of the wrong type or out of range, changes nothing.
 - A page's test, `<kind>.client.test.ts`, runs in node. It makes the page as `index.html` does,
   `view(link(loopback(accept(manager(truth)))), file, here, mount)`, and steps the manager and calls
@@ -432,8 +472,10 @@ first.
   its `enter` act as args, built in `connection` in the scenemanager addon when a job needs it.
 - Can a score cross to the next scene in the store? No: it crosses as `go`'s args, checked where it
   lands, or it is a record kept per account.
-- Can the score keep counting on the `player` row once it has arrived? No: `before` spawns the
-  seat's own count from the field it arrived in.
+- Can the score keep counting on the `player` row once it has arrived? Yes: the seat's own state is
+  a field of its `player` row, and it counts there.
+- Can the arrived score be handed to a `tally` row the `player` row spawns? No: the seat's own state is
+  a field of its `player` row (`designing-a-seat`).
 - Can a scene's name be written in code? No: a field of the scene's `world` or of a kind's
   definition, bound to `scenemanager.scene`.
 - Can a level be booted again so it starts fresh? No: a rule spawns its cast again from

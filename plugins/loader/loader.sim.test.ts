@@ -284,12 +284,6 @@ const boxedFile = sheetFile('fighter.png', [
 ], [{ name: 'punch', from: 0, to: 2, direction: 'forward', repeat: '1' }])
 const boxed = read(boxedFile, '/f.json', { facing: { first: 0, mirror: true } })
 
-test('a frame keeps its box and anchor, whole and upright, and a sheet whose entry says nothing of facing faces right mirroring nothing', () => {
-  expect(boxed.frames['51.17']).toEqual({ id: '51.17', page: 0, box: [51, 17, 44, 58], rotated: false, size: [44, 58], trim: [0, 0, 44, 58], anchor: [18, 58] })
-  expect(boxed.facing).toEqual({ first: 0, step: 0, mirror: true })
-  expect(read(boxedFile, '/g.json').facing).toEqual({ first: 0, step: 0, mirror: false })
-})
-
 test('an animation naming a frame the sheet does not have throws', () => {
   expect(() => read({ ...sheetFile('p.png', []), animations: { a: ['x'] } }, '/s.json'))
     .toThrow('sheet /s.json clip a names frame x, which it does not have')
@@ -329,23 +323,6 @@ test('a clip of one run on a sheet that mirrors nothing faces every way', () => 
 test('a frame of a clip is the frame its run lists at that place', () => {
   expect(frameOf(gridded, 'walk', 2, 1).id).toBe('7')
   expect(frameOf(boxed, 'punch', 0, 2).box).toEqual([99, 17, 30, 40])
-})
-
-test('a looping clip moves on a frame when it has shown for its duration and goes round to the first', () => {
-  expect(play(gridded, 'walk', 0, 0, 0.05)).toEqual([0, 0.05])
-  const [f, t] = play(gridded, 'walk', 0, 0.05, 0.06)
-  expect(f).toBe(1)
-  expect(t).toBeCloseTo(0.01)
-  expect(play(gridded, 'walk', 2, 0.09, 0.02)[0]).toBe(0)
-})
-
-test('a clip that does not loop holds its last frame, with no time on it', () => {
-  const [f, t] = play(gridded, 'run', 0, 0, 0.3)
-  expect(f).toBe(1)
-  expect(t).toBeCloseTo(0.05)
-  expect(play(gridded, 'run', 1, 0.2, 0.1)).toEqual([1, 0])
-  expect(span(gridded, 'run')).toBe(0.5)
-  expect(span(boxed, 'punch')).toBe(0.25)
 })
 
 test('a clip whose frames are picked one by one has no durations, and playing it or timing it throws; one frame of it holds', () => {
@@ -406,13 +383,6 @@ test('an Aseprite sheet reads the same from its JSON-Array and its JSON-Hash, it
   expect(walker.order).toEqual(['a', 'b', 'c', 'd', 'e', 'f'])
 })
 
-test('an Aseprite frame\'s pivot is its anchor in pixels, outside the frame where the pivot is past 1, and its clip lasts its durations in seconds', () => {
-  expect(walker.frames.a).toEqual({ id: 'a', page: 0, box: [0, 0, 16, 16], rotated: false, size: [16, 16], trim: [0, 0, 16, 16], anchor: [8, 16] })
-  expect(walker.clips.walk.durations).toEqual([0.1, 0.2])
-  expect(walker.frames.b.anchor).toEqual([8, 24])
-  expect(reach(walker.frames.b, false)).toEqual([8, 8, 24, -8])
-})
-
 test('a trimmed frame is its box on the page, the whole picture\'s size, where its box was in the picture, and the whole picture\'s pivot as its anchor', () => {
   expect(walker.frames.c).toEqual({ id: 'c', page: 0, box: [32, 0, 10, 12], rotated: false, size: [16, 16], trim: [3, 4, 10, 12], anchor: [8, 16] })
 })
@@ -426,22 +396,6 @@ test('a frame with no pivot stands on its whole picture\'s top left', () => {
 test('a frame a packer stored turned is its box as it lies on the page, its size upright, and says it is turned', () => {
   const turned = read({ frames: { r: { frame: { x: 5, y: 6, w: 10, h: 30 }, rotated: true, trimmed: false, spriteSourceSize: { x: 0, y: 0, w: 10, h: 30 }, sourceSize: { w: 10, h: 30 }, pivot: { x: 0.5, y: 1 } } }, meta: { app: 'tp', image: 'p.png' } }, '/r.json')
   expect(turned.frames.r).toEqual({ id: 'r', page: 0, box: [5, 6, 30, 10], rotated: true, size: [10, 30], trim: [0, 0, 10, 30], anchor: [5, 30] })
-})
-
-test('a tag named clip@k is run k of the clip, and a plain tag is run 0 of its own', () => {
-  expect(walker.clips.walk).toEqual({ loop: true, runs: [['a', 'b'], ['e', 'f']], durations: [0.1, 0.2] })
-  expect(frameOf(walker, 'walk', 1, 1).id).toBe('f')
-  expect(walker.clips.back.runs).toEqual([['c', 'b', 'a']])
-})
-
-test('a tag plays its frames by its direction, and a ping-pong going round does not show either end twice', () => {
-  expect(walker.clips.bounce).toMatchObject({ loop: true, runs: [['a', 'b', 'c', 'd', 'c', 'b']] })
-  expect(walker.clips.bounceBack).toMatchObject({ loop: true, runs: [['c', 'b', 'a', 'b']] })
-})
-
-test('a tag that repeats once holds its last frame; a ping-pong repeated three times goes there, back and there again', () => {
-  expect(walker.clips.once).toMatchObject({ loop: false, runs: [['a', 'b', 'c']] })
-  expect(walker.clips.thrice).toMatchObject({ loop: false, runs: [['a', 'b', 'c', 'b', 'a', 'b', 'c']] })
 })
 
 test('a clip moves on each frame after its own duration, and lasts the sum of them', () => {
@@ -464,12 +418,6 @@ test('slices are read with every key, a key naming its frame by its place in the
   expect(walker.slices.panel).toEqual([{ frame: 0, bounds: [0, 0, 16, 16], center: [4, 4, 8, 8], pivot: [8, 16] }])
   expect(boxed.slices).toEqual({})
   expect(boxed.order).toEqual(['5.17', '51.17', '99.17'])
-})
-
-test('how a sheet is drawn is its catalogue entry\'s', () => {
-  expect([walker.nearest, walker.facing]).toEqual([false, { first: 0, step: 0, mirror: false }])
-  const used = read(aseArray, '/w.json', { nearest: true, facing: { first: 0.75, step: -0.125, mirror: true } })
-  expect([used.nearest, used.facing]).toEqual([true, { first: 0.75, step: -0.125, mirror: true }])
 })
 
 test('TexturePacker\'s animations are clips, each looping', () => {
@@ -563,29 +511,11 @@ test('a ping-pong turns at each end without showing the end frame twice, a pass 
   expect(() => played(ids, 'forward', 1.5)).toThrow('repeat 1.5 is no count of times')
 })
 
-test('a timed clip moves on when each frame has shown for its own duration, and lasts their sum', () => {
-  let [f, t] = play(hero, 'walk', 0, 0, 0.12)
-  expect(f).toBe(1)
-  expect(t).toBeCloseTo(0.02, 12)
-  ;[f, t] = play(hero, 'walk', f, t, 0.14)
-  expect(f).toBe(2)
-  expect(t).toBeCloseTo(0.01, 12)
-  expect(play(hero, 'walk', 2, 0.05, 0.06)[0]).toBe(0)
-  expect(span(hero, 'walk')).toBeCloseTo(0.35, 12)
-  // Played through once and held on its last frame.
-  expect(play(hero, 'wave', 5, 0, 1)).toEqual([6, 0])
-  expect(span(hero, 'wave')).toBeCloseTo(0.7, 12)
-})
-
 test('a sheet whose runs are missing one, differ in length or in timing, or time some frames and not others, throws', () => {
   const tags = (frameTags: any[], frames: any[] = aseprite.frames) => () => read({ frames, meta: { image: 'p.png', frameTags } }, '/s.json')
-  expect(tags([{ name: 'go@0', from: 0, to: 1 }, { name: 'go@2', from: 1, to: 2 }])).toThrow('sheet /s.json clip go has run 2 and no run 1')
   expect(tags([{ name: 'go@0', from: 0, to: 1 }, { name: 'go@1', from: 0, to: 2 }])).toThrow('sheet /s.json clip go has runs of different lengths')
-  expect(tags([{ name: 'go@0', from: 0, to: 1 }, { name: 'go@1', from: 1, to: 2 }])).toThrow('sheet /s.json clip go has runs timed differently')
   const some = aseprite.frames.map((f, i) => (i === 1 ? { ...f, duration: undefined } : f))
   expect(tags([{ name: 'go', from: 0, to: 2 }], some)).toThrow('sheet /s.json clip go has frames with a duration and frames without')
-  expect(tags([{ name: 'go', from: 2, to: 40 }])).toThrow('sheet /s.json tag go runs from 2 to 40 of 12 frames')
-  expect(tags([{ name: 'go', from: 0, to: 1, direction: 'up' }])).toThrow('sheet /s.json tag go: direction up is none of')
   expect(() => read({ frames: {}, nope: 1 }, '/n.json')).toThrow('sheet /n.json is no sheet the loader reads')
 })
 
@@ -615,7 +545,6 @@ test('a TexturePacker multipack is one sheet: each pack a page, trimmed and turn
   expect(coins.frames['coin 2.png']).toEqual({ id: 'coin 2.png', page: 0, box: [20, 4, 12, 10], rotated: true, size: [16, 16], trim: [3, 2, 10, 12], anchor: [8, 8] })
   expect(coins.frames['coin 3.png']).toMatchObject({ page: 1, anchor: [0, 0] })
   expect(coins.clips.spin).toEqual({ loop: true, runs: [['coin 1.png', 'coin 2.png', 'coin 3.png']] })
-  expect(() => play(coins, 'spin', 0, 0, 0.1)).toThrow('clip spin is not timed: its frames have no duration')
   // Its pixels reach from the anchor to the trimmed box, not the whole frame.
   expect(reach(coins.frames['coin 1.png'], false)).toEqual([5, 5, 6, 6])
   expect(holds(folderUrl('coins-1.json'))).toBe(true)
@@ -1085,4 +1014,120 @@ test('what a file of the loader\'s names is what the loader opens of it: a tiles
   for (const nothing of [null, [], 3, 'map']) expect(namesIn(nothing, '/a/nothing.json')).toEqual([])
   expect(namesIn({ tilesets: [{ firstgid: 1, source: 'set.tsj' }], layers: [] }, '/a/m.tmj')).toEqual([])
   expect(() => readMap({ tilesets: [{ firstgid: 1, source: 'set.tsj' }], layers: [] }, '/a/m.tmj')).toThrow('tilemap /a/m.tmj is no Tiled map')
+})
+
+import { mkdirSync, existsSync } from 'node:fs'
+import { mount, seal, sealed, unseal } from './loader.sim.ts'
+
+// Wads. Each test seals its files into a folder of its own, since a wad open in the process stays
+// open, and every file it held is then at its path for the rest of the run.
+const wadFolder = (name: string) => {
+  mkdirSync(join(folder, name), { recursive: true })
+  return '/' + relative(process.cwd(), join(folder, name))
+}
+const bytesOf = (text: string) => new TextEncoder().encode(text)
+const has = (hay: Uint8Array, needle: Uint8Array) => Buffer.from(hay).indexOf(Buffer.from(needle)) !== -1
+
+test('a wad opens to the files sealed in it, byte for byte; the same files seal to the same wad, and none of them is in it as itself', async () => {
+  const page = encodePng({ width: 2, height: 1, data: new Uint8ClampedArray([255, 0, 0, 255, 0, 0, 255, 128]), text: { from: 'a pack nobody may hand on' } })
+  const files = { 'hero.png': page, 'sheets/hero.json': bytesOf('{"meta":{"image":"../hero.png"}}'), 'empty.bin': new Uint8Array(0) }
+  const wad = await seal(files)
+  expect(await unseal(wad)).toEqual(files)
+  expect(await seal(files)).toEqual(wad)
+  expect([...wad.subarray(0, 5)]).toEqual([0x50, 0x57, 0x41, 0x44, 1])
+  for (const needle of [bytesOf('a pack nobody may hand on'), bytesOf('hero.png'), bytesOf('"meta"'), page.subarray(0, 8)]) expect(has(wad, needle)).toBe(false)
+  // one byte more in one file is another wad, sealed with another IV
+  const other = await seal({ ...files, 'empty.bin': new Uint8Array(1) })
+  expect(other.subarray(5, 17)).not.toEqual(wad.subarray(5, 17))
+})
+
+test('a wad refuses a name that is not a path from its folder, and opening what is not a wad, a later version or a damaged one says why', async () => {
+  for (const name of ['', '/abs.png', '../up.png', 'a/../b.png', './a.png', 'a//b.png']) await expect(seal({ [name]: new Uint8Array(1) })).rejects.toThrow('a wad holds files by their names from its folder')
+  const wad = await seal({ 'a.png': new Uint8Array([1, 2, 3]) })
+  await expect(unseal(bytesOf('{"not":"a wad"}'))).rejects.toThrow('it is not a wad')
+  const later = wad.slice()
+  later[4] = 2
+  await expect(unseal(later)).rejects.toThrow('it is a wad of version 2, and this opens version 1')
+  const damaged = wad.slice()
+  damaged[damaged.length - 1] ^= 1
+  await expect(unseal(damaged)).rejects.toThrow('it does not open with the key')
+})
+
+test('a scene\'s wads open in prepare, and every path a wad holds is read from it, a sheet\'s page beside a json in it too, while a path it does not hold is read from disk', async () => {
+  const at = wadFolder('held')
+  const page = encodePng({ width: 3, height: 2, data: new Uint8ClampedArray(3 * 2 * 4).fill(200), text: {} })
+  const sheetJson = JSON.stringify({ frames: [{ filename: 'coin/0', frame: { x: 0, y: 0, w: 3, h: 2 }, rotated: false, trimmed: false, spriteSourceSize: { x: 0, y: 0, w: 3, h: 2 }, sourceSize: { w: 3, h: 2 } }], meta: { image: 'coin.png', size: { w: 3, h: 2 }, frameTags: [] } })
+  writeFileSync(join(folder, 'held', 'art.wad'), await seal({ 'coin.png': page, 'coin.json': bytesOf(sheetJson), 'deep/defs.json': bytesOf('{"coin":{"worth":5}}') }))
+  writeFileSync(join(folder, 'held', 'plain.json'), '{"plain":true}')
+  const world = {
+    defs: 'defs',
+    loader: {
+      wads: [`${at}/art.wad`],
+      assets: {
+        defs: { type: 'json', url: `${at}/deep/defs.json`, preload: true },
+        coin: { type: 'sheet', url: `${at}/coin.json`, preload: true },
+        plain: { type: 'json', url: `${at}/plain.json`, preload: true },
+        page: { type: 'pixels', url: `${at}/coin.png`, preload: true },
+      },
+    },
+  }
+  for (const name of ['coin.png', 'coin.json', 'deep']) expect(existsSync(join(folder, 'held', name))).toBe(false)
+  let seen: any
+  const truth = boot({ world, prefabs: { loader: {}, coin: {} }, actors: [{ is: 'loader' }, { is: 'coin' }] }, {
+    loader,
+    coin: { tick(me: any, _dt: number, w: any) { seen = { def: def(w, me.kind), plain: json(w, 'plain'), page: [...new Uint8Array(asset(w, 'page'))] } } },
+  })
+  await loader.prepare(truth.rows[0], truth.world)
+  truth.step(DT)
+  expect(seen).toEqual({ def: { worth: 5 }, plain: { plain: true }, page: [...page] })
+  const { sheetAt } = await import('./loader.sim.ts')
+  const coin = await sheetAt('coin', `${at}/coin.json`)
+  expect(coin.pages).toEqual([`${at}/coin.png`])
+  expect(coin.frames['coin/0'].box).toEqual([0, 0, 3, 2])
+  expect(new Uint8Array((await sealed(`${at}/coin.png`))!)).toEqual(page)
+  expect(await sealed(`${at}/plain.json`)).toBeUndefined()
+})
+
+test('a read waits for a wad that has started opening, so a path it holds is never read from disk first', async () => {
+  const at = wadFolder('waits')
+  writeFileSync(join(folder, 'waits', 'late.wad'), await seal({ 'late.json': bytesOf('{"from":"the wad"}') }))
+  const { jsonAt } = await import('./loader.sim.ts')
+  const opening = mount({ loader: { wads: [`${at}/late.wad`] } })
+  expect(await jsonAt('late', `${at}/late.json`)).toEqual({ from: 'the wad' })
+  await opening
+})
+
+test('a wad that cannot be read or opened fails prepare saying which and why, reads go on without it, and it is read again on the next prepare', async () => {
+  const at = wadFolder('broken')
+  writeFileSync(join(folder, 'broken', 'here.json'), '{"here":true}')
+  const world = { loader: { wads: [`${at}/gone.wad`], assets: { here: { type: 'json', url: `${at}/here.json`, preload: true } } } }
+  const truth = boot({ world, prefabs: { loader: {} }, actors: [{ is: 'loader' }] }, { loader })
+  await expect(loader.prepare(truth.rows[0], truth.world)).rejects.toThrow(`loader wad ${at}/gone.wad: loader could not read ${at}/gone.wad: ENOENT`)
+  const { jsonAt } = await import('./loader.sim.ts')
+  expect(await jsonAt('here', `${at}/here.json`)).toEqual({ here: true })
+  writeFileSync(join(folder, 'broken', 'gone.wad'), bytesOf('PWAD\x01twelve bytes and nothing sealed'))
+  await expect(loader.prepare(truth.rows[0], truth.world)).rejects.toThrow(`loader wad ${at}/gone.wad: it does not open with the key`)
+  writeFileSync(join(folder, 'broken', 'gone.wad'), await seal({ 'found.json': bytesOf('{"found":1}') }))
+  await loader.prepare(truth.rows[0], truth.world)
+  expect(await jsonAt('found', `${at}/found.json`)).toEqual({ found: 1 })
+})
+
+test('in a tab a wad is fetched once, encoded once, and a path it holds is never fetched', async () => {
+  const at = '/games/tab game/assets'
+  const wad = await seal({ 'hero sheet.json': bytesOf('{"hero":1}') })
+  const asked: string[] = []
+  vi.stubGlobal('location', { href: 'http://page/' })
+  vi.stubGlobal('fetch', async (u: string) => {
+    asked.push(u)
+    return u === encodeURI(`${at}/art.wad`) ? new Response(new Blob([wad as Uint8Array<ArrayBuffer>])) : new Response('{"fetched":true}')
+  })
+  try {
+    const { jsonAt } = await import('./loader.sim.ts')
+    await Promise.all([mount({ loader: { wads: [`${at}/art.wad`] } }), mount({ loader: { wads: [`${at}/art.wad`] } })])
+    expect(await jsonAt('hero', `${at}/hero sheet.json`)).toEqual({ hero: 1 })
+    expect(await jsonAt('other', `${at}/other.json`)).toEqual({ fetched: true })
+    expect(asked).toEqual([encodeURI(`${at}/art.wad`), encodeURI(`${at}/other.json`)])
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })

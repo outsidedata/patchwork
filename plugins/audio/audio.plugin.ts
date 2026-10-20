@@ -41,9 +41,12 @@
 // Each frame, after every actor has ticked:
 // - The loader is asked for every sound the cues and loops name, on the first frame.
 // - Under render3d, the Web Audio listener takes the camera's pose, set directly.
-// - Each ledger id plays exactly once. The ids on the ledger when this page first sees it are never
-//   played, so a seat that arrives late hears nothing raised before it came; each later id plays
-//   the first frame it is seen. An entry seen while the context is still locked, or before its sound
+// - Each entry plays exactly once: the ledger's, and each `player` row's own (`voiced`, which a sound
+//   raised `from` a player row rides on: `audio.sim.ts`). The seat's own player row is drawn from the
+//   copy that runs ahead, so its sounds play the frame after the key; another seat's come with its
+//   row in the packets. The entries a list holds the first frame this page sees it are never played,
+//   so a seat that arrives late hears nothing raised before it came; each later entry plays the first
+//   frame it is seen. An entry seen while the context is still locked, or before its sound
 //   has landed, is let go without playing: played later, it would sound where nothing is happening.
 // - The sound is picked from `sounds` by a hash of the id, and `rate` the same way, so every seat
 //   hears the same pick.
@@ -67,6 +70,23 @@
 //
 // `audition(plugins, what)` is the editor's: a catalogue sound by name, or a cue, played once and
 // unplaced, the cue's sound and rate picked as an entry's are, by a hash of a count of auditions.
+//
+// `hold(plugins, buffer, { rate, gain, at?, range? })` is a sound another plugin keeps going for as
+// long as something it draws is there, as box3dvehicle keeps each car's engine, through audio's mod for
+// it (`audio.box3dvehicle.ts`): `buffer` repeated whole from now, at playback rate `rate` and gain
+// `gain`, through the volume. With `at` it is placed there for the listener the scene has, as a placed
+// cue is, `range` standing in for the listener's `max` as a cue's does; with no listener, or no `at`,
+// it plays unplaced. It hands back the held sound: `set(rate, gain)` sends both toward new values,
+// ramped with `setTargetAtTime` over a time constant of one `engine.dt`, as a loop's gain is; `put(at)`
+// places it again; `stop()` fades it out over the same time constant and stops it five of them later,
+// so it ends with no click. Where there is no context it hands back undefined.
+//
+// `once(plugins, buffer, { rate, gain, at?, range? })` is a sound another plugin plays once, now, as
+// legs3d plays each foot of a mech landing through audio's mod for it: `buffer` played whole a single
+// time at playback rate `rate` and gain `gain`, through the volume, placed at `at` as `hold` places a
+// held sound, and left where it was put. It is let go while the context is locked, as an entry is, so
+// a page that unlocks late never hears every sound it was handed at once; where there is no context it
+// does nothing.
 //
 // `stream({ rate, lead, most })` is sound a page makes as it goes rather than a file's: a machine's
 // sound chip, say, whose samples come a frame's worth at a time. Each block `push` hands it, `rate`
@@ -93,6 +113,9 @@ export type Loop =
   | { sound: string; field: Field; over: Range; gain: Range; loop?: Range }
   | { sound: string; listener: 'height'; over: Range; gain: Range; loop?: Range }
   | { named: Field; fade: number; loop?: Record<string, Range> }
+// How a held sound starts (`hold`), and the sound itself.
+export type Holding = { rate: number; gain: number; at?: number[]; range?: number }
+export type Held = { set(rate: number, gain: number): void; put(at: number[]): void; stop(): void }
 export type Table = {
   hold: number
   space?: Space
@@ -137,7 +160,11 @@ export function audio() {
   const voices = new Set<Voice>() // every sound placed or from a row, while it plays
   const last = new Map<number, Voice>() // per row, the last sound from it still playing
   const loops = new Map<string, Playing>()
-  let seen: number | undefined // every id below it has been played or let go
+  // Every entry this page has played or let go, by the row it rides and its id, as the last frame saw
+  // them; and every ledger and player row the last frame saw, so a row seen for the first time plays
+  // none of what it already holds.
+  let heard = new Set<string>()
+  let lists = new Set<string>()
   let asked = false
   let height = 0
 
@@ -327,6 +354,36 @@ export function audio() {
     play(buffer, gainInto(cue.gain), false, rate).start()
   }
 
+  function hold(p: Plugins, buffer: AudioBuffer, { rate, gain, at, range }: Holding): Held | undefined {
+    if (!context) return undefined
+    const space = at ? spatial(p, p.wire.scene.world!.audio as Table, { sounds: [], gain: 1, range }) : undefined
+    if (space) space.put(p, at!)
+    const level = gainInto(gain, space?.into)
+    const source = play(buffer, level, true, rate)
+    source.start()
+    const dt = () => p.wire.scene.prefabs.engine.dt as number
+    return {
+      set(r, g) {
+        const now = context.currentTime
+        source.playbackRate.setTargetAtTime(r, now, dt())
+        level.gain.setTargetAtTime(g, now, dt())
+      },
+      put(where) { space?.put(p, where) },
+      stop() {
+        const now = context.currentTime
+        level.gain.setTargetAtTime(0, now, dt())
+        source.stop(now + 5 * dt())
+      },
+    }
+  }
+
+  function once(p: Plugins, buffer: AudioBuffer, { rate, gain, at, range }: Holding) {
+    if (!context || context.state !== 'running') return
+    const space = at ? spatial(p, p.wire.scene.world!.audio as Table, { sounds: [], gain: 1, range }) : undefined
+    if (space) space.put(p, at!)
+    play(buffer, gainInto(gain, space?.into), false, rate).start()
+  }
+
   function stream({ rate, lead, most }: { rate: number; lead: number; most: number }) {
     const playing = new Set<AudioBufferSourceNode>()
     let next = 0
@@ -353,6 +410,8 @@ export function audio() {
   return {
     context,
     audition,
+    hold,
+    once,
     stream,
     afterTick(p: Plugins) {
       if (!context) return
@@ -366,11 +425,23 @@ export function audio() {
       const v = table.volume
       master!.gain.value = v && p.store ? (p.store.get(v.muted) ? 0 : (p.store.get(v.level) as number)) : 1
       listen(p)
-      const row = p.wire.rows.find(r => r.kind === 'audio')
-      if (row) {
-        if (seen !== undefined) for (const e of row.data.live as Entry[]) if (e.id >= seen) hear(p, table, e)
-        seen = row.data.next
+      // The ledger's entries, and each player row's own (`voiced`): each plays once, the first frame it
+      // is seen, but those a list already held the first frame the page saw that list.
+      const now = new Set<string>(), present = new Set<string>()
+      for (const row of p.wire.rows) {
+        if (row.kind !== 'audio' && row.kind !== 'player') continue
+        const where = `${row.id}`
+        present.add(where)
+        const list = row.kind === 'audio' ? row.data.live : row.data.voiced
+        if (!Array.isArray(list)) continue
+        for (const e of list as Entry[]) {
+          const key = `${where}/${e.id}`
+          now.add(key)
+          if (!heard.has(key) && lists.has(where)) hear(p, table, e)
+        }
       }
+      heard = now
+      lists = present
       for (const voice of voices) {
         const pos = voice.from === undefined ? undefined : p.wire.rows.find(r => r.id === voice.from)?.data.pos
         if (pos) voice.where = pos

@@ -37,15 +37,22 @@
 // surface is seen at a slant, which three caps at what the GPU allows. Each is set as the texture is
 // decoded, so whatever draws it never sets it on a texture another drawing shares.
 //
+// A picture a wad holds (`world.loader.wads`, `loader.sim.ts`) is never fetched: this half starts the
+// wads opening on its first tick, and every picture waits for them. One a wad holds is decoded from its
+// bytes, never from its url: in a tab, by the browser into an ImageBitmap, a PixiJS texture of it or a
+// three texture of it (turned over as it is decoded, so three draws it upright, sRGB, sampled as its
+// entry says) or an `<img>` of it; in node, as a fetched one would be under render3d, and for PixiJS a
+// PNG read pixel for pixel, its real size, and nothing else.
+//
 // A scene naming neither of them still gets its images: a game drawn in the DOM has no renderer to
 // ask, so this fetches the file itself and hands back an HTMLImageElement, which is what an `<img>`
 // or a CSS background wants.
 //
 // An entry of type `json`, `palette`, `pixels` or `binary` belongs to no renderer. Its value is this
-// client's own decode of the bytes the sim half fetched (`loader.sim.ts`), which the page's rules read
-// too, so the file is downloaded once per page and decoded once per client: a json file's parse, a
-// palette's colours as 0xRRGGBB, a picture's pixels and text, and a binary file's `{ bytes }`. An
-// actor must not write into it.
+// client's own decode of the bytes the sim half fetched and decoded for the rules and every actor's
+// `def` (`loader.sim.ts`), so the file is downloaded once per page and decoded once per client: a
+// json file's parse, a palette's colours as 0xRRGGBB, a picture's pixels and text, and a binary
+// file's `{ bytes }`. An actor must not write into it.
 //
 // An entry of type `sheet` (`loader.sim.ts` says what its files hold) is this client's own read of
 // the sheet, with every page decoded as a texture entry would be, for the renderer or for the ui,
@@ -92,12 +99,22 @@
 // with neither to draw it fails it.
 //
 // An entry of type `model` is one self-contained `.glb` (in any case), decoded once with render3d's
-// glTF loader; a `.gltf`, which names files beside it, is refused. `model(name)` is `{ scene,
+// glTF loader, with three's meshopt decoder, so a glb packed by gltfpack (`EXT_meshopt_compression`)
+// decodes as any other; a `.gltf`, which names files beside it, is refused. `model(name)` is `{ scene,
 // animations }`, the scene cloned with its skeleton each call, so every row that draws it has a
 // skeleton of its own.
 //
 // An entry of type `sound` is decoded with `plugins.audio.context.decodeAudioData`, so this half
 // never touches Web Audio itself. `sound(name)` is the AudioBuffer.
+//
+// `beside(name, path)` is the bytes of a file no entry names that entry `name`'s file names, such as
+// a music project's samples: `path` read from the folder of the entry's `url`, as a sheet's pages
+// and a font's pages are, an `ArrayBuffer`, fetched in a tab and read from disk in node. A file that
+// is not there, or cannot be fetched, is `undefined`, and nothing is written to the console: a
+// missing file beside an entry is just missing. A name the catalogue has no entry for throws, as
+// does any ask before the first tick. The bytes of a file that landed are kept by its url, so asking
+// again does not fetch again, until `written` for that url; a missing file is not remembered, and
+// every ask for it looks again, so a file put there while the game runs is found.
 //
 // `load(name)` is a promise of the thing, and it never throws. A name that cannot be started — no
 // such entry, a type this does not know, a `.gltf`, a scene with nothing to decode it — or a file
@@ -110,7 +127,8 @@
 // an asset has landed — the sim would branch on it and two machines would disagree. An actor asks
 // this plugin, or hands it a callback and draws something else until then.
 import type { Plugins } from '#engine/browser.ts'
-import { beside, fetched, frameOf, fresh, inPage, pick, refill, writes as rewrites, type Entry, type Frame, type Sheet, type Tiled } from './loader.sim.ts'
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
+import { beside, decodePng, fetched, frameOf, fresh, inPage, isPng, mount, pick, refill, sealed, writes as rewrites, type Entry, type Frame, type Sheet, type Tiled } from './loader.sim.ts'
 
 export type { Sheet, Tiled }
 
@@ -209,6 +227,7 @@ export function loader() {
   const versions = new Map<string, { n: number }>() // how many times each map has been written, by name
   const writes = new Map<string, number>() // how many times each name has been written, so only the last swaps in
   const heard = new Map<string, (() => void)[]>() // what each name's `onWritten` runs
+  const besides = new Map<string, Promise<ArrayBuffer | undefined>>() // each file beside an entry landed or on its way, by url
   let plugins: Plugins | undefined
   let preloaded = false
   let ticked!: () => void
@@ -232,6 +251,13 @@ export function loader() {
     waiting.delete(name)
   }
 
+  // The DOM's image of `blob`.
+  const element = (blob: Blob) => {
+    const img = new Image()
+    img.src = URL.createObjectURL(blob)
+    return img.decode().then(() => img)
+  }
+
   // The DOM's image at `url`.
   const image = (url: string) => {
     const at = current(url)
@@ -239,11 +265,7 @@ export function loader() {
     if (had) return had
     const img = fetch(encodeURI(at))
       .then(res => { if (!res.ok) throw new Error(`loader could not fetch ${url}: ${res.status}`); return res.blob() })
-      .then(blob => {
-        const img = new Image()
-        img.src = URL.createObjectURL(blob)
-        return img.decode().then(() => img)
-      })
+      .then(element)
     images.set(at, img)
     img.catch(() => images.delete(at))
     return img
@@ -253,8 +275,37 @@ export function loader() {
   // once it has been.
   const current = (url: string) => (rewrites(url) ? `${url}?written=${rewrites(url)}` : url)
 
-  // The image at `url`, decoded for the ui, else for the scene's renderer, else for the DOM.
-  const decode = (p: Plugins, url: string, ui: boolean): Promise<any> => {
+  // The image at `url`, decoded for the ui, else for the scene's renderer, else for the DOM: from a
+  // wad's bytes when one holds it, else fetched.
+  const decode = (p: Plugins, url: string, ui: boolean): Promise<any> =>
+    sealed(url).then(bytes => (bytes ? unwrapped(p, url, bytes, ui) : stored(p, url, ui)))
+
+  // The image of the bytes a wad holds at `url`, decoded as `decode` decodes a fetched one. A tab
+  // decodes any picture its browser does, into an ImageBitmap; node decodes none, so under render3d it
+  // is the 1×1 white data texture a fetched one is, and for PixiJS a PNG is read pixel for pixel
+  // (`decodePng`) and anything else refused.
+  const unwrapped = async (p: Plugins, url: string, bytes: ArrayBuffer, ui: boolean): Promise<any> => {
+    if (!ui && p.render3d) {
+      const { THREE } = p.render3d
+      if (!inPage()) return stored(p, url, ui)
+      const bitmap = await createImageBitmap(new Blob([bytes]), { imageOrientation: 'flipY', premultiplyAlpha: 'none', colorSpaceConversion: 'none' })
+      const tex = new THREE.Texture(bitmap)
+      tex.flipY = false
+      tex.colorSpace = THREE.SRGBColorSpace
+      tex.needsUpdate = true
+      return tex
+    }
+    const PIXI = ui ? p.ui.PIXI : p.render2d?.PIXI
+    if (!PIXI) return element(new Blob([bytes]))
+    if (inPage()) return new PIXI.Texture({ source: new PIXI.ImageSource({ resource: await createImageBitmap(new Blob([bytes])) }) })
+    const b = new Uint8Array(bytes)
+    if (!isPng(b)) throw new Error(`node decodes no picture but a PNG out of a wad, and ${url} is not one`)
+    const { width, height, data } = decodePng(b)
+    return new PIXI.Texture({ source: new PIXI.BufferImageSource({ resource: new Uint8Array(data.buffer, data.byteOffset, data.byteLength), width, height }) })
+  }
+
+  // The image at `url`, fetched, decoded for the ui, else for the scene's renderer, else for the DOM.
+  const stored = (p: Plugins, url: string, ui: boolean): Promise<any> => {
     if (ui) return p.ui.PIXI.Assets.load(encodeURI(current(url)))
     if (p.render3d) {
       const { THREE } = p.render3d
@@ -417,7 +468,7 @@ export function loader() {
       const { GLTFLoader } = p.render3d
       return fetched(it.url).then(bytes => {
         const giveBack = inPage() ? () => {} : lend()
-        return new Promise((ok, no) => new GLTFLoader().parse(bytes, '', ok, no)).finally(giveBack)
+        return new Promise((ok, no) => new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parse(bytes, '', ok, no)).finally(giveBack)
       })
     }
     return fetched(it.url).then(bytes => p.audio.context.decodeAudioData(bytes))
@@ -505,6 +556,7 @@ export function loader() {
       if (!assets) throw new Error('the scene\'s world has no loader catalogue')
       if (!preloaded) {
         preloaded = true
+        mount(p.wire.scene.world ?? {}).catch(e => console.error(e))
         for (const [name, it] of Object.entries(catalogue())) if (it.preload) wanted.add(name)
         ticked()
       }
@@ -534,12 +586,25 @@ export function loader() {
     },
     sound(name: string): AudioBuffer { return landed(name, 'sound') },
     file,
+    // The bytes of the file at `path` beside entry `name`'s file, or undefined when it is not there.
+    beside(name: string, path: string): Promise<ArrayBuffer | undefined> {
+      const url = beside(entry(name).url, path)
+      const had = besides.get(url)
+      if (had) return had
+      const coming = fetched(url).then(bytes => bytes, () => {
+        besides.delete(url)
+        return undefined
+      })
+      besides.set(url, coming)
+      return coming
+    },
     // Runs `f` each time a file `name` read is written, once this client's copy of it holds the new
     // text.
     onWritten(name: string, f: () => void) {
       heard.set(name, [...(heard.get(name) ?? []), f])
     },
     async written(url: string) {
+      besides.delete(url)
       if (!plugins) return
       const p = plugins
       const at = Object.entries(catalogue()).filter(([name, it]) => it.url === url || urlsOf.get(name)?.includes(url) || picturesOf.get(name)?.includes(url))

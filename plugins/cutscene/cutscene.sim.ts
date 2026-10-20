@@ -56,6 +56,9 @@
 //   shake    over, amp                   position jitter decaying to nothing
 //   sound    cue, where? | who?          a ledger entry at `where`, or from the member
 //   music    name | ""                   the row's `music`, null for ""
+//   prepare  where                       the land made ready at `where`, ahead of a cut there: the
+//                                        row's `prepare` is set to its ground point [x, z], which the
+//                                        browser half hands the land (`cutscene.plugin.ts`)
 // It refuses a first shot, in `at` order, with an `over`, since before it the camera is not the
 // cutscene's; a `frame` on a shot that follows nobody; a following shot whose `pos` is not an offset;
 // a sound with both `where` and `who`; and a cast member named `line`, which a wait would name.
@@ -68,7 +71,8 @@
 // The row. `t` is the cue clock and `e` the elapsed time; `fired`, how many cues in `at` order have
 // fired; `wait { cue, since }`; `line { who, text, until }`; `shot { from, to, at, over }`, `fade`
 // and `bars { from, to, at, over }`, `shake { at, over, amp }`; `music`; `walks { who: { cue, since
-// } }` and `faces { who: cue }`; `cast { name: id }`; `running`, `skip` and `done`. `cue` in `wait`,
+// } }` and `faces { who: cue }`; `cast { name: id }`; `prepare`, the last prepare's [x, z] or null;
+// `running`, `skip` and `done`. `cue` in `wait`,
 // `walks` and `faces` is the cue's place in the file as written, and its target is read from there
 // again every step, so a walk or a face toward a cast member follows it. `at` in the ramps and
 // `since` are values of `e`. `shot.to` is the cue's view with `fov` (the cue's or the file's) and
@@ -113,7 +117,12 @@
 // Start and end. The act `start`, which is closed so only the game's rule calls it, or `auto`, starts
 // the scene; so does the row's `starts`, true, on the first step every cast member's row is there,
 // which the editor sets through its recorder to play a scene whatever the game's rule does: the cast matched, `direct` `{}` on each member, the clocks at 0. It does nothing while
-// the scene runs or once it is done, so a scene plays once. The act `skip` is open, so any seat skips
+// the scene runs or once it is done, so a scene plays once. The act `reset`, closed too, puts the row
+// back as it stood before it ever started, wherever it is: a scene that runs stops where it is, its
+// cast's `direct` null, and every clock, ramp, shot, line, walk, face and wait cleared, `running`,
+// `skip` and `done` false, so the next `start` plays it again from its first cue, matching its cast
+// again, a cast whose rows have changed since among them. A game that plays one scene before every
+// round or every match resets it and starts it in one step. The act `skip` is open, so any seat skips
 // the scene for every seat; it sets `skip` while the scene runs and is not kept before it starts. On
 // the next step the row plays the scene through to its end inside its `before`: its own step, then
 // `advance(dt)` on every cast member, and that engine step's own passes are then the cast's last step.
@@ -149,6 +158,7 @@
 // It imports no other plugin but the loader's `json`, which the cue file is read through.
 import type { Arg, Kind, Row, W } from '#engine/engine.ts'
 import { json } from '#plugins/loader/loader.sim.ts'
+import * as math from '#plugins/math/math.sim.ts'
 import { mod } from '#addons/scenemanager/scenemanager.addon.ts'
 
 type Target = string | number[]
@@ -209,6 +219,7 @@ export const CUES: Record<string, Record<string, string>> = {
   shake: { over: 'positive', amp: 'number' },
   sound: { cue: 'text', where: 'target?', who: 'who?' },
   music: { name: 'text' },
+  prepare: { where: 'target' },
 }
 const FILE: Record<string, string> = {
   end: 'number', reach: 'number', stop: 'number', head: 'finite', fov: 'angle', pace: 'positive', limit: 'positive',
@@ -308,12 +319,12 @@ function ground(t: Target, cast: Record<string, number>, rows: Row[]): number[] 
 // its −z toward `to`, its x level.
 function aim(eye: number[], to: number[]): number[] {
   let z = [eye[0] - to[0], eye[1] - to[1], eye[2] - to[2]]
-  if (Math.hypot(...z) === 0) z = [0, 0, 1]
-  if (Math.hypot(z[0], z[2]) === 0) z = [z[0], z[1], z[2] + 1e-4] // straight up or down: nudged off the vertical
-  const zl = Math.hypot(...z)
+  if (math.hypot(...z) === 0) z = [0, 0, 1]
+  if (math.hypot(z[0], z[2]) === 0) z = [z[0], z[1], z[2] + 1e-4] // straight up or down: nudged off the vertical
+  const zl = math.hypot(...z)
   z = z.map(v => v / zl)
   // x = up × z, y = z × x
-  const xl = Math.hypot(z[2], z[0])
+  const xl = math.hypot(z[2], z[0])
   const x = [z[2] / xl, 0, -z[0] / xl]
   const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]]
   const [m11, m12, m13, m21, m22, m23, m31, m32, m33] = [x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2]]
@@ -341,11 +352,11 @@ function slerp(a: number[], b: number[], u: number): number[] {
   cos *= sign
   if (cos > 1 - 1e-9) {
     const q = a.map((v, i) => v + (sign * b[i] - v) * u)
-    const l = Math.hypot(...q)
+    const l = math.hypot(...q)
     return q.map(v => v / l)
   }
-  const th = Math.acos(cos), sin = Math.sin(th)
-  const wa = Math.sin((1 - u) * th) / sin, wb = (sign * Math.sin(u * th)) / sin
+  const th = math.acos(cos), sin = math.sin(th)
+  const wa = math.sin((1 - u) * th) / sin, wb = (sign * math.sin(u * th)) / sin
   return a.map((v, i) => wa * v + wb * b[i])
 }
 
@@ -359,7 +370,7 @@ export function view(to: View, cast: Record<string, number>, rows: Row[], height
     const [x, y, z] = to.pos as number[]
     const [fx, fy, fz] = r.data.pos
     if (to.frame === 'body') {
-      const c = Math.cos(r.data.yaw), s = Math.sin(r.data.yaw)
+      const c = math.cos(r.data.yaw), s = math.sin(r.data.yaw)
       pos = [fx + x * c + z * s, fy + y, fz - x * s + z * c]
     } else pos = [fx + x, fy + y, fz + z]
   } else pos = spot(to.pos, cast, rows, height, to.head)
@@ -389,7 +400,7 @@ export function shaken(d: any, tremor: number[][]): number[] {
   const sh = d.shake
   const k = sh ? (d.e - sh.at) / sh.over : 1
   if (k >= 1) return [0, 0, 0]
-  return tremor.map(([weight, rate]) => sh.amp * (1 - k) * weight * Math.sin(rate * d.e))
+  return tremor.map(([weight, rate]) => sh.amp * (1 - k) * weight * math.sin(rate * d.e))
 }
 
 // Where a fade or the bars stand at `e`: straight from `from` to `to` over `over`; 0 before any.
@@ -412,6 +423,7 @@ function fill(d: any) {
   d.bars ??= null
   d.shake ??= null
   d.music ??= null
+  d.prepare ??= null
   d.walks ??= {}
   d.faces ??= {}
   d.cast ??= {}
@@ -460,7 +472,7 @@ function begin(me: Row, w: W) {
     const c = file.cues[stranger.cue]
     throw new Error(`${script}: cue ${stranger.cue} (${c.do} at ${c.at}): no cast member or mark is named ${stranger.name}`)
   }
-  Object.assign(d, { cast, t: 0, e: 0, fired: 0, wait: null, line: null, shot: null, fade: null, bars: null, shake: null, walks: {}, faces: {}, running: true, skip: false })
+  Object.assign(d, { cast, t: 0, e: 0, fired: 0, wait: null, line: null, shot: null, fade: null, bars: null, shake: null, prepare: null, walks: {}, faces: {}, running: true, skip: false })
   for (const id of Object.values(cast)) w.get(id).data.direct = {}
 }
 
@@ -517,6 +529,11 @@ function fire(me: Row, w: W, file: Script, c: Cue, i: number, loud: boolean, row
       return
     }
     case 'music': d.music = c.name === '' ? null : c.name; return
+    case 'prepare': {
+      const at = ground(c.where, d.cast, rows)
+      if (at) d.prepare = at
+      return
+    }
   }
 }
 
@@ -533,7 +550,7 @@ const holds = (d: any, c: Cue) => (c.who === 'line' ? d.line !== null : Object.h
 
 function finish(me: Row, w: W, file: Script, rows: Row[]) {
   const d = me.data
-  Object.assign(d, { running: false, done: true, line: null, wait: null, walks: {}, faces: {} })
+  Object.assign(d, { running: false, done: true, line: null, wait: null, prepare: null, walks: {}, faces: {} })
   for (const name of Object.keys(d.cast)) {
     const r = castRow(d.cast, name, rows)
     if (r) r.data.direct = null
@@ -560,7 +577,7 @@ function own(me: Row, w: W, dt: number, script: { file: Script; order: number[] 
     const c = file.cues[walking.cue]
     const to = ground(c.to, d.cast, rows)
     const stop = typeof c.to === 'string' && Object.hasOwn(d.cast, c.to) ? file.reach : file.stop
-    if (!to || Math.hypot(r.data.pos[0] - to[0], r.data.pos[2] - to[1]) <= stop || d.e - walking.since >= (c.limit ?? file.limit) - TOLERANCE) {
+    if (!to || math.hypot(r.data.pos[0] - to[0], r.data.pos[2] - to[1]) <= stop || d.e - walking.since >= (c.limit ?? file.limit) - TOLERANCE) {
       delete d.walks[who]
       delete r.data.direct.walk
       continue
@@ -646,6 +663,19 @@ export const cutscene = (height: (w: W, x: number, z: number) => number): Kind =
   },
   acts: {
     start(me, w) { begin(me, w) },
+    reset(me, w) {
+      const d = me.data
+      fill(d)
+      const rows = rowsOf(w)
+      for (const name of Object.keys(d.cast)) {
+        const r = castRow(d.cast, name, rows)
+        if (r) r.data.direct = null
+      }
+      Object.assign(d, {
+        t: 0, e: 0, fired: 0, wait: null, line: null, shot: null, fade: null, bars: null, shake: null, music: null,
+        prepare: null, walks: {}, faces: {}, cast: {}, running: false, skip: false, done: false,
+      })
+    },
     skip(me) { if (me.data.running) me.data.skip = true },
   },
   open: ['skip'],

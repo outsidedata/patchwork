@@ -39,7 +39,7 @@ const prefabs = {
   engine: { width: 400, height: 300 },
 }
 const world = {
-  render2d: { ground: [[1, 0], [0, 1]], up: [0, -1], zoom: 1, look: [200, 150], layers: ['floor', 'shadows', 'fallen', { name: 'things', sort: true }] },
+  render2d: { ground: [[1, 0], [0, 1]], up: [0, -1], zoom: 1, look: [200, 150], layers: ['floor', 'shadows', { name: 'things', sort: true }] },
   sprite2d: {
     kinds: {
       foe: { layer: 'things', turn: 2, shadow: { layer: 'shadows', size: [13, 4], alpha: 0.28, fade: 0.004 } },
@@ -203,22 +203,6 @@ test('a shadow with a clip is that clip\'s frame of the thing\'s own sheet on th
   expect(shadow.scale.x).toBe(1)
 })
 
-test('a row drawn on a layer of its own leaves its kind\'s for it, and is drawn at its alpha', () => {
-  const { plugins, land, me } = page()
-  land('fighter')
-  const row = hero()
-  plugins.wire.rows = [row]
-  me.afterTick(plugins)
-  const [sprite] = things(plugins)
-  expect(sprite.alpha).toBe(1)
-  row.data.layer = 'fallen'
-  row.data.alpha = 0.25
-  me.afterTick(plugins)
-  expect(things(plugins)).toHaveLength(0)
-  expect(plugins.render2d.layer('fallen').children).toEqual([sprite])
-  expect(sprite.alpha).toBe(0.25)
-})
-
 test('a kind with no shadow casts none', () => {
   const { plugins, land, me } = page()
   land('lamp')
@@ -358,8 +342,6 @@ test('a row naming another palette is drawn through a filter swapping each colou
   me.afterTick(plugins)
   const [one, two] = things(plugins)
   expect([one.visible, one.filters.length]).toEqual([true, 1])
-  // One filter for the pair, whichever sprite draws it.
-  expect(two.filters[0]).toBe(one.filters[0])
   const { uFrom, uTo, uCount } = one.filters[0].resources.swap.uniforms
   expect([...uFrom.slice(0, 8)]).toEqual([0, 0, 0, 1, 1, 0, 0, 1])
   expect([...uTo.slice(0, 8)]).toEqual([0, 0, 0, 1, 0, 1, 0, 1])

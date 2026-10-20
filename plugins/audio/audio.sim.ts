@@ -24,6 +24,12 @@
 // was raised; a page follows `from` for as long as its rows hold it. With neither, the sound has no
 // place. A cue raised is one entry, so two sounds in one step are two sounds.
 //
+// A sound `from` a `player` row is that row's own: it goes on the row's `voiced` list, not the
+// ledger, and leaves it after `hold` as a ledger entry does. Every seat is sent every player row, so
+// every seat hears it; a page that runs ahead (`addons/predict`) draws every row from its copy, so
+// the jump, the shot, the hurt of the seat's own thing are heard on the frame after the key. A rule
+// of the seat's thing raises its sounds `from` it.
+//
 // The act `play(cue, x, y, z, from)` is `sound` for another plugin's row, through `w.call`. A
 // message's args are numbers, strings, booleans and null, so the point is three numbers, or nulls for
 // none, and `from` a row id or null. No seat may send it: it is not `open`.
@@ -44,10 +50,14 @@ const ledgerOf = (w: W) => {
 export function sound(w: W, cue: string, at?: number[], from?: number) {
   const ledger = ledgerOf(w)
   const entry: Entry = { id: ledger.next++, cue, step: ledger.step }
+  const row = from === undefined ? undefined : w.get(from)
   if (at) entry.at = [...at]
-  else if (from !== undefined) entry.at = [...w.get(from).data.pos]
+  else if (row) entry.at = [...row.data.pos]
   if (from !== undefined) entry.from = from
-  ledger.live.push(entry)
+  // A seat's own row is drawn on its page from the copy that runs ahead, so a sound it raises rides
+  // on it and is heard on the next frame (`voiced`); every other sound is the ledger's.
+  if (row?.kind === 'player') (row.data.voiced ??= []).push(entry)
+  else ledger.live.push(entry)
 }
 
 export const chance = (w: W, id: number, odds: number) => seeded(Math.imul(id, 0x9e3779b1) ^ ledgerOf(w).step)() < odds
@@ -56,7 +66,9 @@ export const audio: Kind = {
   before(me, dt, w) {
     const d = me.data
     d.step++
-    d.live = (d.live as Entry[]).filter(e => (d.step - e.step) * dt < w.world.audio.hold)
+    const kept = (e: Entry) => (d.step - e.step) * dt < w.world.audio.hold
+    d.live = (d.live as Entry[]).filter(kept)
+    for (const p of w.all('player')) if (Array.isArray(p.data.voiced)) p.data.voiced = (p.data.voiced as Entry[]).filter(kept)
   },
   acts: {
     play(_me, w, _seat, cue: string, x: number | null, y: number | null, z: number | null, from: number | null) {

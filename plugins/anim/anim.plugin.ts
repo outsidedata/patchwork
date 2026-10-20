@@ -1,3 +1,6 @@
+// A row is drawn by the entry of the kind its `as` names when it names one, else its own kind's
+// (`animKind`): a seat's `player` row that is an `xbot` names `as: "xbot"`.
+//
 // The browser half of anim: one model per row of a kind `world.anim.kinds` lists, drawn from the
 // row's fields as they stand. The server half (`anim.sim.ts`) says what the fields and the rig file
 // hold; this half draws them and moves nothing.
@@ -110,7 +113,7 @@
 import type * as THREE from 'three'
 import type { Plugins } from '#engine/browser.ts'
 import type { Row } from '#engine/engine.ts'
-import { at, carries, clipOf, momentOf, numbersOf, readsOf, rigOf, stanceOf, type Numbers, type Prop, type Reads, type Rig } from './anim.sim.ts'
+import { animKind, at, carries, clipOf, momentOf, numbersOf, readsOf, rigOf, stanceOf, type Numbers, type Prop, type Reads, type Rig } from './anim.sim.ts'
 
 type Three = typeof import('three')
 type Kind = Numbers['kinds'][string]
@@ -296,7 +299,7 @@ export function anim() {
 
   function make(r: Row, plugins: Plugins, rig: Rig, text: string, reads: Reads): Body | undefined {
     const T = three!
-    const k = numbers!.kinds[r.kind]
+    const k = numbers!.kinds[animKind(r)]
     if (!ready(plugins, k.model)) return undefined
     const { scene: root, animations } = plugins.loader.model(k.model) as { scene: THREE.Object3D; animations: THREE.AnimationClip[] }
     const key = `${k.model}\n${k.rig}`
@@ -430,6 +433,7 @@ export function anim() {
   // The parts the row's fields draw.
   function parts(d: any, rig: Rig): Part[] {
     const clip = d.clip ?? momentOf(rig, stanceOf(rig, d), 'still')
+    if (clip === undefined) return []
     const blend = d.from != null ? d.blend : 1
     const out: Part[] = [{ slot: 'to', clip, t: d.clip != null ? d.clipT : 0, w: blend }]
     if (d.from != null && blend < 1) out.push({ slot: 'from', clip: d.from, t: d.fromT, w: 1 - blend })
@@ -447,14 +451,14 @@ export function anim() {
   const place = (b: Body, d: any, reads: Reads) => {
     const p = d[reads.pos] ?? [0, 0, 0]
     b.root.position.set(p[0], p[1], p[2])
-    b.root.rotation.set(0, d[reads.yaw] ?? 0, 0)
+    b.root.quaternion.setFromAxisAngle(new three!.Vector3(0, 1, 0), d[reads.yaw] ?? 0)
   }
 
   // Each bone `aim` lists turned by its share of the row's pitch about the body's right, each kept
   // first as the mixer left it.
   function aim(b: Body, d: any, k: Kind, reads: Reads) {
     if (!k.aim) return
-    if (reads.aim === undefined) throw new Error(`anim kinds.${b.row.kind} has an aim, and its reads name no aim`)
+    if (reads.aim === undefined) throw new Error(`anim kinds.${animKind(b.row)} has an aim, and its reads name no aim`)
     let pitch = d
     for (const f of reads.aim.split('.')) pitch = pitch?.[f]
     if (typeof pitch !== 'number') return
@@ -489,17 +493,18 @@ export function anim() {
       rigs = new Map()
       const seen = new Set<number>()
       for (const r of plugins.wire.rows) {
-        if (!numbers.kinds[r.kind]) continue
+        const kind = animKind(r)
+        if (!numbers.kinds[kind]) continue
         seen.add(r.id)
-        const k = numbers.kinds[r.kind]
+        const k = numbers.kinds[kind]
         const key = `${k.model}\n${k.rig}`
-        let got = rigs.get(r.kind)
+        let got = rigs.get(kind)
         if (!got) {
-          const rig = rigOf(plugins.wire, r.kind)
+          const rig = rigOf(plugins.wire, kind)
           let text = texts.get(rig.clips)
           if (text === undefined) texts.set(rig.clips, (text = JSON.stringify([rig.clips, rig.mask ?? null, rig.meshes ?? null, rig.table])))
-          got = { rig, text, reads: readsOf(plugins.wire, r.kind), props: JSON.stringify(k.props ?? []) }
-          rigs.set(r.kind, got)
+          got = { rig, text, reads: readsOf(plugins.wire, kind), props: JSON.stringify(k.props ?? []) }
+          rigs.set(kind, got)
           if (kits.get(key)?.text !== got.text) kits.delete(key)
         }
         const { rig, text, reads, props: hung } = got
@@ -547,7 +552,7 @@ export function anim() {
     pose(id: number, clip: string, t: number): THREE.Object3D {
       const b = bodies.get(id)
       if (!b) throw new Error(`anim has no model for row ${id}`)
-      const { rig, reads } = rigs.get(b.row.kind)!
+      const { rig, reads } = rigs.get(animKind(b.row))!
       rebuild(b)
       place(b, b.row.data, reads)
       b.root.updateMatrixWorld(true)

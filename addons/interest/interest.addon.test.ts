@@ -76,8 +76,9 @@ test('each seat is sent its own surroundings, the always kinds and the rows with
   const { truth, packets } = start()
   truth.step(DT)
   const [a, b] = packets()
-  expect(a.rows).toEqual(['a1', 'a2', 'banner', 'hero0', 'player0', 'sky', 'start0', 'start1'])
-  expect(b.rows).toEqual(['b1', 'banner', 'hero1', 'player1', 'sky', 'start0', 'start1'])
+  // A player row has no pos, so every seat is sent both.
+  expect(a.rows).toEqual(['a1', 'a2', 'banner', 'hero0', 'player0', 'player1', 'sky', 'start0', 'start1'])
+  expect(b.rows).toEqual(['b1', 'banner', 'hero1', 'player0', 'player1', 'sky', 'start0', 'start1'])
   // The truth's own rows are all there: only the packets leave rows out.
   expect(truth.rows.map(label).sort()).toEqual(['a1', 'a2', 'b1', 'banner', 'hero0', 'hero1', 'player0', 'player1', 'sky', 'start0', 'start1'])
 })
@@ -97,7 +98,7 @@ test('walking together makes the other hero and its crates born, and walking apa
   const [a, b] = packets()
   expect([a.born, a.ended]).toEqual([['hero1'], []])
   expect([b.born, b.ended]).toEqual([['hero0'], []])
-  expect(a.rows).toEqual(['a1', 'a2', 'banner', 'hero0', 'hero1', 'player0', 'sky', 'start0', 'start1'])
+  expect(a.rows).toEqual(['a1', 'a2', 'banner', 'hero0', 'hero1', 'player0', 'player1', 'sky', 'start0', 'start1'])
   // Back to its own start.
   walk(1, 95, 0)
   const [c, d] = packets()
@@ -108,11 +109,11 @@ test('walking together makes the other hero and its crates born, and walking apa
 test('a seat whose centre row does not exist is sent only the always kinds and the rows with no pos', () => {
   const { truth, packets } = start()
   // Before the first step no `player` row has spawned its hero, so `hero` names no row.
-  expect(packets().map(p => p.rows)).toEqual([['banner', 'player0', 'sky', 'start0', 'start1'], ['banner', 'player1', 'sky', 'start0', 'start1']])
+  expect(packets().map(p => p.rows)).toEqual([['banner', 'player0', 'player1', 'sky', 'start0', 'start1'], ['banner', 'player0', 'player1', 'sky', 'start0', 'start1']])
   // A seat that possesses nothing has no centre either.
   const bare = truth.open()
   truth.step(DT)
-  expect(truth.packet(bare).rows.map(label).sort()).toEqual(['banner', 'sky', 'start0', 'start1'])
+  expect(truth.packet(bare).rows.map(label).sort()).toEqual(['banner', 'player0', 'player1', 'sky', 'start0', 'start1'])
 })
 
 test('without at the centre is the possessed row itself, and one with no pos centres nothing', () => {
@@ -120,9 +121,9 @@ test('without at the centre is the possessed row itself, and one with no pos cen
   delete (file.interest as any).at
   const { truth, player, packets } = start(file)
   truth.step(DT)
-  expect(packets().map(p => p.rows)).toEqual([['banner', 'player0', 'sky', 'start0', 'start1'], ['banner', 'player1', 'sky', 'start0', 'start1']])
+  expect(packets().map(p => p.rows)).toEqual([['banner', 'player0', 'player1', 'sky', 'start0', 'start1'], ['banner', 'player0', 'player1', 'sky', 'start0', 'start1']])
   player(0)!.data.pos = [100, 0]
-  expect(packets()[0].rows).toEqual(['b1', 'banner', 'hero1', 'player0', 'sky', 'start0', 'start1'])
+  expect(packets()[0].rows).toEqual(['b1', 'banner', 'hero1', 'player0', 'player1', 'sky', 'start0', 'start1'])
 })
 
 test('the centre is looked up once per seat per step, and its pos is read where it is at each packet', () => {

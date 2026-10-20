@@ -57,6 +57,7 @@
 // bullet's place a time after its entry's age, for a playtester that looks ahead.
 import type { Kind, W } from '#engine/engine.ts'
 import { json } from '#plugins/loader/loader.sim.ts'
+import * as math from '#plugins/math/math.sim.ts'
 
 export type Emitter = {
   n?: number; spread?: number; ring?: boolean; bursts?: number; every?: number; after?: number; turn?: number
@@ -129,12 +130,12 @@ function flown(shot: Shot, θ: number, s: number): [number, number, number] {
     if (u1 <= u0) return [0, 0]
     if (ω === 0) {
       const d = c0 * (u1 - u0) + (acc * (u1 * u1 - u0 * u0)) / 2 - acc * u0 * (u1 - u0)
-      return [d * Math.cos(θ), d * Math.sin(θ)]
+      return [d * math.cos(θ), d * math.sin(θ)]
     }
     // ∫ (c0 + acc (u - u0)) e^{i(θ + ωu)} du, as the antiderivative F(u1) − F(u0)
     const F = (u: number): [number, number] => {
       const c = c0 + acc * (u - u0), φ = θ + ω * u
-      return [(c * Math.sin(φ)) / ω + (acc * Math.cos(φ)) / (ω * ω), (-c * Math.cos(φ)) / ω + (acc * Math.sin(φ)) / (ω * ω)]
+      return [(c * math.sin(φ)) / ω + (acc * math.cos(φ)) / (ω * ω), (-c * math.cos(φ)) / ω + (acc * math.sin(φ)) / (ω * ω)]
     }
     const [x1, y1] = F(u1), [x0, y0] = F(u0)
     return [x1 - x0, y1 - y0]
@@ -213,7 +214,7 @@ export function strike(w: W, side: string, targets: Target[]): { hits: Hit[]; gr
     if (e.side !== side) continue
     for (const p of points(shots(file, e.pattern), e, ledger.frame)) {
       for (const t of targets) {
-        const d = Math.hypot(p.pos[0] - t.pos[0], p.pos[1] - t.pos[1])
+        const d = math.hypot(p.pos[0] - t.pos[0], p.pos[1] - t.pos[1])
         if (d <= t.r + p.shot.radius) {
           e.gone.push(p.k)
           hits.push({ id: t.id, damage: p.shot.damage, entry: e.id, k: p.k, pos: p.pos })

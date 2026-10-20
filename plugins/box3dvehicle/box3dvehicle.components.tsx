@@ -1,15 +1,25 @@
 // The components of box3dvehicle's extension (box3dvehicle.extension.tsx): the Vehicle panel. Its
 // runtime half sets a car's inputs on the live row through the recorder and shows its suspension as
 // the row reports it; its written half writes the scene file's `world.box3dvehicle` a value at a
-// time, with what each axle's numbers make of the car, in the scene's gravity, beside them.
+// time, with what each axle's numbers make of the car, in the scene's gravity, beside them; and the
+// field a vehicle's `look.model.asset` is drawn as, a choice of the catalogue's models.
 import { useState } from 'react'
 import { useEditor } from '#editor/context.ts'
-import { worldGridEdits, written } from '#editor/editor.ts'
 import { Select, Slider } from '#editor/ui/fields.tsx'
 import { PropertyGrid } from '#editor/ui/grid.tsx'
 import { Badge, Empty, LabelledRow, Meter, Note, PanelBody, Section, Toolbar } from '#editor/ui/layout.tsx'
-import { carsOf, drive, gravityOf, INPUTS, KIND, suspension, WEIGHTLESS, type Input } from './box3dvehicle.extension.tsx'
+import { worldGridEdits, written, type FieldProps } from '#editor/editor.ts'
+import { entriesOf } from '#plugins/loader/loader.extension.tsx'
+import { carsOf, drive, gravityOf, INPUTS, KIND, modelChoices, suspension, unmodelled, WEIGHTLESS, type Input } from './box3dvehicle.extension.tsx'
 import { ride, type Fleet } from './box3dvehicle.sim.ts'
+
+// A vehicle's `look.model.asset`: a `model` entry of the owner's scene's catalogue, else of the scene
+// the panel works on.
+export function ModelName({ value, onChange, owner, label }: FieldProps<string>) {
+  const ed = useEditor(['game', 'selection'])
+  const models = entriesOf(ed, owner.scene ?? ed.focus(KIND)?.scene, 'model')
+  return <Select<string> label={label} value={value} options={modelChoices(value, models)} onChange={onChange} />
+}
 
 export function Vehicle() {
   const ed = useEditor(['game', 'selection'])
@@ -77,7 +87,10 @@ export function Vehicle() {
           onChange={(at, v, done) => {
             if (!done) return ed.session!.previewWorld(scene, [KIND, ...at], v)
             try {
-              void written(ed, worldGridEdits(ed, KIND, worldFile, world, { [at.join('.')]: v })).catch(() => {})
+              const values = { [at.join('.')]: v }, edits = worldGridEdits(ed, KIND, worldFile, world, values)
+              const refused = unmodelled(values, entriesOf(ed, scene, 'model'))
+              if (refused) throw new Error(refused)
+              void written(ed, edits).catch(() => {})
             } catch (e) {
               ed.error(`box3dvehicle: refused: ${(e as Error).message}`)
               // What the drag showed goes, and the scene's `world` is its file's again.

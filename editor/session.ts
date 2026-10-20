@@ -38,7 +38,7 @@
 // authored edit of it refills that kept list in place from the file's new text, so the rebuild boots
 // from what the file now says, and the view makes a new client, as it does for a scene file. So the
 // entry a row was made from is in one file or the other (`actor`).
-import type { Actor, Client } from '#engine/browser.ts'
+import type { Client } from '#engine/browser.ts'
 import type { Row, Scene, Sim, Truth } from '#engine/engine.ts'
 import { actorsOf, manager, scenes, view, type Entry as SceneEntry } from '#addons/scenemanager/scenemanager.addon.ts'
 import { put, recorder, type Edit, type Entry, type Path, type Recorder } from '#addons/recorder/recorder.addon.ts'
@@ -231,6 +231,8 @@ export class Session {
       if (this.closed) return
       const now = performance.now()
       if (this.playing) {
+        // What the view reads once a frame goes up before the steps, which take it.
+        if (!this.stuck) this.page?.input()
         this.owed += Math.min((now - this.last) / 1000, OWED) * this.speed
         while (this.playing && this.owed >= this.rec.dt) {
           this.owed -= this.rec.dt
@@ -239,7 +241,9 @@ export class Session {
         }
       }
       this.last = now
-      await this.frame()
+      // Playing, the view draws between the last two steps, as far past the newest as the clock
+      // owes; paused, it draws the step the game is at.
+      await this.frame(this.playing ? this.owed / this.rec.dt : undefined)
       for (const f of [...this.frames]) {
         try {
           f()
@@ -258,15 +262,16 @@ export class Session {
   // One frame of the game view, as the clock draws each: none while the view is closed, or stuck on
   // a frame that threw. The first frame after a packet of a scene the view has no client for makes
   // that client, so before the clock's next frame, or with no clock, this is what mounts one.
-  async frame() {
+  // `between` is how far past the newest step the clock is, in steps, which the view draws a step
+  // behind (`engine/browser.ts`, Drawing between steps); with none it draws the newest step.
+  async frame(between?: number) {
     const page = this.page
     if (!page || this.stuck) return
     // Paused, the seat is handed the step it is at again, every frame: the client draws what has
-    // landed since, a file or a texture, and a client that predicts runs nothing ahead of a packet
-    // it has just been handed.
+    // landed since, a file or a texture.
     if (!this.playing) this.rec.refresh()
     await this.queued(async () => {
-      if ((await this.draw(page)) === undefined) this.saw()
+      if ((await this.draw(page, between)) === undefined) this.saw()
     })
   }
   // `page`'s frame, answering what it threw, or undefined when it drew. One that throws pauses the
@@ -274,9 +279,9 @@ export class Session {
   // is told as a frame's failure. A page let go while it drew this frame (`rebuild`, `detach`) closed
   // its client inside it, and the engine goes on to that client's plugins, whose renderer is gone:
   // what that throws is of a client no view draws, and the one drawn now is not stuck by it.
-  private async draw(page: ReturnType<typeof view>): Promise<Error | undefined> {
+  private async draw(page: ReturnType<typeof view>, between?: number): Promise<Error | undefined> {
     try {
-      await page.frame()
+      await page.frame(between)
       return undefined
     } catch (e) {
       if (this.page !== page) return undefined
@@ -464,9 +469,8 @@ export class Session {
   }
 
   // Every actor of the client the game view draws with, set up again from the rows it was handed
-  // last: its `remove`, then its `setup`, on the module the client runs for that row, which the
-  // client imported as `<kind>.client.ts?row=<id>` from its home, so the client goes on ticking the
-  // actor set up again. Only a client whose scene catalogues the file at `url`, whose actors are the
+  // last: its `remove`, then its `setup`, on the module the client runs for that row (`actor` in
+  // `engine/browser.ts`), so the client goes on ticking the actor set up again. Only a client whose scene catalogues the file at `url`, whose actors are the
   // only ones that can have read it. What an actor throws is said as a frame's failure is.
   private async redraw(url: string) {
     await this.queued(async () => {
@@ -475,10 +479,7 @@ export class Session {
       const assets = (me.plugins.wire.scene.world?.loader?.assets ?? {}) as Record<string, { url: string }>
       if (!Object.values(assets).some(a => a.url === url)) return
       const rows = me.rows
-      const actors = await Promise.all(rows.map(r =>
-        import(/* @vite-ignore */ new URL(`${r.kind}.client.ts?row=${r.id}`, me.plugins.wire.home).href).then((a: Actor) => a, () => undefined)))
-      // A client let go while its actors were imported is closed, and nothing of it is set up again.
-      if (this.page?.client !== me) return
+      const actors = rows.map(r => me.actor(r.id))
       try {
         rows.forEach((r, i) => {
           actors[i]?.remove(me.plugins)

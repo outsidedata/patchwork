@@ -15,12 +15,9 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { boot, type Row, type Scene, type Sim, type Truth, type W } from '#engine/engine.ts'
-import { manager, scene as childOf } from '#addons/scenemanager/scenemanager.addon.ts'
-import { simulate, type FrameRecord, type StepRecord, type Watched } from '#addons/simulator/simulator.addon.ts'
-import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 import { jsonAt, loader, written } from '#plugins/loader/loader.sim.ts'
+import { dial, serve } from '#addons/socket/socket.addon.ts'
 import {
   b2, bodyOf, box2d, boundsOf, castMover, castRay, castRayClosest, castShape, clipVector, collideMover, contacts, counters,
   jointOf, massOf, outline, overlapAABB, overlapShape, pointVelocity, solvePlanes, stateHash, staticAt,
@@ -82,6 +79,45 @@ const tipped = () => boot(scene([{ is: 'crate', pos: [0, 0.5] }, { is: 'crate', 
 
 // ---------------------------------------------------------------- the world and its rows
 
+// What the server says, as the page hears it across a real socket (`addons/socket`).
+async function across<T>(said: T): Promise<T> {
+  const server = await serve<never, T>(0, send => { send(said); return { take() {}, close() {} } })
+  const heard = await new Promise<T>(r => { const page = dial<never, T>(`ws://localhost:${server.port}`)(d => { page.close(); r(d) }) })
+  await server.close()
+  return heard
+}
+
+// A page that runs a scene ahead joins while a ball knocks a stack over. The server saves its truth
+// and box2d hands out its world beside it (`hold`), the world as Box2D's own image of bytes, and both
+// cross a real socket; the page loads the save into a truth of its own and box2d takes the world
+// (`take`). From then on both step alike to the bit, and the server, which only handed its world out,
+// steps exactly as a server nobody joined. Without the world, from the rows alone, the page parts
+// from the server.
+test('a truth loaded from a save, given what box2d held beside it, steps exactly as the server, a stack falling between', async () => {
+  const joined = async (memory: boolean) => {
+    const alone = tipped()
+    const server = tipped()
+    run(alone, 20)
+    run(server, 20)
+    const box = server.rows.find(r => r.kind === 'box2d')!
+    const sent = await across({ save: server.save(), held: box2d.hold!(box) as { image: Uint8Array } })
+    const page = tipped()
+    page.load(sent.save)
+    if (memory) box2d.take!(page.rows.find(r => r.kind === 'box2d')!, sent.held)
+    let parted = 0
+    for (let i = 0; i < 120; i++) {
+      alone.step(DT)
+      server.step(DT)
+      page.step(DT)
+      expect(bytes(server)).toBe(bytes(alone))
+      if (bytes(page) !== bytes(server)) parted++
+    }
+    return parted
+  }
+  expect(await joined(true)).toBe(0)
+  expect(await joined(false)).toBeGreaterThan(0)
+})
+
 test('what Box2D holds is what the rows carry: the same floats a world driven by hand with the same calls holds', () => {
   const truth = boot(scene([{ is: 'crate', pos: [0.2, 3], rot: [Math.cos(0.4), Math.sin(0.4)], spin: 2 }]), sim)
   run(truth, 90)
@@ -108,7 +144,6 @@ test('what Box2D holds is what the rows carry: the same floats a world driven by
   expect(row.vel).toEqual(b2.b2Body_GetLinearVelocity([0, 0], crate))
   expect(row.spin).toBe(b2.b2Body_GetAngularVelocity(crate))
   expect(row.awake).toBe(b2.b2Body_IsAwake(crate))
-  expect(stateHash(wOf(truth))).not.toBe(0n)
   b2.b2DestroyWorld(hand)
 })
 
@@ -606,50 +641,6 @@ test('ground: a box2d row that lists chunks in a scene with no ground mod throws
   expect(() => run(truth, 1)).toThrow(/no ground mod/)
 })
 
-// ---------------------------------------------------------------- going back
-
-// A correction as a page makes one: the rows of step 30 written back into the same row objects, the
-// change the server had made there, and the steps run again.
-function writeBack(truth: Truth, saved: string) {
-  const was = new Map((JSON.parse(saved) as [number, string, any][]).map(([id, , data]) => [id, data]))
-  for (const r of truth.rows) {
-    for (const k of Object.keys(r.data)) delete r.data[k]
-    Object.assign(r.data, was.get(r.id))
-  }
-}
-
-test('rollback: a world written back to an earlier step is Box2D\'s snapshot of it, and runs on to the state the server has', () => {
-  const make = () => boot(scene([{ is: 'crate', pos: [0, 0.5] }, { is: 'crate', pos: [0, 1.5] }, { is: 'crate', pos: [0, 2.5] }, { is: 'ball', pos: [-4, 0.3] }], { rollback: 64 }), sim)
-  const kick = (t: Truth) => { of(t, 'ball')[0].data.vel = [12, 0] }
-  // The server: 30 steps, the kick, 30 more.
-  const server = make()
-  run(server, 30)
-  kick(server)
-  run(server, 30)
-  // The page: 30 steps, then 30 more without the kick it has not heard of, then the correction.
-  const page = make()
-  run(page, 30)
-  const saved = bytes(page)
-  run(page, 30)
-  expect(bytes(page)).not.toBe(bytes(server))
-  writeBack(page, saved)
-  kick(page)
-  run(page, 30)
-  expect(of(page, 'box2d')[0].data.step).toBe(60)
-  expect(bytes(page)).toBe(bytes(server))
-  expect(stateHash(wOf(page))).toBe(stateHash(wOf(server)))
-})
-
-test('rollback: a step older than the snapshots kept is taken from the rows alone', () => {
-  const truth = boot(scene([{ is: 'crate', pos: [0, 3] }], { rollback: 4 }), sim)
-  run(truth, 10)
-  const saved = bytes(truth)
-  run(truth, 10)
-  writeBack(truth, saved)
-  run(truth, 1)
-  expect(of(truth, 'box2d')[0].data.step).toBe(11)
-})
-
 // ---------------------------------------------------------------- freeing
 
 test('a world is freed when its row is collected: more truths than Box2D holds worlds, one after another, all step', () => {
@@ -674,123 +665,3 @@ console.log('ok')
     rmSync(dir, { recursive: true })
   }
 })
-
-// ---------------------------------------------------------------- a page that predicts
-
-// Two pages on a yard of their own on the simulator (`addons/simulator`), each on its own seat, the
-// network 150 ms each way, predicting whole steps (`plugins/player`, `world.player.steps`) with
-// `world.box2d.rollback` keeping Box2D's snapshots. Each seat's player row spawns the seat's puck;
-// `kick` pushes it. Three crates stand stacked between the pucks. Both displays draw at the scene's
-// rate, their vsyncs half a step after the server's steps, and the server's timer fires on the very
-// millisecond owed, so frame k is drawn between the server's steps k and k + 1, as a page's frame
-// and then a server's step each turn. Seat 0 kicks at frame PRESS, a quarter step before it. Every
-// frame writes down each page's step, its re-runs, its rows and what it cost, and every step the
-// server's rows after it and what it cost.
-const LAG = Math.round(0.150 / DT)
-const PRESS = 60
-const FRAMES = 300
-const yardTop: Scene = {
-  prefabs: { engine: { dt: DT }, scenemanager: { scenes: { yard: { file: 'yard.scene.json', suspend: false } }, dt: DT, entry: 'yard', port: 0 } },
-  actors: [{ is: 'scenemanager' }],
-  plugins: ['scenemanager'],
-  seats: 2,
-}
-const yard = {
-  world: {
-    player: { steps: true },
-    box2d: {
-      gravity: [0, -10], subStepCount: 4, rollback: 64, static: [ground],
-      kinds: { puck: body({ circle: { center: [0, 0], radius: 0.3 } }), crate: body({ box: [0.5, 0.5] }) },
-    },
-  },
-  prefabs: {
-    engine: { dt: DT }, scenemanager: { out: {} }, box2d: {}, player: { seat: 0, puck: 0 },
-    puck: at([0, 0.3]), crate: at([0, 0.5]),
-  },
-  actors: [{ is: 'scenemanager' }, { is: 'box2d' }, { is: 'crate', pos: [0, 0.5] }, { is: 'crate', pos: [0, 1.5] }, { is: 'crate', pos: [0, 2.5] }],
-  plugins: ['scenemanager', 'player', 'box2d'],
-  seats: 2,
-}
-const yardDir = mkdtempSync(join(tmpdir(), 'box2d-yard-'))
-const from = (p: string) => JSON.stringify(new URL(p, import.meta.url).pathname)
-writeFileSync(join(yardDir, 'yard.scene.json'), JSON.stringify(yard))
-writeFileSync(join(yardDir, 'player.sim.ts'), `
-export const player = {
-  before(me, _dt, w) { if (!me.data.puck) me.data.puck = w.spawn('puck', { pos: [me.data.seat === 0 ? -4 : 4, 0.3] }).id },
-  acts: { kick(me, w, _seat, x) { w.get(me.data.puck).data.pushes = [{ impulse: [x, 0] }] } },
-}
-`)
-writeFileSync(join(yardDir, 'puck.sim.ts'), 'export const puck = {}\n')
-writeFileSync(join(yardDir, 'crate.sim.ts'), 'export const crate = {}\n')
-writeFileSync(join(yardDir, 'yard.sim.ts'), `
-import { scenemanager } from ${from('../scenemanager/scenemanager.sim.ts')}
-import { box2d } from ${from('./box2d.sim.ts')}
-import { player } from './player.sim.ts'
-import file from './yard.scene.json' with { type: 'json' }
-export const sim = { scenemanager, box2d, player, puck: {}, crate: {} }
-export const scene = file
-`)
-
-type Seen = { step: number; reruns: number; rows: Map<number, string> }
-const bodiesOf = (rows: Watched) => new Map(Object.entries(rows).map(([id, r]) => [Number(id), JSON.stringify(r)]))
-
-async function predicted() {
-  const P = DT * 1000
-  const page = { display: { hz: 1 / DT, phase: P / 2 }, up: { delay: LAG * P }, down: { delay: LAG * P } }
-  let server!: Truth
-  const records = await simulate({
-    file: yardTop, sim: { scenemanager }, base: pathToFileURL(yardDir + '/').href, seed: 1, ms: (FRAMES + 0.25) * P,
-    server: { grain: 0 }, watch: { kinds: ['puck', 'crate'] }, cost: true,
-    ready(truth) { server = childOf(manager(truth), 'yard') },
-    pages: [{ ...page, presses: [{ at: (PRESS + 0.25) * P, act: ['kick', 20] }] }, page],
-  })
-  const of = (p: number) => records.filter((r): r is FrameRecord => r.type === 'frame' && r.page === p)
-  const [zero, one] = [of(0), of(1)]
-  expect([zero.length, one.length]).toEqual([FRAMES, FRAMES])
-  const frames: Seen[][] = zero.map((f, k) => [f, one[k]].map(f => ({ step: f.step ?? 0, reruns: f.reruns, rows: bodiesOf(f.rows) })))
-  const steps = records.filter((r): r is StepRecord => r.type === 'step')
-  expect(steps.length).toBe(FRAMES)
-  const serverAt = new Map(steps.map(s => [s.scenes.yard, bodiesOf(s.rows!.yard)]))
-  const puckOf = (seat: number) => server.rows.find(r => r.kind === 'player' && r.data.seat === seat)?.data.puck
-  // What each page's frames cost from the frame after the one its client was made on, and what every
-  // step of the server's cost. That frame imports the page's rules, once, which is neither a step nor
-  // a correction: the first page's costs about what all its other frames do together, and grows with
-  // whatever else the machine is doing while it reads the files.
-  const running = (fs: FrameRecord[]) => fs.slice(fs.findIndex(f => f.step !== null) + 1).reduce((a, f) => a + f.cost!, 0)
-  const cost = { page: (running(zero) + running(one)) / 2, server: steps.reduce((a, s) => a + s.cost!, 0) }
-  return { frames, serverAt, pucks: [puckOf(0), puckOf(1)], cost }
-}
-
-test('under 150 ms of lag each way, a page draws its own kick the frame it presses and the server\'s bytes once its world has settled', async () => {
-  const { frames, serverAt, pucks, cost } = await predicted()
-  const vx = (s: Seen, id: number) => { const r = s.rows.get(id); return r ? JSON.parse(r).vel[0] : 0 }
-  // Seat 0's page draws its puck moving the frame after its press; seat 1's no earlier than the
-  // round trip, since it hears of the kick from the server: the kick leaves on frame PRESS, half a
-  // step past the server's step PRESS, is taken on step PRESS + LAG + 1, and that step's packet
-  // reaches seat 1 in time for frame PRESS + 2 * LAG + 1.
-  const moving = (seat: number) => frames.findIndex(f => vx(f[seat], pucks[0]) > 0.01)
-  expect(moving(0)).toBeLessThanOrEqual(PRESS + 1)
-  expect(moving(0)).toBeGreaterThanOrEqual(PRESS)
-  expect(moving(1)).toBeGreaterThanOrEqual(PRESS + 2 * LAG)
-  // A page that arrives builds its world from rows, which carry none of Box2D's memory, so it
-  // corrects on each packet until the stack it arrived to has fallen asleep. From then, while
-  // nobody presses, it corrects never; the kick's puck striking the stack costs each page a few.
-  const reruns = (k: number, seat: number) => frames[k][seat].reruns
-  for (const seat of [0, 1]) {
-    expect(reruns(PRESS, seat), `seat ${seat} while nobody presses`).toBe(reruns(45, seat))
-    expect(reruns(FRAMES - 1, seat) - reruns(PRESS, seat), `seat ${seat} after the kick`).toBeLessThanOrEqual(5)
-    expect(reruns(FRAMES - 1, seat), `seat ${seat} over the last 100 frames`).toBe(reruns(FRAMES - 101, seat))
-  }
-  // Over the last 100 frames each page's bodies at its step are the server's bytes at that step.
-  let compared = 0
-  for (const f of frames.slice(-100)) for (const s of f) {
-    const truth = serverAt.get(s.step)
-    if (!truth) continue
-    for (const [id, bytes] of s.rows) expect(bytes).toBe(truth.get(id))
-    compared++
-  }
-  expect(compared).toBeGreaterThan(150)
-  // A page's frame, one whole step and the round trip again on a correction, costs about what the
-  // server's step of both truths does.
-  expect(cost.page).toBeLessThan(2 * cost.server)
-}, 120_000)

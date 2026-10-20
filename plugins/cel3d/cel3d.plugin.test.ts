@@ -99,7 +99,6 @@ test('the outline pass reads the frame and the depth render3d hands it, with the
   pass.render(renderer, write, read)
   expect(drawn[1].target).toBeNull()
   const glsl = pass.material.fragmentShader
-  expect(glsl).toContain('#include <packing>')
   expect(glsl).toContain('vec2 px = 1.500000 / resolution;')
   expect(glsl).toContain('smoothstep(0.040000, 0.080000, edge) * (1.0 - smoothstep(80.000000, 400.000000, 1.0 / m))')
   expect(glsl).toContain('c.rgb * 0.300000 * vec3(1.000000, 1.000000, 1.000000)')

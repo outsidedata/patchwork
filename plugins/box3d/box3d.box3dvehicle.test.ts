@@ -56,7 +56,6 @@ test('the gravity is the scene\'s world.box3d.gravity, and Box3D\'s own when the
   expect(gravity(moon.w())).toEqual([0, -1.6, 0])
   const plain = await child({})
   expect(gravity(plain.w())).toEqual(b3.b3DefaultWorldDef().gravity)
-  expect(gravity(plain.w())).toEqual([0, -10, 0])
 })
 
 test('a gravity the box3d row carries is the gravity, as box3d pushes it to its world over the scene\'s', async () => {

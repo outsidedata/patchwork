@@ -323,14 +323,14 @@ test('a factor set before the first tick is set after `world.render2d`\'s, and a
 
 // ---------------------------------------------------------------- mosaic
 
-test('a mosaic draws the layers it names in squares of its size over the whole canvas, one filter a size, and 1 draws them as they are', () => {
+test('a mosaic draws the layers it names in squares of its size over the whole canvas, and 1 draws them as they are', () => {
   const me = smw(side)
   me.mosaic(4, ['sky', 'hills'])
   me.look([10.3, 2.2])
   me.afterTick()
   const sky = me.layer('sky'), hills = me.layer('hills'), ground = me.layer('ground')
   expect(sky.filters).toHaveLength(1)
-  expect(hills.filters![0]).toBe(sky.filters![0])
+  expect(hills.filters).toHaveLength(1)
   expect((sky.filters![0] as any).resources.mosaic.uniforms.uSize).toBe(4)
   // PixiJS's frame uniforms at the precision its vertex shader gives them, or the program does not link
   for (const u of ['uInputSize', 'uInputClamp', 'uOutputFrame']) expect((sky.filters![0] as any).glProgram.fragment).toContain(`uniform highp vec4 ${u};`)

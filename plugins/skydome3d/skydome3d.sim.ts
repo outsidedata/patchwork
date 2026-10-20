@@ -34,6 +34,13 @@
 //                 shortens: melt/(0.35 + sunUp).
 //   gusts         [a, b, c]: the gust's three sines, each a whole number of cycles a day.
 //   bolt          { lasts: [lo, hi] seconds, out: [lo, hi] metres }: what a flash is rolled from.
+//   biomes        optional, biome name to `{ scale?, add? }`, each part of a Weather: the weather in
+//                 that biome of the land (terrain3d's biomes) is the scene's with each number n made
+//                 n·scale + add (1 and 0 where either leaves it out), held to [0, 1] for cloud,
+//                 cirrus, rain, snow, fog, gust and dust and to 0 or more for the rest (`local`). A
+//                 biome this leaves out has the scene's weather. The browser half draws the weather
+//                 standing under the camera (`here`); the server's `mix`, wind, drift, lightning, wet
+//                 and pack stay the scene's.
 // Its other keys are the browser half's.
 //
 // A Weather is 13 numbers: `cloud` (the deck's cover), `cirrus`, `base` and `top` (the deck's
@@ -71,6 +78,7 @@
 //   place(lat, doy)      the latitude and the day of the year.
 import type { Kind, W } from '#engine/engine.ts'
 import { json } from '#plugins/loader/loader.sim.ts'
+import * as math from '#plugins/math/math.sim.ts'
 
 export const fields = ['cloud', 'cirrus', 'base', 'top', 'dense', 'rain', 'snow', 'fog', 'haze', 'wind', 'gust', 'thunder', 'dust'] as const
 export type Weather = Record<(typeof fields)[number], number>
@@ -80,10 +88,36 @@ export type Sky = {
   to: string; from: Weather; mix: Weather; blend: number; fade: number
   wet: number; pack: number; windDeg: number; flash: number; strike: [number, number]; drift: [number, number]
 }
+// How one biome's weather differs from the scene's.
+export type Biome = { scale?: Partial<Weather>; add?: Partial<Weather> }
 // The server half's keys of `world.skydome3d`.
 export type Table = {
   day: number; weathers: string; soak: number; dry: number; lay: number; melt: number; gusts: [number, number, number]
   bolt: { lasts: [number, number]; out: [number, number] }
+  biomes?: Record<string, Biome>
+}
+
+const UNIT: readonly string[] = ['cloud', 'cirrus', 'rain', 'snow', 'fog', 'gust', 'dust']
+// The weather in a biome: the scene's `mix`, each number n·scale + add, held to its range.
+export function local(mix: Weather, b: Biome): Weather {
+  const out = {} as Weather
+  for (const f of fields) {
+    const v = mix[f] * (b.scale?.[f] ?? 1) + (b.add?.[f] ?? 0)
+    out[f] = UNIT.includes(f) ? Math.min(1, Math.max(0, v)) : Math.max(0, v)
+  }
+  return out
+}
+// The weather at a place of `shares`, each biome's share by name: Σ share·(that biome's `local`
+// weather, or the scene's for one `biomes` leaves out). With no shares, the scene's.
+export function here(mix: Weather, biomes: Record<string, Biome> | undefined, shares: Record<string, number>): Weather {
+  const entries = Object.entries(shares)
+  if (!entries.length) return mix
+  const out = Object.fromEntries(fields.map(f => [f, 0])) as Weather
+  for (const [name, share] of entries) {
+    const m = biomes && Object.hasOwn(biomes, name) ? local(mix, biomes[name]) : mix
+    for (const f of fields) out[f] += share * m[f]
+  }
+  return out
 }
 // The row with the fixed numbers beside it, what the sun, the moon and the wind are worked out from.
 type Both = Sky & Table
@@ -92,29 +126,29 @@ const TILT = 23.44 * (Math.PI / 180)
 const wrap = (x: number, span: number) => ((x % span) + span) % span
 const smoothstep = (x: number) => x * x * (3 - 2 * x)
 
-export const declination = (doy: number) => TILT * Math.sin((2 * Math.PI * (doy - 80.5)) / 365.25)
+export const declination = (doy: number) => TILT * math.sin((2 * Math.PI * (doy - 80.5)) / 365.25)
 export const hourAngle = (t: number, day: number) => (t / day - 0.5) * 2 * Math.PI
 
 // The unit direction toward a body of declination δ at hour angle H, seen from latitude `lat`.
 const toward = (lat: number, d: number, H: number): [number, number, number] => {
   const p = lat * (Math.PI / 180)
-  const east = -Math.cos(d) * Math.sin(H)
-  const north = Math.cos(p) * Math.sin(d) - Math.sin(p) * Math.cos(d) * Math.cos(H)
-  const up = Math.sin(p) * Math.sin(d) + Math.cos(p) * Math.cos(d) * Math.cos(H)
+  const east = -math.cos(d) * math.sin(H)
+  const north = math.cos(p) * math.sin(d) - math.sin(p) * math.cos(d) * math.cos(H)
+  const up = math.sin(p) * math.sin(d) + math.cos(p) * math.cos(d) * math.cos(H)
   return [east, up, -north]
 }
 
 type Place = Pick<Both, 't' | 'day' | 'doy' | 'lat'>
 export const sun = (s: Place) => toward(s.lat, declination(s.doy), hourAngle(s.t, s.day))
 export const moon = (s: Place & Pick<Both, 'phase'>) => toward(s.lat, declination(s.doy + s.phase * 365.25), hourAngle(s.t, s.day) - 2 * Math.PI * s.phase)
-export const moonLit = (s: Pick<Sky, 'phase'>) => (1 - Math.cos(2 * Math.PI * s.phase)) / 2
+export const moonLit = (s: Pick<Sky, 'phase'>) => (1 - math.cos(2 * Math.PI * s.phase)) / 2
 
-export const gust = (s: Pick<Both, 't' | 'day' | 'gusts'>) => 0.5 + s.gusts.reduce((g, n, k) => g + Math.sin((2 * Math.PI * n * s.t) / s.day + k) / 6, 0)
+export const gust = (s: Pick<Both, 't' | 'day' | 'gusts'>) => 0.5 + s.gusts.reduce((g, n, k) => g + math.sin((2 * Math.PI * n * s.t) / s.day + k) / 6, 0)
 export const windSpeed = (s: Pick<Both, 't' | 'day' | 'gusts' | 'mix'>) => s.mix.wind * (1 - 0.45 * s.mix.gust + 0.9 * s.mix.gust * gust(s))
 // The wind as a vector [x, z] in metres a second, blowing toward windDeg.
 export const wind = (s: Pick<Both, 't' | 'day' | 'gusts' | 'mix' | 'windDeg'>): [number, number] => {
   const v = windSpeed(s), a = s.windDeg * (Math.PI / 180)
-  return [v * Math.sin(a), -v * Math.cos(a)]
+  return [v * math.sin(a), -v * math.cos(a)]
 }
 
 // The weather `name` in the scene's weathers file, whole.
@@ -127,7 +161,7 @@ function weatherOf(w: W, name: string): Weather {
 }
 
 // 1 − exp(−dt/τ) of the way from `from` to `to`.
-const lag = (from: number, to: number, dt: number, tau: number) => from + (to - from) * (1 - Math.exp(-dt / tau))
+const lag = (from: number, to: number, dt: number, tau: number) => from + (to - from) * (1 - math.exp(-dt / tau))
 
 export const skydome3d: Kind = {
   tick(me, dt, w) {
@@ -156,7 +190,7 @@ export const skydome3d: Kind = {
       s.flash = lasts[0] + w.die() * (lasts[1] - lasts[0])
       const bearing = w.die() * 2 * Math.PI
       const far = out[0] + w.die() * (out[1] - out[0])
-      s.strike = [Math.sin(bearing) * far, -Math.cos(bearing) * far]
+      s.strike = [math.sin(bearing) * far, -math.cos(bearing) * far]
     }
   },
   acts: {

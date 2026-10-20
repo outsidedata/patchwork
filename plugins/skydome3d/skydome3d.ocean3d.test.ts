@@ -1,14 +1,13 @@
 // skydome3d's mods for ocean3d, given to ocean3d by two keys of a scene: `world.ocean3d.mods.light`
 // and `.wind` are 'skydome3d'. The test writes a manager and one child, `sky`, a sky over the sea,
-// which `load` boots as a game's would; its `probe` hands the test the child's `w`. The light is
-// skydome3d's `light()` as it is asked; the wind is the sky row's `mix.wind` as its weather fades.
+// which `load` boots as a game's would; its `probe` hands the test the child's `w`. The wind is the
+// sky row's `mix.wind` as its weather fades.
 import { afterAll, expect, test } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { boot, type Row, type Scene, type W } from '#engine/engine.ts'
-import type { Plugins } from '#engine/browser.ts'
 import { load, mod } from '#addons/scenemanager/scenemanager.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 import { written } from '#plugins/loader/loader.sim.ts'
@@ -61,14 +60,6 @@ test('the scene\'s two keys give ocean3d this light and this wind, loaded before
   const child = await loaded()
   expect(mod(child.world, 'ocean3d', 'light')).toBe(light)
   expect(mod(child.world, 'ocean3d', 'wind')).toBe(wind)
-})
-
-test('the light is skydome3d\'s light() as it is asked, and undefined before the sky\'s first frame', () => {
-  let now: object | undefined
-  const plugins = { skydome3d: { light: () => now } } as unknown as Plugins
-  expect(light(plugins)).toBeUndefined()
-  now = { sun: [0, 1, 0] }
-  expect(light(plugins)).toBe(now)
 })
 
 test('the wind is the sky row\'s mix.wind, step by step through a fade to a storm, and undefined with no sky row', async () => {

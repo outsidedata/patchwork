@@ -98,9 +98,12 @@
 //                             itself.
 // `spectrumOf(w)` is the spectrum of the truth's `world.ocean3d`, memoised per truth by `inputs(sea)`,
 // the numbers the spectrum reads, `keyed`: amp, chop, foamRecovery and the shoaling never change it
-// and are not in the key.
+// and are not in the key. The truth is its `world`, which it copies for itself at boot, not the `w`
+// it is read through: the editor's `reading` makes a `w` a call, and a panel that redrew the sea four
+// times a second made the whole spectrum each time.
 // The row's `tick` asks for it, so a bad `patches` throws on the first step.
 import { seeded, type Kind, type W } from '#engine/engine.ts'
+import * as math from '#plugins/math/math.sim.ts'
 import { mod } from '#addons/scenemanager/scenemanager.addon.ts'
 
 export type Sea = {
@@ -178,26 +181,26 @@ const lobes = (sea: Sea): Lobe[] => [
 
 // One lobe's energy at |k| = k, travelling the way θ, of angular frequency ω.
 function lobeEnergy(l: Lobe, k: number, theta: number, w: number): number {
-  const alpha = 0.076 * Math.pow((G * l.F) / (l.U * l.U), -0.22)
-  const wp = 22 * Math.pow((l.U * l.F) / (G * G), -0.33)
+  const alpha = 0.076 * math.pow((G * l.F) / (l.U * l.U), -0.22)
+  const wp = 22 * math.pow((l.U * l.F) / (G * G), -0.33)
   const sigma = w <= wp ? 0.07 : 0.09
   const n = (w - wp) / (sigma * wp * Math.SQRT2)
   const v = w * Math.sqrt(DEPTH / G)
   const tma = v <= 1 ? 0.5 * v * v : v < 2 ? 1 - 0.5 * (2 - v) * (2 - v) : 1
-  const S = l.scale * tma * alpha * G * G * Math.pow(w, -5) * Math.exp(-1.25 * Math.pow(wp / w, 4)) * Math.pow(l.gamma, Math.exp(-n * n))
+  const S = l.scale * tma * alpha * G * G * math.pow(w, -5) * math.exp(-1.25 * math.pow(wp / w, 4)) * math.pow(l.gamma, math.exp(-n * n))
   const r = w / wp
-  const s = (r <= 1 ? 6.97 * Math.pow(r, 5) : 9.77 * Math.pow(r, -2.5)) + 16 * Math.tanh(Math.min(r, 20)) * l.spread * l.spread
+  const s = (r <= 1 ? 6.97 * math.pow(r, 5) : 9.77 * math.pow(r, -2.5)) + 16 * math.tanh(Math.min(r, 20)) * l.spread * l.spread
   const norm = s < 5
-    ? -0.000564 * s ** 4 + 0.00776 * s ** 3 - 0.044 * s ** 2 + 0.192 * s + 0.163
-    : -4.8e-8 * s ** 4 + 1.07e-5 * s ** 3 - 9.53e-4 * s ** 2 + 0.059 * s + 0.393
+    ? -0.000564 * math.pow(s, 4) + 0.00776 * math.pow(s, 3) - 0.044 * math.pow(s, 2) + 0.192 * s + 0.163
+    : -4.8e-8 * math.pow(s, 4) + 1.07e-5 * math.pow(s, 3) - 9.53e-4 * math.pow(s, 2) + 0.059 * s + 0.393
   const d = theta - l.angle
-  const directed = norm * Math.pow(Math.abs(Math.cos(d / 2)), 2 * s)
-  const broad = (2 / Math.PI) * Math.cos(d) ** 2
-  return S * (broad + (directed - broad) * l.dir) * Math.exp(-l.fade * l.fade * k * k)
+  const directed = norm * math.pow(Math.abs(math.cos(d / 2)), 2 * s)
+  const broad = (2 / Math.PI) * math.pow(math.cos(d), 2)
+  return S * (broad + (directed - broad) * l.dir) * math.exp(-l.fade * l.fade * k * k)
 }
 
 // The whole multiple of 2π/repeat nearest the dispersion's ω at |k| = k.
-const multiple = (k: number, repeat: number) => Math.round(Math.sqrt(G * k * Math.tanh(Math.min(DEPTH * k, 20))) / ((2 * Math.PI) / repeat))
+const multiple = (k: number, repeat: number) => Math.round(Math.sqrt(G * k * math.tanh(Math.min(DEPTH * k, 20))) / ((2 * Math.PI) / repeat))
 
 // Cascade c's whole band before packing.
 export function grid(sea: Sea, c: number): Grid {
@@ -212,20 +215,20 @@ export function grid(sea: Sea, c: number): Grid {
     const x = i % RES, y = (i - x) / RES
     if (x === 0 || y === 0) continue
     const kx = (x - HALF) * dK, kz = (y - HALF) * dK
-    const k = Math.hypot(kx, kz)
+    const k = math.hypot(kx, kz)
     if (k < lo || k >= hi) continue
     const mk = multiple(k, sea.repeat)
     if (mk === 0) continue
     const w = mk * step
     const kh = k * DEPTH
-    const slope = (G * (Math.tanh(kh) + kh / Math.cosh(kh) ** 2)) / (2 * w)
-    const theta = Math.atan2(-kx, kz)
+    const slope = (G * (math.tanh(kh) + kh / math.pow(math.cosh(kh), 2))) / (2 * w)
+    const theta = math.atan2(-kx, kz)
     let E = 0
     for (const l of ls) E += lobeEnergy(l, k, theta, w)
     const amplitude = Math.sqrt((2 * E * Math.abs(slope) * dK * dK) / k)
-    const r = Math.sqrt(-2 * Math.log(u1))
-    re[i] = amplitude * r * Math.cos(2 * Math.PI * u2)
-    im[i] = amplitude * r * Math.sin(2 * Math.PI * u2)
+    const r = Math.sqrt(-2 * math.log(u1))
+    re[i] = amplitude * r * math.cos(2 * Math.PI * u2)
+    im[i] = amplitude * r * math.sin(2 * Math.PI * u2)
     m[i] = mk
   }
   return { re, im, m }
@@ -253,10 +256,10 @@ export function spectrum(sea: Sea): Spectrum {
     let total = 0
     const all: { i: number; j: number; energy: number }[] = []
     for (let i = 0; i < RES * RES; i++) {
-      const e = g.re[i] ** 2 + g.im[i] ** 2
+      const e = math.pow(g.re[i], 2) + math.pow(g.im[i], 2)
       total += e
       const j = mirror(i)
-      if (j > i && (e > 0 || g.re[j] !== 0 || g.im[j] !== 0)) all.push({ i, j, energy: e + g.re[j] ** 2 + g.im[j] ** 2 })
+      if (j > i && (e > 0 || g.re[j] !== 0 || g.im[j] !== 0)) all.push({ i, j, energy: e + math.pow(g.re[j], 2) + math.pow(g.im[j], 2) })
     }
     all.sort((p, q) => q.energy - p.energy || p.i - q.i)
     const top = all.slice(0, KEPT)
@@ -267,21 +270,21 @@ export function spectrum(sea: Sea): Spectrum {
       kept: top.map(({ i, j }) => {
         const x = i % RES, y = (i - x) / RES
         const a: [number, number] = [packed[i * 4], packed[i * 4 + 1]], bb: [number, number] = [packed[j * 4], packed[j * 4 + 1]]
-        return { i, j, kx: (x - HALF) * dK, kz: (y - HALF) * dK, m: packed[i * 4 + 2], a, b: bb, energy: a[0] ** 2 + a[1] ** 2 + bb[0] ** 2 + bb[1] ** 2 }
+        return { i, j, kx: (x - HALF) * dK, kz: (y - HALF) * dK, m: packed[i * 4 + 2], a, b: bb, energy: math.pow(a[0], 2) + math.pow(a[1], 2) + math.pow(bb[0], 2) + math.pow(bb[1], 2) }
       }),
     }
   })
   return { key: inputs(sea).join(','), cascades, pairs }
 }
 
-const memo = new WeakMap<W, Spectrum>()
+const memo = new WeakMap<object, Spectrum>()
 export function spectrumOf(w: W): Spectrum {
   const sea = w.world.ocean3d as Sea
   const key = inputs(sea).join(',')
-  const had = memo.get(w)
+  const had = memo.get(w.world)
   if (had?.key === key) return had
   const made = spectrum(sea)
-  memo.set(w, made)
+  memo.set(w.world, made)
   return made
 }
 
@@ -290,9 +293,9 @@ export function spectrumOf(w: W): Spectrum {
 function evolved(s: Spectrum, cycle: number) {
   return s.pairs.kept.map(p => {
     const phi = 2 * Math.PI * fract(p.m * cycle)
-    const c = Math.cos(phi), n = Math.sin(phi)
+    const c = math.cos(phi), n = math.sin(phi)
     const [ar, ai] = p.a, [br, bi] = p.b
-    const k = Math.hypot(p.kx, p.kz)
+    const k = math.hypot(p.kx, p.kz)
     return { kx: p.kx, kz: p.kz, ux: p.kx / k, uz: p.kz / k, hr: ar * c - ai * n + br * c - bi * n, hi: ar * n + ai * c - br * n - bi * c }
   })
 }
@@ -300,7 +303,7 @@ function surface(terms: ReturnType<typeof evolved>, x: number, z: number): [numb
   let y = 0, dx = 0, dz = 0
   for (const q of terms) {
     const th = q.kx * x + q.kz * z
-    const c = Math.cos(th), n = Math.sin(th)
+    const c = math.cos(th), n = math.sin(th)
     const gr = q.hr * c - q.hi * n, gi = q.hr * n + q.hi * c
     y += 2 * gr
     dx -= 2 * q.ux * gi
@@ -329,7 +332,7 @@ export function floatAt(w: W, x: number, z: number, span: number, ground: Ground
   const a = waveAt(w, x - h, z - h, ground), b = waveAt(w, x + h, z - h, ground)
   const c = waveAt(w, x - h, z + h, ground), d = waveAt(w, x + h, z + h, ground)
   const sx = (b + d - a - c) / (2 * span), sz = (c + d - a - b) / (2 * span)
-  const l = Math.hypot(sx, 1, sz)
+  const l = math.hypot(sx, 1, sz)
   return { y: (a + b + c + d) / 4, normal: [-sx / l, 1 / l, -sz / l] }
 }
 

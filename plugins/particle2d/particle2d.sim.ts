@@ -27,6 +27,7 @@
 // still draws it; in the first `before` after the row has gone, the entry's `from` is dropped and its
 // `life` is its age, so every page ends it.
 import type { Kind, W } from '#engine/engine.ts'
+import * as math from '#plugins/math/math.sim.ts'
 
 export type Spawn = {
   life?: number; dir?: number[]; to?: number[]; tint?: number; scale?: number; floor?: number
@@ -39,7 +40,7 @@ export type Entry = Spawn & { id: number; effect: string; at: number[]; age: num
 // The seconds an effect that flies at `fly` takes from `at` to `to`, a point's missing number 0.
 export const flight = (name: string, at: number[], to: number[] | undefined, fly: number) => {
   if (!to) throw new Error(`particle2d effect ${name} flies and was spawned with no to`)
-  return Math.hypot(...[0, 1, 2].map(i => (to[i] ?? 0) - (at[i] ?? 0))) / fly
+  return math.hypot(...[0, 1, 2].map(i => (to[i] ?? 0) - (at[i] ?? 0))) / fly
 }
 
 // Whether the scene has row `id`.

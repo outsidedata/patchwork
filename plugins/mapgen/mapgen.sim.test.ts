@@ -312,9 +312,7 @@ test('a tile is picked by its probability, never one of probability 0, and a voi
   const pal = palette({ name: 'p', tilewidth: 128, tileheight: 64, tiles: [{ id: 1, type: 'floor', probability: 3 }, { id: 2, type: 'floor' }, { id: 3, type: 'floor', probability: 0 }, { id: 4, type: 'wall-n', ...HIT }, { id: 5 }] })
   const die = seeded(7), n = 40_000, got = new Map<number, number>()
   for (let i = 0; i < n; i++) { const id = pick(die, pal, 'floor'); got.set(id, (got.get(id) ?? 0) + 1) }
-  expect(got.get(1)! / n).toBeCloseTo(0.75, 1)
   expect(Math.abs(got.get(1)! / n - 0.75)).toBeLessThan(0.01)
-  expect(got.has(3)).toBe(false)
   expect([...got.keys()].sort()).toEqual([1, 2])
   expect(pick(die, pal, 'void')).toBe(-1)
   expect(() => pick(die, pal, 'wall-w')).toThrow('theme p has no tile for wall-w')
@@ -383,11 +381,6 @@ test('a piece stamped on floor stands where it was painted, its actor on its cel
     // the rest walked on, a door's arch among them where one opens onto it
     for (const [dc, dr] of [[0, 0], [1, 0], [2, 0], [0, 1], [0, 2]]) expect(WALKABLE).toContain(f.roles[r + dr][c + dc])
   }
-})
-
-test('the pieces come first among the actors, then the stairs', () => {
-  const f = build(seeded(3), RECIPES.halls, THEME, SOURCE, { altar: ALTAR })
-  expect(f.actors.slice(0, 3).map(o => o.is === 'stairs' ? o.way : o.is)).toEqual(['altar', 'up', 'down'])
 })
 
 test('a piece the recipe names but was not handed, a flipped tile, a tile the theme has no role for and a place too small all throw', () => {

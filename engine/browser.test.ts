@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join as path } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { boot, type Msg, type Scene, type Sim } from './engine.ts'
-import { client } from './browser.ts'
+import { client, mixing, steps, type Wire } from './browser.ts'
 
 const DT = 1 / 60
 const scene: Scene = {
@@ -47,7 +47,7 @@ test('each actor draws the row of the packet taken in the same frame', async () 
   const truth = boot(scene, sim)
   const me = await client(scene, pathToFileURL(home + '/').href)
   const seat = truth.open()
-  me.plugins.scenemanager.mount({ send: (up: { msg: Msg }) => truth.inbox(seat, up.msg), hear() {}, close() {}, store: {} }, 'fall')
+  me.plugins.scenemanager.mount({ send: (up: { msg: Msg }) => truth.inbox(seat, up.msg), hear() {}, close() {}, store: {} }, 'fall', seat)
   truth.onStep(() => me.plugins.scenemanager.hand(truth.packet(seat)))
   const stage = me.plugins.render3d.scene
   let drawn = 0, off = 0
@@ -68,4 +68,111 @@ test('each actor draws the row of the packet taken in the same frame', async () 
   const [a, b] = me.rows.filter(r => r.kind === 'faller')
   expect(a.data.y).not.toBe(b.data.y)
   me.close()
+})
+
+// Input before the steps: `input` runs each plugin's `input`, handed `plugins`, once the client has
+// taken its first packet and until it closes. A plugin here is given one by hand, which writes down
+// the step of the packet the client last took each time it runs.
+test('input runs every plugin\'s input from the first packet until the client closes', async () => {
+  const truth = boot(scene, sim)
+  const me = await client(scene, pathToFileURL(home + '/').href)
+  const seat = truth.open()
+  me.plugins.scenemanager.mount({ send: (up: { msg: Msg }) => truth.inbox(seat, up.msg), hear() {}, close() {}, store: {} }, 'fall', seat)
+  truth.onStep(() => me.plugins.scenemanager.hand(truth.packet(seat)))
+  const ran: number[] = []
+  me.plugins.render3d.input = (p: { wire: Wire }) => { ran.push(p.wire.n) }
+  await me.frame()
+  me.input()
+  expect(ran).toEqual([])
+  truth.step(DT)
+  await me.frame()
+  me.input()
+  truth.step(DT)
+  await me.frame()
+  me.input()
+  expect(ran).toEqual([me.n - 1, me.n])
+  me.close()
+  me.input()
+  expect(ran).toHaveLength(2)
+})
+
+// Drawing between steps, on things of one number each: `x`, set as an actor sets a thing from its
+// row, and a wire saying the step the client took and how far past it the clock is.
+type Thing = { x: number }
+const wire = (n: number, between?: number) => ({ n, between }) as Wire
+const placed = () => steps<Thing>(t => [t.x], (t, p) => { t.x = p[0] }, mixing())
+
+test('a thing is drawn a step behind the clock, between where its last two steps set it, and put back once drawn', () => {
+  const s = placed()
+  const a = { x: 10 }, still = { x: 5 }
+  s.place([a, still], wire(1, 0.5))
+  s.restore()
+  a.x = 20
+  // Step 2 taken, the clock a quarter of a step past it: a quarter of the way from step 1's 10.
+  s.place([a, still], wire(2, 0.25))
+  expect([a.x, still.x]).toEqual([12.5, 5])
+  s.restore()
+  expect(a.x).toBe(20)
+  // A frame that took no step, the clock three quarters past it.
+  s.place([a, still], wire(2, 0.75))
+  expect(a.x).toBe(17.5)
+  s.restore()
+  // Two steps on one frame, to step 4's 40: a step behind the clock is 3.5, three quarters of the
+  // way from step 2 to step 4.
+  a.x = 40
+  s.place([a, still], wire(4, 0.5))
+  expect(a.x).toBe(35)
+  s.restore()
+  expect(a.x).toBe(40)
+})
+
+test('with no between, a thing new on the newest step, or the steps gone back, a thing is drawn where it is set', () => {
+  const s = placed()
+  const a = { x: 0 }
+  s.place([a], wire(1, 0.5))
+  s.restore()
+  a.x = 10
+  s.place([a], wire(2))
+  expect(a.x).toBe(10)
+  s.restore()
+  const late = { x: 7 }
+  a.x = 20
+  s.place([a, late], wire(3, 0.5))
+  expect([a.x, late.x]).toEqual([15, 7])
+  s.restore()
+  a.x = 0
+  s.place([a, late], wire(1, 0.5))
+  expect(a.x).toBe(0)
+  s.restore()
+})
+
+test('a thing the page moves on a frame of no step is drawn where it is set, until a whole step goes by with only the steps moving it', () => {
+  const s = placed()
+  const page = { x: 0 }
+  s.place([page], wire(1, 0.5))
+  s.restore()
+  page.x = 10
+  s.place([page], wire(2, 0.5))
+  expect(page.x).toBe(5)
+  s.restore()
+  // Moved by the page between steps: drawn where it is set, this step and the next.
+  page.x = 11
+  s.place([page], wire(2, 0.9))
+  expect(page.x).toBe(11)
+  s.restore()
+  page.x = 20
+  s.place([page], wire(3, 0.5))
+  expect(page.x).toBe(20)
+  s.restore()
+  // A whole step with nothing but the steps moving it: between them again.
+  page.x = 30
+  s.place([page], wire(4, 0.5))
+  expect(page.x).toBe(25)
+  s.restore()
+})
+
+test('mixing takes an angle the short way round, and every other number in a straight line', () => {
+  const [x, turn] = mixing([1])([0, 2 * Math.PI - 0.1], [10, 0.1], 0.5)
+  expect(x).toBe(5)
+  expect(turn).toBeCloseTo(2 * Math.PI, 12)
 })

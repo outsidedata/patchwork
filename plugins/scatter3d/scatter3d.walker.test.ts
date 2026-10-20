@@ -1,9 +1,8 @@
 // scatter3d's mod for walker, given to walker by one key of a scene: `world.walker.mods.solids` is
 // 'scatter3d', with terrain3d's `height` beside it. The test writes a manager and one child, `wood`,
 // which `load` boots as a game's would: level ground with trunks on it, placed through
-// `world.scatter3d.mods.ground`. The mod's `solids` are scatter3d's there, and a body walked on
-// walker's `groundOf` straight at a trunk walks round it, never inside its circle. Its `probe` hands
-// the test the child's `w`.
+// `world.scatter3d.mods.ground`. A body walked on walker's `groundOf` straight at a trunk walks round
+// it, never inside its circle. Its `probe` hands the test the child's `w`.
 import { afterAll, expect, test } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -14,7 +13,7 @@ import { load, mod } from '#addons/scenemanager/scenemanager.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 import { written } from '#plugins/loader/loader.sim.ts'
 import type { Field } from '#plugins/terrain3d/terrain3d.sim.ts'
-import { groundOf, type Numbers } from '#plugins/walker/walker.sim.ts'
+import type { Numbers } from '#plugins/walker/walker.sim.ts'
 import { placed, solids as over, type Scatter, type Solid } from './scatter3d.sim.ts'
 import { solids } from './scatter3d.walker.ts'
 
@@ -90,19 +89,6 @@ async function booted() {
 test('the scene\'s one key gives walker scatter3d\'s solids, loaded before the first step', async () => {
   const { child } = await booted()
   expect(mod(child.world, 'walker', 'solids')).toBe(solids)
-})
-
-test('solids are scatter3d\'s solid instances placed on the ground world.scatter3d.mods.ground names, and walker\'s groundOf asks them', async () => {
-  const { w } = await booted()
-  const ground = groundOf(w)
-  let found = 0
-  for (const [x, z, r] of [[30, 20, 12], [-70, 45, 30], [0, 0, 5], [200, -150, 20]]) {
-    const got = solids(w, x, z, r)
-    expect(got).toEqual(over(w, x, z, r, placed(w)))
-    expect(ground.solids(x, z, r)).toEqual(got)
-    found += got.length
-  }
-  expect(found).toBeGreaterThan(10)
 })
 
 test('a body walked on groundOf straight at a trunk walks round it, never inside its circle', async () => {

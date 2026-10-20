@@ -3,8 +3,9 @@
 // `world.box3d.mods.kinds`. A car's rows say which Vehicle each part is of and which corner each
 // wheel and joint is: the `box3dvehicle` row that lists it, its `vehicle`, and the part's place in
 // `wheels` or `joints`.
-//   the chassis  the body's box and its cabin's hull, both of the body's `friction`, its mass, centre
-//                of mass and inertia set outright (`inertia`).
+//   the chassis  the body's box and, where the body has a `cabin`, the cabin's hull, both of the
+//                body's `friction`; a body with no cabin is the one box. Its mass, centre of mass and
+//                inertia set outright (`inertia`).
 //   a wheel      a ball of its axle's `wheel.radius`, with contact events on, so box3d writes what it
 //                touches; its mass and inertia set outright, a tyre's of its `width` (`wheelInertia`);
 //                and `allowFastRotation`, since Box3D otherwise holds a body to a quarter turn a
@@ -26,13 +27,13 @@ import { cabinPoints, corners, design, frameA, inertia, QUARTER, wheelInertia, t
 const diagonal = ([x, y, z]: number[]): NonNullable<Body['mass']>['inertia'] => ({ cx: [x, 0, 0], cy: [0, y, 0], cz: [0, 0, z] })
 
 export function chassisBody(v: Vehicle): Body {
-  const { length, height, width, mass, center, friction } = v.body
+  const { length, height, width, mass, center, friction, cabin } = v.body
   return {
     type: 'dynamic',
     ...v.bodies,
     shapes: [
       { box: [length / 2, height / 2, width / 2], baseMaterial: { friction } },
-      { hull: { points: cabinPoints(v) }, baseMaterial: { friction } },
+      ...(cabin ? [{ hull: { points: cabinPoints(v, cabin) }, baseMaterial: { friction } }] : []),
     ],
     mass: { mass, center: [...center], inertia: diagonal(inertia(v)) },
   }

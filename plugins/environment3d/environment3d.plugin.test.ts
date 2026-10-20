@@ -21,7 +21,7 @@ const built = (prefab: any) => {
 }
 
 test('the sun, the sky light and the floor come from the prefab, built once', () => {
-  const { me, scene, plugins } = built(full)
+  const { scene, plugins } = built(full)
   expect(scene.children.map(o => o.type)).toEqual(['DirectionalLight', 'HemisphereLight', 'Mesh'])
   const [sun, sky, floor] = scene.children as [THREE.DirectionalLight, THREE.HemisphereLight, THREE.Mesh<THREE.PlaneGeometry, THREE.MeshLambertMaterial>]
   expect(sun.color.getHexString()).toBe('ffeedd')
@@ -32,7 +32,6 @@ test('the sun, the sky light and the floor come from the prefab, built once', ()
   expect(floor.material.color.getHex()).toBe(3949648)
   expect(floor.rotation.x).toBeCloseTo(-Math.PI / 2)
   // It places no camera: that is render3d's.
-  expect('camera' in me).toBe(false)
   expect(plugins.render3d.camera).toBeUndefined()
 })
 

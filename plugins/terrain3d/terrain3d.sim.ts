@@ -1,6 +1,6 @@
 // The server half of terrain3d: the ground, as a pure function of a field file. There is no
-// three.js here and no clock, so a rule on the server, a rule the page predicts with, and the
-// browser half's rings all ask the one ground and get the same bytes.
+// three.js here and no clock, so a rule on the server and the browser half's rings both ask the one
+// ground and get the same bytes.
 //
 // It has no row: nothing of it changes while the game runs. Its numbers are the scene's
 // `world.terrain3d`, which a child scene inherits from the manager's (`addons/scenemanager`).
@@ -26,19 +26,21 @@
 //                                for the geomorphon `form`;
 //               records          how many land records a land keeps: past it, the one asked for
 //                                longest ago goes first, and is made again if it is asked for.
-//   bands     the ground's colours, `[{ colour, amount, rules: [{ q, lo, hi }], edge? }]`: the first
-//             band is the base coat, and each later one mixes its colour in by `amount` times the
-//             product of its rules' ramps, that product drawn through its `edge` when it has one.
-//             Every rule's `q` is checked against `keys` when a land is made.
-//   grain     `{ base, range }`: the colour is multiplied by base + range·hash, a hash of the whole
-//             metre each vertex stands in.
-//   detail    the ground detail the browser half draws over the colours, a list of layers (its
-//             header); each layer's kind, its rules' `q`s and its numbers' shapes are checked when a
-//             land is made (`looks`).
-//   surfaces  `{ name: { colour, cover, grip?, edge? } }`: what a `surface` stroke paints. `colour` is
-//             drawn over the bands by the paint's weight, through `edge` when it has one; `cover`
-//             multiplies scatter's density, 0 on a road; `grip` (1 if left out, and on unpainted
-//             ground) multiplies the friction of a wheel's contact with it.
+//   ground    the ground's look: its texture layers, each with its rules, its noise edge and its
+//             warp, and how they are composed (`terrain3d.warp.ts` says what it holds). Its rules'
+//             `q`s and its numbers are checked when a land is made (`looks`). The land record answers
+//             each layer's weight as `layer:<name>`, the weight the ground's shader draws there.
+//   surfaces  `{ name: { colour?, cover, grip?, drag?, spray?, edge? } }`: what a `surface` stroke
+//             paints. `colour`, when it has one, is drawn over the ground layers by the paint's
+//             weight, through `edge` when it has one (a ground layer can instead lay a texture where
+//             `surface:<name>` is); `cover` multiplies scatter's density, 0 on a road; `grip` (1 if left out, and on
+//             unpainted ground) multiplies the friction of a wheel's contact with it; `drag` (0 if left
+//             out, and on unpainted ground) is its rolling resistance, the newtons a wheel rolling on
+//             it loses per newton of load, as soft ground sinks a tyre; `spray` is what a wheel going
+//             over it throws up, a particle3d effect's name, or false for nothing, as off asphalt; left
+//             out, a wheel throws what it would throw off unpainted ground; `mark`, from 0 to 1, how
+//             dark a track a tyre rolling over it leaves, deep in mud and none on asphalt; left out, a
+//             tyre marks it as it marks unpainted ground.
 // An edge `{ width, ragged, scale }` turns a weight w into
 // smoothstep(0.5 − width/2, 0.5 + width/2, w + ragged·(noise − 0.5)), the noise value noise at `scale`
 // cycles a metre: a crisp line where w crosses a half, broken up by `ragged`. With no edge, w is
@@ -78,6 +80,14 @@
 //   clearing  `input` levelled toward its own value at the origin v₀: v₀ + (v − v₀)·keep, keep =
 //             floor + (1 − floor)(1 − exp(−r²/2flat²)), r metres from the origin. Levelling toward 0
 //             would dig a pit `hscale` deep at spawn.
+//   biomes    the land's biomes, `list: [{ name, strength, height }]`, each `strength` and `height` an
+//             earlier node, and `sharp` above 0. A biome is a name, a node that says how much of it
+//             stands at a point and a node that is its own ground there. The mix at a point is each
+//             biome's share, max(0, strength)^sharp over their sum (equal shares where that sum is 0),
+//             a higher `sharp` narrowing the ground between two biomes; the value is Σ share·height. A
+//             program has at most one biomes node, its names distinct and none empty. `compile` also
+//             hands back `biomes`, the names in order (none without the node), and `mix(x, z)`, the
+//             shares there in that order.
 //
 // The sea. raw = program·hscale − hscale(2·sea − 1), so the waterline is y = 0. With `flood` the
 // height is max(raw, 0), the water's surface, and the depth max(0, −raw); with no flood there is no
@@ -109,7 +119,8 @@
 //                 does; where f outweighs another surface, the pixel becomes `surface` at weight f.
 // `paintAt` stacks the layers' surfaces the same way, each layer's surface the nearest pixel's and
 // its weight that surface's bilinear weight, and its `cover` is 1 + (surfaces[s].cover − 1)·weight,
-// its `grip` the same of surfaces[s].grip.
+// its `grip` the same of surfaces[s].grip, its `drag` surfaces[s].drag·weight, and its `spray` and
+// `mark` surfaces[s]'s where the weight is at least a half, undefined where it is less.
 //
 // The land record, `analyse(x, z)`, is made on first asking and kept, up to `records` of them; each
 // key is worked out when it is first read. The keys (`keys`, which a rule's `q` may name):
@@ -132,12 +143,19 @@
 //              other way, with the drop.
 //   wet        shape(plan, 0, .01) · shape(−position, 0, .15·positionRadius).
 //   water      depthAt.
-// `reach(analysis)` is how far from its point a record reads the ground.
+//   biome:<n>  biome n's share of the mix there, one key for each name of the program's biomes.
+//   surface:<n>  surface n's painted weight there, 0 where another surface is painted.
+//   layer:<n>  ground layer n's weight there (`terrain3d.warp.ts`), as the ground draws it before its
+//              height blend, so a scatter rule on `layer:rock` places on the rock that is drawn.
+//              `layers` is every layer's, in order. A ground layer's own rules read no layer.
+// `read(q)` is any of them by name. `reach(analysis)` is how far from its point a record reads the
+// ground.
 //
 // `shape(v, lo, hi)` is the one ramp: clamp01((v − lo)/(hi − lo)), so it is inverted when lo > hi,
-// and a step at lo when they are equal. A rule `{ q, lo, hi }` is shape(record[q], lo, hi) (`ramp`);
-// band colours, scatter's keep rules and its boulders all use it. `rules(list, what)` throws naming
-// a rule whose `q` is none of `keys`.
+// and a step at lo when they are equal. A rule `{ q, lo, hi }` is shape(record.read(q), lo, hi)
+// (`ramp`); band colours, scatter's keep rules and its boulders all use it. `rules(list, what,
+// biomes)` throws naming a rule whose `q` is none of `keys` nor `biome:<n>` for a name in `biomes`;
+// a land's own `rules(list, what)` checks against its own biomes.
 //
 // A land (`land(field)`) is the ground of one field and holds its compiled program, its rasters and
 // its records. `landOf(field)` is the one every truth in the process reads, made again only when the
@@ -169,9 +187,14 @@
 // rises above the segment between two points), analyse, ramp(rule, x, z), edits and
 // ray(origin, dir, far) (the first point along the ray at or below the ground: marched in slopeStep
 // steps and refined by bisection, or undefined). A land also answers `through(k, x, z)`, the raw
-// ground as layer k leaves it, the program and layers 0 to k, which the brush's `pick` reads.
+// ground as layer k leaves it, the program and layers 0 to k, which the brush's `pick` reads,
+// `mix(x, z)`, each biome's share there by name, `layers(x, z)`, each ground layer's weight there by
+// name, and `rules(list, what)`, the rule check that knows its biomes and its layers, which the
+// `edits` land hands any plugin standing on it.
 import type { W } from '#engine/engine.ts'
 import { json } from '#plugins/loader/loader.sim.ts'
+import * as math from '#plugins/math/math.sim.ts'
+import { checked, weights, type Look } from './terrain3d.warp.ts'
 
 export type Rule = { q: string; lo: number; hi: number }
 export type Node = { id: string; op: string; [param: string]: any }
@@ -181,28 +204,11 @@ export type Analysis = {
   cliffProbe: number; cliffSlope: number; cliffDrop: number; flatAngle: number; records: number
 }
 export type Edge = { width: number; ragged: number; scale: number }
-export type Band = { colour: string; amount: number; rules: Rule[]; edge?: Edge }
 export type Stroke = { verb: 'raise' | 'lower' | 'flatten' | 'smooth' | 'bench' | 'surface'; radius: number; hardness: number; strength: number; level: number; surface: string; path: number[][] }
 export type Layer = { at: number[]; size: number; px: number; strokes: Stroke[] }
-export type Surface = { colour: string; cover: number; grip?: number; edge?: Edge }
-export type Noise = { freqs: number[]; weights: number[]; offset?: number[]; angle?: number; stretch?: number[] }
-// What every detail layer has, beside what its kind has.
-type Each = { amount?: number; fade?: number[]; edge?: Edge; where?: Rule[] }
-export type Detail = Each & (
-  | { kind: 'tint'; noise: Noise; base: number; range: number }
-  | { kind: 'patch'; noise: Noise; from: number; to: number; colour: string }
-  | { kind: 'bump'; noise: Noise; step: number; strength: number }
-  | { kind: 'rough'; noise: Noise; range: number[]; jitter: { freq: number; amount: number } }
-  | {
-    kind: 'texture'; map: string; normal?: string; rough?: string; scale: number; project: 'top' | 'tri'; sharp: number
-    vary: number; colour: string; strength: number; blend: 'over' | 'multiply'
-  }
-)
-export type Field = {
-  program: Program; analysis: Analysis; bands: Band[]; grain: { base: number; range: number }
-  detail: Detail[]; surfaces: Record<string, Surface>; layers: Layer[]
-}
-export type Paint = { weight: number; surface: string | undefined; cover: number; grip: number }
+export type Surface = { colour?: string; cover: number; grip?: number; drag?: number; spray?: string | false; mark?: number; edge?: Edge }
+export type Field = { program: Program; analysis: Analysis; ground: Look; surfaces: Record<string, Surface>; layers: Layer[] }
+export type Paint = { weight: number; surface: string | undefined; cover: number; grip: number; drag: number; spray: string | false | undefined; mark: number | undefined }
 export type Edits = { land: Land; layers: { version: number; rect: number[] }[] }
 
 // ---------------------------------------------------------------- noise
@@ -242,7 +248,7 @@ export function simplex(x: number, z: number, seed: number): number {
     const r = 0.5 - dx * dx - dz * dz
     if (r <= 0) return 0
     const angle = 2 * Math.PI * unit(ci, cj, seed)
-    return r * r * r * r * (Math.cos(angle) * dx + Math.sin(angle) * dz)
+    return r * r * r * r * (math.cos(angle) * dx + math.sin(angle) * dz)
   }
   const n = corner(x0, z0, i, j) + corner(x0 - i1 + G2, z0 - j1 + G2, i + i1, j + j1) + corner(x0 - 1 + 2 * G2, z0 - 1 + 2 * G2, i + 1, j + 1)
   return 0.5 + 35 * n
@@ -256,7 +262,7 @@ export function worley(x: number, z: number, seed: number, metric: 'f1' | 'f2' |
     for (let di = -1; di <= 1; di++) {
       const ci = i + di, cj = j + dj
       const px = ci + unit(ci, cj, seed), pz = cj + unit(ci, cj, seed ^ SECOND)
-      const d = Math.hypot(px - x, pz - z)
+      const d = math.hypot(px - x, pz - z)
       if (d < f1) { f2 = f1; f1 = d } else if (d < f2) f2 = d
     }
   }
@@ -266,7 +272,14 @@ export function worley(x: number, z: number, seed: number, metric: 'f1' | 'f2' |
 // ---------------------------------------------------------------- the program
 
 type Step = (buf: Float64Array, x: number, z: number) => number
-export type Compiled = { run(x: number, z: number): number; at(id: string, x: number, z: number): number }
+export type Compiled = {
+  run(x: number, z: number): number; at(id: string, x: number, z: number): number
+  biomes: string[]; mix(x: number, z: number): number[]
+}
+export type Biome = { name: string; strength: string; height: string }
+// A biomes node resolved: its names, its strengths' and heights' nodes, its sharpness, and the last
+// node its strengths need.
+type Biomes = { names: string[]; strengths: number[]; heights: number[]; sharp: number; last: number }
 
 const EASES: Record<string, (t: number) => number> = { linear: t => t, smooth: t => t * t * (3 - 2 * t), smoother: quintic }
 const NOISES = ['value', 'simplex', 'worley']
@@ -276,8 +289,8 @@ const MODES: Record<string, (a: number, b: number, t: number) => number> = {
   lerp: (a, b, t) => a + (b - a) * t,
 }
 const FOLDS: Record<string, (v: number, steps: number) => number> = {
-  ridge: v => (1 - Math.abs(2 * v - 1)) ** 2,
-  billow: v => Math.abs(2 * v - 1) ** 2,
+  ridge: v => math.pow(1 - Math.abs(2 * v - 1), 2),
+  billow: v => math.pow(Math.abs(2 * v - 1), 2),
   abs: v => Math.abs(2 * v - 1),
   terrace: (v, steps) => { const t = v * steps, f = Math.floor(t); return (f + quintic(t - f)) / steps },
 }
@@ -292,15 +305,20 @@ export function compile(program: Program): Compiled {
     return buf[last]
   }
   const origins: [number, number][] = []
+  let biomes: (Biomes & { id: string }) | undefined
   nodes.forEach((n, i) => {
     if (typeof n.id !== 'string') throw new Error(`terrain3d node ${i} has no id`)
     if (index.has(n.id)) throw new Error(`terrain3d has two nodes ${n.id}`)
-    const read = (param: string) => {
-      const at = index.get(n[param])
-      if (at === undefined) throw new Error(`terrain3d node ${n.id} reads ${param} ${n[param]}, which is not a node before it`)
+    const read = (param: string, id: unknown = n[param]) => {
+      const at = typeof id === 'string' ? index.get(id) : undefined
+      if (at === undefined) throw new Error(`terrain3d node ${n.id} reads ${param} ${id}, which is not a node before it`)
       return at
     }
-    steps.push(step(n, read, world, upto, origins, i))
+    if (n.op === 'biomes') {
+      if (biomes) throw new Error(`terrain3d has two biomes nodes, ${biomes.id} and ${n.id}`)
+      biomes = { id: n.id, ...resolve(n, read) }
+      steps.push(mixed(biomes))
+    } else steps.push(step(n, read, world, upto, origins, i))
     index.set(n.id, i)
   })
   // Each clearing's input at the origin, in node order, so a clearing that reads an earlier one
@@ -309,6 +327,8 @@ export function compile(program: Program): Compiled {
   const out = index.get(program.out)
   if (out === undefined) throw new Error(`terrain3d program out ${program.out} is none of its nodes`)
   const buf = new Float64Array(nodes.length)
+  const b = biomes
+  const scratch = b && new Float64Array(b.last + 1)
   return {
     run: (x, z) => upto(out, x, z, buf),
     at: (id, x, z) => {
@@ -316,20 +336,67 @@ export function compile(program: Program): Compiled {
       if (i === undefined) throw new Error(`terrain3d has no node ${id}`)
       return upto(i, x, z, new Float64Array(i + 1))
     },
+    biomes: b ? b.names.slice() : [],
+    mix: (x, z) => {
+      if (!b) return []
+      upto(b.last, x, z, scratch!)
+      return shares(b, scratch!, new Array(b.names.length))
+    },
+  }
+}
+
+// A biomes node's list checked and its nodes found.
+function resolve(n: Node, read: (param: string, id?: unknown) => number): Biomes {
+  const list = n.list as Biome[] | undefined
+  if (!Array.isArray(list) || !list.length) throw new Error(`terrain3d node ${n.id} has no biomes in its list`)
+  if (!(typeof n.sharp === 'number' && n.sharp > 0)) throw new Error(`terrain3d node ${n.id} sharp ${n.sharp} is not above 0`)
+  const names: string[] = []
+  list.forEach((b, k) => {
+    if (typeof b?.name !== 'string' || !b.name) throw new Error(`terrain3d node ${n.id} biome ${k} has no name`)
+    if (names.includes(b.name)) throw new Error(`terrain3d node ${n.id} has two biomes ${b.name}`)
+    names.push(b.name)
+  })
+  const strengths = list.map(b => read(`biome ${b.name} strength`, b.strength))
+  const heights = list.map(b => read(`biome ${b.name} height`, b.height))
+  return { names, strengths, heights, sharp: n.sharp, last: Math.max(...strengths) }
+}
+
+// Each biome's share of the mix, from the strengths `buf` holds, written into `out`.
+function shares<T extends { [k: number]: number }>(b: Biomes, buf: Float64Array, out: T): T {
+  const n = b.names.length
+  let total = 0
+  for (let k = 0; k < n; k++) {
+    const s = buf[b.strengths[k]]
+    const w = s > 0 ? math.pow(s, b.sharp) : 0
+    out[k] = w
+    total += w
+  }
+  for (let k = 0; k < n; k++) out[k] = total > 0 ? out[k] / total : 1 / n
+  return out
+}
+
+// The biomes node's step: each biome's height by its share.
+function mixed(b: Biomes): Step {
+  const got = new Float64Array(b.names.length)
+  return buf => {
+    shares(b, buf, got)
+    let v = 0
+    for (let k = 0; k < got.length; k++) v += got[k] * buf[b.heights[k]]
+    return v
   }
 }
 
 const clearing = (n: Node, input: number, v0: number): Step => {
   const floor = n.floor, two = 2 * n.flat * n.flat
   return (buf, x, z) => {
-    const keep = floor + (1 - floor) * (1 - Math.exp(-(x * x + z * z) / two))
+    const keep = floor + (1 - floor) * (1 - math.exp(-(x * x + z * z) / two))
     return v0 + (buf[input] - v0) * keep
   }
 }
 
 // The lattice point of a ground point.
 const lattice = (world: number, freq: number, rotate = 0, stretch: number[] = [1, 1]) => {
-  const c = Math.cos(rotate), s = Math.sin(rotate)
+  const c = math.cos(rotate), s = math.sin(rotate)
   return (x: number, z: number): [number, number] => [((x * c - z * s) * stretch[0] / world + 0.5) * freq, ((x * s + z * c) * stretch[1] / world + 0.5) * freq]
 }
 
@@ -380,7 +447,7 @@ function step(
       origins.push([i, read('input')])
       return () => 0
     }
-    default: throw new Error(`terrain3d node ${n.id} op ${n.op} is none of const, noise, warp, fold, remap, combine, scale, craters, clearing`)
+    default: throw new Error(`terrain3d node ${n.id} op ${n.op} is none of const, noise, warp, fold, remap, combine, scale, craters, clearing, biomes`)
   }
 }
 
@@ -399,10 +466,10 @@ function craters(n: Node, world: number): Step {
         const cx = ((ci + unit(ci, cj, seed)) / freq - 0.5) * world
         const cz = ((cj + unit(ci, cj, seed ^ SECOND)) / freq - 0.5) * world
         const r = rmin + (rmax - rmin) * unit(ci, cj, seed ^ THIRD)
-        const q = Math.hypot(x - cx, z - cz) / r
+        const q = math.hypot(x - cx, z - cz) / r
         if (q < 1) floor = Math.min(floor, -depth * (1 - q * q))
-        const gauss = Math.exp(-0.5 * ((q - 1) / rimWidth) ** 2)
-        const apron = q >= 1 && q < ejecta ? (1 - (q - 1) / (ejecta - 1)) ** 2 : 0
+        const gauss = math.exp(-0.5 * math.pow((q - 1) / rimWidth, 2))
+        const apron = q >= 1 && q < ejecta ? math.pow(1 - (q - 1) / (ejecta - 1), 2) : 0
         rims += rim * Math.max(gauss, apron)
       }
     }
@@ -417,19 +484,24 @@ export type Key = (typeof keys)[number]
 
 export const shape = (v: number, lo: number, hi: number) => (lo === hi ? (v >= lo ? 1 : 0) : clamp01((v - lo) / (hi - lo)))
 
-export function rules(list: Rule[], what: string): Rule[] {
+const BIOME = 'biome:'
+// The names of a program's biomes, in order.
+const biomesOf = (program: Program): string[] => ((program.nodes.find(n => n.op === 'biomes')?.list ?? []) as Biome[]).map(b => b.name)
+
+const LAYER = 'layer:'
+const SURFACE = 'surface:'
+
+export function rules(list: Rule[], what: string, biomes: readonly string[] = [], layers: readonly string[] = [], surfaces: readonly string[] = []): Rule[] {
+  const known = [...keys, ...biomes.map(n => BIOME + n), ...surfaces.map(n => SURFACE + n), ...layers.map(n => LAYER + n)]
   list.forEach((rule, i) => {
-    if (!(keys as readonly string[]).includes(rule.q)) throw new Error(`${what} rule ${i} reads ${rule.q}, which is none of the land record's keys: ${keys.join(', ')}`)
+    if (!known.includes(rule.q)) throw new Error(`${what} rule ${i} reads ${rule.q}, which is none of the land record's keys: ${known.join(', ')}`)
   })
   return list
 }
 
-// The kinds of detail layer, and what a detail layer's `where` rule may read beside the record's keys:
-// how much of band i shows, `band:<i>`, and how much of a surface is painted, `surface:<name>`.
-export const kinds = ['tint', 'patch', 'bump', 'rough', 'texture'] as const satisfies readonly Detail['kind'][]
-export const shows = (field: Field) => [...field.bands.map((_, i) => `band:${i}`), ...Object.keys(field.surfaces ?? {}).map(n => `surface:${n}`)]
-// Whether rule `q` reads the land record, and so is worked out at a vertex, as a band's is.
-export const recorded = (q: string) => (keys as readonly string[]).includes(q)
+// Whether rule `q` reads the land record's own keys, a biome's share or a surface's paint, which a
+// vertex can carry.
+export const recorded = (q: string) => (keys as readonly string[]).includes(q) || q.startsWith(BIOME) || q.startsWith(SURFACE)
 
 // Throws naming the first thing in an edge it cannot draw.
 function edged(edge: Edge | undefined, what: string) {
@@ -439,33 +511,13 @@ function edged(edge: Edge | undefined, what: string) {
   if (edge.ragged > 0 && !(edge.scale > 0)) throw new Error(`${what} edge scale ${edge.scale} is not above 0`)
 }
 
-// The field's bands', surfaces' and detail layers' looks, checked: throws naming the first one that
-// cannot be drawn.
+// The field's ground layers and surfaces, checked: throws naming the first one that cannot be drawn.
+// A ground layer's rules read the land record's own keys and the biomes' shares, never a layer.
 export function looks(field: Field) {
-  field.bands.forEach((band, i) => { rules(band.rules, `terrain3d band ${i}`); edged(band.edge, `terrain3d band ${i}`) })
+  const biomes = biomesOf(field.program)
   for (const [name, s] of Object.entries(field.surfaces ?? {})) edged(s.edge, `terrain3d surface ${name}`)
-  const other = shows(field)
-  const pair = (v: number[] | undefined) => v === undefined || (v.length === 2 && v.every(Number.isFinite))
-  ;(field.detail ?? []).forEach((d, i) => {
-    const what = `terrain3d detail ${i}`
-    if (!(kinds as readonly string[]).includes(d.kind)) throw new Error(`${what} is a ${d.kind}, which is none of ${kinds.join(', ')}`)
-    ;(d.where ?? []).forEach((rule, j) => {
-      if (!recorded(rule.q) && !other.includes(rule.q)) throw new Error(`${what} rule ${j} reads ${rule.q}, which is none of the land record's keys (${keys.join(', ')}) nor ${other.join(', ')}`)
-    })
-    edged(d.edge, what)
-    if (d.fade !== undefined && !(pair(d.fade) && d.fade[0] < d.fade[1])) throw new Error(`${what} fade ${JSON.stringify(d.fade)} is not [near, far], near below far`)
-    if (d.kind === 'texture') {
-      if (!d.map) throw new Error(`${what} names no map`)
-      if (!['top', 'tri'].includes(d.project)) throw new Error(`${what} project ${d.project} is none of top, tri`)
-      if (!['over', 'multiply'].includes(d.blend)) throw new Error(`${what} blend ${d.blend} is none of over, multiply`)
-      if (!(d.scale > 0)) throw new Error(`${what} scale ${d.scale} is not above 0`)
-      return
-    }
-    const n = d.noise
-    if (!(n.freqs.length > 0 && n.freqs.length === n.weights.length)) throw new Error(`${what} noise has ${n.freqs.length} freqs and ${n.weights.length} weights: one weight a freq, at least one`)
-    if (!pair(n.offset) || !pair(n.stretch)) throw new Error(`${what} noise offset and stretch are each [x, z]`)
-    if (d.kind === 'rough' && !pair(d.range)) throw new Error(`${what} range is [lo, hi]`)
-  })
+  if (!field.ground) throw new Error('terrain3d field has no ground')
+  checked(field.ground, [...keys, ...biomes.map(n => BIOME + n), ...Object.keys(field.surfaces ?? {}).map(n => SURFACE + n)])
 }
 
 export const reach = (a: Analysis) => Math.max(a.slopeStep, a.curveStep * Math.SQRT2, a.positionRadius, a.occlusionRadius, a.cliffProbe + a.slopeStep)
@@ -484,7 +536,11 @@ const FORMS = [
   [PK],
 ]
 
-type Ground = { height(x: number, z: number): number; depth(x: number, z: number): number; normal(x: number, z: number, step: number): number[]; hscale: number; analysis: Analysis }
+type Ground = {
+  height(x: number, z: number): number; depth(x: number, z: number): number; normal(x: number, z: number, step: number): number[]
+  mix(x: number, z: number): number[]; biomes: string[]; hscale: number; analysis: Analysis; look: Look
+  paint(x: number, z: number): Paint
+}
 
 // What the land says about one point, each key worked out when it is first read.
 export class LandRecord {
@@ -492,7 +548,32 @@ export class LandRecord {
   #x: number
   #z: number
   #got: Partial<Record<Key, number>> = {}
+  #mix: number[] | undefined
+  #layers: number[] | undefined
   constructor(g: Ground, x: number, z: number) { this.#g = g; this.#x = x; this.#z = z }
+
+  // Any key by its name, a biome's share and a ground layer's weight too.
+  read(q: string): number {
+    if ((keys as readonly string[]).includes(q)) return this[q as Key]
+    if (q.startsWith(LAYER)) {
+      const k = this.#g.look.layers.findIndex(l => l.name === q.slice(LAYER.length))
+      if (k < 0) throw new Error(`the land record has no key ${q}`)
+      return this.layers[k]
+    }
+    if (q.startsWith(SURFACE)) {
+      const p = this.#g.paint(this.#x, this.#z)
+      return p.surface === q.slice(SURFACE.length) ? p.weight : 0
+    }
+    const k = q.startsWith(BIOME) ? this.#g.biomes.indexOf(q.slice(BIOME.length)) : -1
+    if (k < 0) throw new Error(`the land record has no key ${q}`)
+    return (this.#mix ??= this.#g.mix(this.#x, this.#z))[k]
+  }
+
+  // Every ground layer's weight here, as the ground's shader draws it before its height blend
+  // (`terrain3d.warp.ts`), at this point's height and slope.
+  get layers(): number[] {
+    return (this.#layers ??= weights(this.#g.look, this.#x, this.height, this.#z, this.slope, q => this.read(q)))
+  }
 
   #h(dx: number, dz: number) { return this.#g.height(this.#x + dx, this.#z + dz) }
   #n() { return this.#g.normal(this.#x, this.#z, this.#g.analysis.slopeStep) }
@@ -500,14 +581,14 @@ export class LandRecord {
   get height() { return (this.#got.height ??= this.#h(0, 0)) }
   get relief() { return (this.#got.relief ??= this.height / this.#g.hscale) }
   get slope() { return (this.#got.slope ??= 1 - this.#n()[1]) }
-  get aspect() { return (this.#got.aspect ??= (n => Math.atan2(n[0], n[2]))(this.#n())) }
+  get aspect() { return (this.#got.aspect ??= (n => math.atan2(n[0], n[2]))(this.#n())) }
   get profile() { return this.#curves().profile }
   get plan() { return this.#curves().plan }
   get position() {
     if (this.#got.position !== undefined) return this.#got.position
     const r = this.#g.analysis.positionRadius
     let sum = 0
-    for (let k = 0; k < 8; k++) sum += this.#h(r * Math.cos(k * Math.PI / 4), r * Math.sin(k * Math.PI / 4))
+    for (let k = 0; k < 8; k++) sum += this.#h(r * math.cos(k * Math.PI / 4), r * math.sin(k * Math.PI / 4))
     return (this.#got.position = this.height - sum / 8)
   }
   get occlusion() { return this.#march().occlusion }
@@ -529,7 +610,7 @@ export class LandRecord {
     if (p < 1e-12) {
       got.plan = got.profile = (fxx + fzz) / 2
     } else {
-      got.profile = (fxx * fx * fx + 2 * fxz * fx * fz + fzz * fz * fz) / (p * (1 + p) ** 1.5)
+      got.profile = (fxx * fx * fx + 2 * fxz * fx * fz + fzz * fz * fz) / (p * math.pow(1 + p, 1.5))
       got.plan = (fxx * fz * fz - 2 * fxz * fx * fz + fzz * fx * fx) / (p * Math.sqrt(1 + p))
     }
     return { plan: got.plan, profile: got.profile }
@@ -542,15 +623,15 @@ export class LandRecord {
     const h0 = this.height
     let sky = 0, ups = 0, downs = 0
     for (let k = 0; k < 8; k++) {
-      const cx = Math.cos(k * Math.PI / 4), cz = Math.sin(k * Math.PI / 4)
+      const cx = math.cos(k * Math.PI / 4), cz = math.sin(k * Math.PI / 4)
       let up = -Infinity, down = -Infinity
       for (let s = 1; s <= n; s++) {
         const d = r * s / n
-        const angle = Math.atan2(this.#h(cx * d, cz * d) - h0, d)
+        const angle = math.atan2(this.#h(cx * d, cz * d) - h0, d)
         up = Math.max(up, angle)
         down = Math.max(down, -angle)
       }
-      sky += Math.max(0, Math.sin(up))
+      sky += Math.max(0, math.sin(up))
       if (up > flatAngle && up > down) ups++
       else if (down > flatAngle && down > up) downs++
     }
@@ -564,7 +645,7 @@ export class LandRecord {
     if (got.cliffAbove !== undefined) return { cliffAbove: got.cliffAbove, cliffBelow: got.cliffBelow! }
     const { cliffProbe: p, cliffSlope, cliffDrop, slopeStep } = this.#g.analysis
     const gx = this.#h(p, 0) - this.#h(-p, 0), gz = this.#h(0, p) - this.#h(0, -p)
-    const len = Math.hypot(gx, gz)
+    const len = math.hypot(gx, gz)
     if (len === 0) {
       got.cliffAbove = got.cliffBelow = 0
     } else {
@@ -621,7 +702,7 @@ export function nearest(path: number[][], x: number, z: number): [number, number
     const [ax, az] = path[s]
     if (!isPoint(path[s + 1])) {
       if (!isPoint(path[s - 1])) {
-        const d = Math.hypot(x - ax, z - az)
+        const d = math.hypot(x - ax, z - az)
         if (d < best[0]) best = [d, ax, az]
       }
       continue
@@ -630,7 +711,7 @@ export function nearest(path: number[][], x: number, z: number): [number, number
     const ex = bx - ax, ez = bz - az, len = ex * ex + ez * ez
     const t = len === 0 ? 0 : clamp01(((x - ax) * ex + (z - az) * ez) / len)
     const px = ax + ex * t, pz = az + ez * t
-    const d = Math.hypot(x - px, z - pz)
+    const d = math.hypot(x - px, z - pz)
     if (d < best[0]) best = [d, px, pz]
   }
   return best
@@ -784,10 +865,11 @@ export function land(field: Field, from?: { unsaved(k: number): Stroke | undefin
   const depth = flood ? (x: number, z: number) => Math.max(0, -raw(x, z)) : () => 0
   const normal = (x: number, z: number, s: number) => {
     const nx = height(x - s, z) - height(x + s, z), ny = 2 * s, nz = height(x, z - s) - height(x, z + s)
-    const len = Math.hypot(nx, ny, nz)
+    const len = math.hypot(nx, ny, nz)
     return [nx / len, ny / len, nz / len]
   }
-  const ground: Ground = { height, depth, normal, hscale, analysis }
+  const ground: Ground = { height, depth, normal, mix: program.mix, biomes: program.biomes, hscale, analysis, look: field.ground, paint: (x, z) => me.paint(x, z) }
+  const layerNames = field.ground.layers.map(l => l.name)
 
   const analyse = (x: number, z: number): LandRecord => {
     const key = `${x},${z}`
@@ -835,12 +917,15 @@ export function land(field: Field, from?: { unsaved(k: number): Stroke | undefin
         if (s === surface || weight === 0) { surface = s; weight = 1 - (1 - weight) * (1 - f) }
         else if (f > weight) { surface = s; weight = f }
       }
-      if (surface < 0) return { weight: 0, surface: undefined, cover: 1, grip: 1 }
-      const name = names[surface], s = field.surfaces[name]
-      return { weight, surface: name, cover: 1 + (s.cover - 1) * weight, grip: 1 + ((s.grip ?? 1) - 1) * weight }
+      if (surface < 0) return { weight: 0, surface: undefined, cover: 1, grip: 1, drag: 0, spray: undefined, mark: undefined }
+      const name = names[surface], s = field.surfaces[name], over = weight >= 0.5
+      return {
+        weight, surface: name, cover: 1 + (s.cover - 1) * weight, grip: 1 + ((s.grip ?? 1) - 1) * weight,
+        drag: (s.drag ?? 0) * weight, spray: over ? s.spray : undefined, mark: over ? s.mark : undefined,
+      }
     },
     occludes(a: number[], b: number[]) {
-      const n = Math.ceil(Math.hypot(b[0] - a[0], b[2] - a[2]) / analysis.slopeStep)
+      const n = Math.ceil(math.hypot(b[0] - a[0], b[2] - a[2]) / analysis.slopeStep)
       for (let i = 1; i < n; i++) {
         const t = i / n
         if (height(a[0] + (b[0] - a[0]) * t, a[2] + (b[2] - a[2]) * t) > a[1] + (b[1] - a[1]) * t) return true
@@ -850,9 +935,20 @@ export function land(field: Field, from?: { unsaved(k: number): Stroke | undefin
     // A record made fresh and kept nowhere: what the browser half colours each vertex from.
     record: (x: number, z: number) => new LandRecord(ground, x, z),
     analyse,
-    ramp: (rule: Rule, x: number, z: number) => shape(analyse(x, z)[rule.q as Key], rule.lo, rule.hi),
+    ramp: (rule: Rule, x: number, z: number) => shape(analyse(x, z).read(rule.q), rule.lo, rule.hi),
+    // Each biome's share by name: `{}` with no biomes node.
+    mix: (x: number, z: number): Record<string, number> => {
+      const got = program.mix(x, z)
+      return Object.fromEntries(program.biomes.map((name, k) => [name, got[k]]))
+    },
+    // Each ground layer's weight by name, as the ground's shader draws it before its height blend.
+    layers: (x: number, z: number): Record<string, number> => {
+      const got = analyse(x, z).layers
+      return Object.fromEntries(layerNames.map((name, k) => [name, got[k]]))
+    },
+    rules: (list: Rule[], what: string) => rules(list, what, program.biomes, layerNames, names),
     ray(origin: number[], dir: number[], far: number): number[] | undefined {
-      const len = Math.hypot(dir[0], dir[1], dir[2])
+      const len = math.hypot(dir[0], dir[1], dir[2])
       const d = [dir[0] / len, dir[1] / len, dir[2] / len]
       const at = (t: number) => [origin[0] + d[0] * t, origin[1] + d[1] * t, origin[2] + d[2] * t]
       const below = (t: number) => { const p = at(t); return p[1] <= height(p[0], p[2]) }

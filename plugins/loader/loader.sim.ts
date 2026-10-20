@@ -16,6 +16,28 @@
 // working directory is read. The files a file names, a multipack's packs or a map's tilesets, are
 // fetched together once it has landed.
 //
+// A wad is many files sealed into one, so art whose licence forbids handing it on is never at rest
+// as itself: in the repo, on the server, or in a player's cache. `world.loader.wads` lists the wads a
+// scene reads, each a url as an entry's is. Each is fetched once per process and opened in memory,
+// and every file in it is then at its own path, its name in the wad read from the wad's folder: a
+// wad at `/games/g/assets/art.wad` holding `hero.png` holds `/games/g/assets/hero.png`. From then on
+// every read of that path, a catalogue entry's url, a sheet's page, a map's tileset or image, a font's
+// page or a file `beside` an entry, is handed the wad's bytes and never fetched, by both halves, in a
+// tab and in node. A path no wad holds is fetched as ever. Every read waits for the wads that have
+// started opening, so one started before the first read is open before anything is read: `prepare`
+// and `before` start them, and the browser half on its first tick. A wad that cannot be fetched or
+// opened fails `prepare`, its reason starting `loader wad <url>: `, and is fetched again the next time
+// one is asked to open it; the reads waiting on it go on as if it held nothing. Two wads holding one
+// path: the one opened last is read. `seal` makes a wad of files by name, `unseal` opens one.
+//
+// A wad is `PWAD`, a version byte (1), twelve bytes of IV and the rest AES-GCM over its contents with
+// `SEAL`, the one key every wad is sealed with, which ships with core. Its contents are four bytes,
+// little-endian, the length of a JSON list `[[name, length], ...]`, then that list, then each file's
+// bytes in its order. The IV is the first twelve bytes of the contents' SHA-256, so the same files make
+// the same wad, byte for byte, and two different wads never share an IV. This hides the files and no
+// more: the key ships with every game, and a page decodes the pictures onto its GPU, where they can be
+// read. It is WebCrypto's (`crypto.subtle`), which a tab has only on https or localhost.
+//
 // A fetch that fails rejects, and the url is forgotten, so the next ask fetches it again: the next
 // `prepare`, or a test's `jsonAt`. What the steps ask is remembered per loader row instead:
 // `before` starts the row's preloads once, on its first step, and `load(w, name)`, a rule starting
@@ -30,11 +52,12 @@
 // an actor handed its `plugins.wire`. A rule reads a file on whatever step it needs it, and the step
 // cannot wait for a fetch, so the files are here before the first step: `prepare`, handed the loader
 // row, resolves once every `preload` entry of those six types has landed, with every other file it
-// names, and the scenemanager addon awaits it before it boots a scene and before a page makes the
-// client that predicts on it. A file that is fetched but cannot be decoded fails `prepare` with the
-// reason, so a broken file stops the scene before its first step rather than on the step that
-// reads it. Another kind's own `prepare`, which runs beside the loader's and not after it, awaits a
-// file its first step reads with `prepared(world, name)`, the decoded entry once it has landed.
+// names, and the scenemanager addon awaits it before it boots a scene and before a page makes a
+// scene's client, so the page's actors find the files there from their first frame. A file that is
+// fetched but cannot be decoded fails `prepare` with the reason, so a broken file stops the scene
+// before its first step rather than on the step that reads it. Another kind's own `prepare`, which
+// runs beside the loader's and not after it, awaits a file its first step reads with
+// `prepared(world, name)`, the decoded entry once it has landed.
 //
 // `binary` is a file read byte for byte, in a format of its own that no other type decodes: a ROM, a
 // disk image, a compiled module. `binary` hands its bytes as a `Uint8Array` over the process's one
@@ -174,6 +197,7 @@
 import type { Kind, Row, W } from '#engine/engine.ts'
 import type { Wire } from '#engine/browser.ts'
 import type { Prepare } from '#addons/scenemanager/scenemanager.addon.ts'
+import type { Memory } from '#addons/rewind/rewind.addon.ts'
 import { gunzipSync, unzlibSync, zlibSync } from 'fflate'
 import { decompress as unzstd } from 'fzstd'
 
@@ -305,8 +329,15 @@ const made = new Map<string, { entry: Entry; value: any; urls: string[] }>()
 // A tab, which has a `location`, or node, which has none. The browser half asks this too.
 export const inPage = () => typeof location !== 'undefined'
 
-// The bytes of the file at `url`, read once more: fetched in a tab, read from disk in node.
+// The bytes of the file at `url`, read once more: a wad's own when one holds it, else fetched in a
+// tab and read from disk in node.
 export async function fetched(url: string): Promise<ArrayBuffer> {
+  const own = await sealed(url)
+  return own ?? stored(url)
+}
+
+// The bytes of the file at `url` where it is stored: fetched in a tab, read from disk in node.
+async function stored(url: string): Promise<ArrayBuffer> {
   if (inPage()) {
     const res = await fetch(encodeURI(url))
     if (!res.ok) throw new Error(`loader could not fetch ${url}: ${res.status}`)
@@ -315,6 +346,94 @@ export async function fetched(url: string): Promise<ArrayBuffer> {
   const [fs, path] = await Promise.all([import('node:fs/promises'), import('node:path')])
   const file = await fs.readFile(path.join(process.cwd(), url)).catch(e => { throw new Error(`loader could not read ${url}: ${e.code}`) })
   return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer
+}
+
+// The key every wad is sealed with.
+const SEAL = new Uint8Array([
+  0x5b, 0x1e, 0xc4, 0x93, 0x27, 0xa8, 0x6f, 0xd0, 0x3a, 0x81, 0xe9, 0x54, 0x0c, 0xb7, 0x62, 0xf5,
+  0x98, 0x2d, 0x47, 0xbe, 0x13, 0xca, 0x7e, 0x05, 0xe1, 0x6b, 0x9f, 0x38, 0xd4, 0x40, 0xa3, 0x76,
+])
+const MAGIC = [0x50, 0x57, 0x41, 0x44] // PWAD
+const VERSION = 1
+const IV = 12
+
+const sealKey = () => crypto.subtle.importKey('raw', SEAL, 'AES-GCM', false, ['encrypt', 'decrypt'])
+
+// A wad of `files`, each by its name from the wad's folder.
+export async function seal(files: Record<string, Uint8Array>): Promise<Uint8Array> {
+  const names = Object.keys(files)
+  for (const name of names) if (!name || name.startsWith('/') || name.split('/').some(part => part === '..' || part === '.' || part === '')) {
+    throw new Error(`a wad holds files by their names from its folder, and ${JSON.stringify(name)} is not one`)
+  }
+  const index = new TextEncoder().encode(JSON.stringify(names.map(name => [name, files[name].byteLength])))
+  const contents = new Uint8Array(4 + index.byteLength + names.reduce((n, name) => n + files[name].byteLength, 0))
+  new DataView(contents.buffer).setUint32(0, index.byteLength, true)
+  contents.set(index, 4)
+  let at = 4 + index.byteLength
+  for (const name of names) {
+    contents.set(files[name], at)
+    at += files[name].byteLength
+  }
+  const iv = new Uint8Array(await crypto.subtle.digest('SHA-256', contents)).slice(0, IV)
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await sealKey(), contents))
+  const wad = new Uint8Array(MAGIC.length + 1 + IV + sealed.byteLength)
+  wad.set(MAGIC, 0)
+  wad[MAGIC.length] = VERSION
+  wad.set(iv, MAGIC.length + 1)
+  wad.set(sealed, MAGIC.length + 1 + IV)
+  return wad
+}
+
+// The files a wad holds, each by its name from the wad's folder.
+export async function unseal(wad: Uint8Array): Promise<Record<string, Uint8Array>> {
+  if (wad.byteLength < MAGIC.length + 1 + IV || MAGIC.some((b, i) => wad[i] !== b)) throw new Error('it is not a wad')
+  if (wad[MAGIC.length] !== VERSION) throw new Error(`it is a wad of version ${wad[MAGIC.length]}, and this opens version ${VERSION}`)
+  const iv = wad.slice(MAGIC.length + 1, MAGIC.length + 1 + IV)
+  let contents: Uint8Array
+  try {
+    contents = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, await sealKey(), wad.slice(MAGIC.length + 1 + IV)))
+  } catch {
+    throw new Error('it does not open with the key: it was sealed with another, or it is damaged')
+  }
+  const length = new DataView(contents.buffer, contents.byteOffset).getUint32(0, true)
+  const index: [string, number][] = JSON.parse(new TextDecoder().decode(contents.subarray(4, 4 + length)))
+  const files: Record<string, Uint8Array> = {}
+  let at = 4 + length
+  for (const [name, n] of index) {
+    files[name] = contents.slice(at, at + n)
+    at += n
+  }
+  return files
+}
+
+// Each wad opening or open, by its url, and every file the open ones hold, by its path.
+const wads = new Map<string, Promise<void>>()
+const unsealed = new Map<string, ArrayBuffer>()
+
+// Starts opening every wad `world.loader.wads` names that is not open or opening, and resolves once
+// each has opened; it rejects with the first that cannot be, which is started again on the next ask.
+export function mount(world: Record<string, any>): Promise<void> {
+  const urls: string[] = world.loader?.wads ?? []
+  return Promise.all(urls.map(url => {
+    const had = wads.get(url)
+    if (had) return had
+    const opening = stored(url)
+      .then(b => unseal(new Uint8Array(b)))
+      .then(files => { for (const [name, file] of Object.entries(files)) unsealed.set(beside(url, name), file.buffer as ArrayBuffer) })
+      .catch(e => {
+        wads.delete(url)
+        throw new Error(`loader wad ${url}: ${e.message}`)
+      })
+    wads.set(url, opening)
+    return opening
+  })).then(() => {})
+}
+
+// The bytes of the file at `url` when a wad holds it, a copy of its own, once every wad that has
+// started opening has opened or failed; else undefined.
+export async function sealed(url: string): Promise<ArrayBuffer | undefined> {
+  if (wads.size) await Promise.allSettled([...wads.values()])
+  return unsealed.get(url)?.slice(0)
 }
 
 // The one fetch of a url, however many names and callers ask for it. One that fails is forgotten.
@@ -361,12 +480,22 @@ const keyOf = (e: Entry) => [e.type, e.url, ...(e.type === 'sheet' ? [JSON.strin
 
 // The process's decoded copy of an entry, made the first time every file it reads is here; until
 // then it throws Missing.
+// Each entry's copy, by the entry, once it is made: a rule asks for a definition many times a step,
+// and a copy is refilled in place and never replaced.
+const byEntry = new WeakMap<Entry, any>()
+
 function decoded(e: Entry): any {
+  const quick = byEntry.get(e)
+  if (quick !== undefined) return quick
   const key = keyOf(e)
   const had = made.get(key)
-  if (had) return had.value
+  if (had) {
+    byEntry.set(e, had.value)
+    return had.value
+  }
   const { value, urls } = decodeFile(e)
   made.set(key, { entry: e, value, urls })
+  byEntry.set(e, value)
   return value
 }
 
@@ -409,13 +538,24 @@ const catalogue = (world: Record<string, any>): Record<string, Entry> => {
 // The loader rows whose preloads `before` has started: one start each, whatever it comes to.
 const begun = new WeakSet<Row>()
 
-export const loader: Kind & Required<Prepare> = {
+export const loader: Kind & Required<Prepare> & Memory = {
+  // Whether the preloads were started and the names the rules asked `load` for, which a truth's
+  // snapshot does not carry: handed out with a save and taken by the truth loaded from it (`Memory`
+  // in `addons/rewind`), so nothing there is started again that was started before.
+  hold(me) { return { begun: begun.has(me), asked: [...asked.get(me) ?? []] } },
+  take(me, held) {
+    const h = held as { begun: boolean; asked: string[] }
+    if (h.begun) begun.add(me)
+    asked.set(me, new Set(h.asked))
+  },
   before(me, _dt, w) {
     if (begun.has(me)) return
     begun.add(me)
+    mount(w.world).catch(e => console.error(e))
     for (const [name, a] of preloads(w.world)) need(name, a).catch(e => console.error(e))
   },
   async prepare(_me, world) {
+    await mount(world)
     await Promise.all(preloads(world).map(([name, a]) => need(name, a)))
   },
 }

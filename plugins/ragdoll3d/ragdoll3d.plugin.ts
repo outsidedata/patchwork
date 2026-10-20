@@ -3,7 +3,8 @@
 // scene's `world.ragdoll3d`, read off `plugins.wire.scene.world`.
 //
 // What it lies on comes through mods (`addons/scenemanager`), `world.ragdoll3d.mods: { model, pose,
-// land, solids, gravity }`, each naming the plugin whose mod for ragdoll3d hands that function:
+// land, solids, gravity }`, each naming the plugin whose mod for ragdoll3d hands that function (and a
+// server one, `bodies`, which its mod for hitscan3d passes on, `ragdoll3d.hitscan3d.ts`):
 //   model     `model(plugins, id)`, the row's model root, or undefined before it is built (anim's,
 //             `anim.ragdoll3d.ts`). A scene that names none throws.
 //   pose      `pose(plugins, id, clip, t)`, the row's model drawn in one clip alone from its rest and
@@ -132,10 +133,24 @@
 // A body is let go of when its row's `limp` clears or the row ends, and `close` lets go of all; anim
 // puts a row that gets up back at its rest. `body(id)` is the row's body as it stands, `{ points,
 // steps, asleep }`: each role's point, the steps taken and whether it sleeps, or undefined.
+//
+// The physics mode, `world.ragdoll3d.physics: true`: the body is a box3d ragdoll the server made
+// (`ragdoll3d.sim.ts`'s `fall`, `ragdoll3d.box3d.ts`), and none of the above runs. A body lying limp
+// with a `ragdoll` (bone name to its `bone` row's id) has its model's bones turned to follow its
+// bodies every frame. anim draws no limp row, so the model is the ragdoll's.
+//   The frame a ragdoll is first drawn, its meshes stop being culled by their rest-pose bounds, and
+//   each bone's turn in the world against its body's, and the hips' place against the torso's body,
+//   are kept: the model stands as it stood. Each frame after, each bone of `PHYSICS.bones`
+//   (`ragdoll3d.sim.ts`; its `model` the suffix of the model's bone), parents first, is
+//   turned to its body's turn times that offset, in its parent's frame; the hips (`root`) are moved
+//   with the torso
+//   too. A Mixamo model binds a copy of the skeleton for each of its meshes, the copies' bones named
+//   as the first's with `_1`, `_2`, …; every copy takes the first's local turns and places.
 import type * as THREE from 'three'
 import type { Plugins } from '#engine/browser.ts'
 import type { Row } from '#engine/engine.ts'
 import { ahead, mod, provided } from '#addons/scenemanager/scenemanager.addon.ts'
+import { PHYSICS } from './ragdoll3d.sim.ts'
 
 type Three = typeof import('three')
 type V = [number, number, number]
@@ -325,9 +340,88 @@ function bend(p: V[], i: number, m: number, j: number, lo: number, hi: number) {
   }
 }
 
+type Held = {
+  root: THREE.Object3D
+  bones: { name: string; obj: THREE.Object3D; id: number; off: THREE.Quaternion }[]
+  hips: { obj: THREE.Object3D; id: number; at: THREE.Vector3 }
+  copies: [THREE.Object3D, THREE.Object3D][]
+}
+
 export function ragdoll3d() {
   const bodies = new Map<number, Body>()
+  const held = new Map<number, Held>()
   let text: string | undefined
+
+  // The physics mode: each limp row's model follows its box3d bodies.
+  function follow(plugins: Plugins) {
+    const T: Three = plugins.render3d.THREE
+    const numbers = PHYSICS
+    const byId = new Map(plugins.wire.rows.map(r => [r.id, r]))
+    for (const row of plugins.wire.rows) {
+      if (!row.data.limp || !row.data.ragdoll) {
+        held.delete(row.id)
+        continue
+      }
+      const root = plugins.anim.model(row.id) as THREE.Object3D | undefined
+      if (!root) continue
+      const body = (id: number) => byId.get(id)?.data
+      let h = held.get(row.id)
+      if (!h || h.root !== root) {
+        // three culls a skinned mesh by bounds measured round its rest pose; a ragdoll throws the body
+        // out of them, and its meshes would blink out.
+        root.traverse(o => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) o.frustumCulled = false })
+        root.updateMatrixWorld(true)
+        const first = (suffix: string) => {
+          let found: THREE.Object3D | undefined
+          root.traverse(o => { if (!found && (o as THREE.Bone).isBone && o.name.endsWith(suffix)) found = o })
+          return found!
+        }
+        const list = Object.entries(numbers.bones).map(([name, b]) => {
+          const obj = first(b.model)
+          const d = body(row.data.ragdoll[name])
+          const q = new T.Quaternion().fromArray(d.rot).normalize()
+          return { name, obj, id: row.data.ragdoll[name], off: q.invert().multiply(obj.getWorldQuaternion(new T.Quaternion())) }
+        })
+        const torso = list.find(b => b.name === numbers.root)!
+        const td = body(torso.id)
+        const tq = new T.Quaternion().fromArray(td.rot).normalize()
+        const at = torso.obj.getWorldPosition(new T.Vector3()).sub(new T.Vector3().fromArray(td.pos)).applyQuaternion(tq.clone().invert())
+        const primary = new Map<string, THREE.Object3D>()
+        const copies: [THREE.Object3D, THREE.Object3D][] = []
+        root.traverse(o => { if ((o as THREE.Bone).isBone && !/_\d+$/.test(o.name) && !primary.has(o.name)) primary.set(o.name, o) })
+        root.traverse(o => {
+          if (!(o as THREE.Bone).isBone) return
+          const base = o.name.replace(/_\d+$/, '')
+          const p = primary.get(base)
+          if (p && p !== o) copies.push([p, o])
+        })
+        h = { root, bones: list, hips: { obj: torso.obj, id: torso.id, at }, copies }
+        held.set(row.id, h)
+      }
+      // The hips stand where the torso's body carries them.
+      const td = body(h.hips.id)
+      if (!td) continue
+      const tq = new T.Quaternion().fromArray(td.rot).normalize()
+      const hipsAt = h.hips.at.clone().applyQuaternion(tq).add(new T.Vector3().fromArray(td.pos))
+      const parent = h.hips.obj.parent!
+      parent.updateMatrixWorld(true)
+      h.hips.obj.position.copy(parent.worldToLocal(hipsAt))
+      // Each bone, parents first, to its body's turn times its offset, in its parent's frame.
+      for (const b of h.bones) {
+        const d = body(b.id)
+        if (!d) continue
+        const want = new T.Quaternion().fromArray(d.rot).normalize().multiply(b.off)
+        const pq = b.obj.parent!.getWorldQuaternion(new T.Quaternion())
+        b.obj.quaternion.copy(pq.invert().multiply(want))
+        b.obj.updateMatrixWorld(true)
+      }
+      for (const [p, c] of h.copies) {
+        c.position.copy(p.position)
+        c.quaternion.copy(p.quaternion)
+      }
+      root.updateMatrixWorld(true)
+    }
+  }
 
   function build(T: Three, r: Row, p: Numbers, plugins: Plugins, dt: number, on: { model: Model; pose: Pose; gravity: Gravity }): Body | undefined {
     const world = plugins.wire.scene.world!
@@ -467,6 +561,10 @@ export function ragdoll3d() {
       const scene = plugins.wire.scene
       const p = scene.world?.ragdoll3d as Numbers | undefined
       if (!p) throw new Error('ragdoll3d: the scene gives no world.ragdoll3d')
+      if ((p as { physics?: boolean }).physics) {
+        follow(plugins)
+        return
+      }
       const now = JSON.stringify(p)
       if (now !== text) {
         check(p)
@@ -519,6 +617,7 @@ export function ragdoll3d() {
     },
     close() {
       bodies.clear()
+      held.clear()
       text = undefined
     },
   }

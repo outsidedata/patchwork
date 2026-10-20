@@ -1,6 +1,6 @@
 ---
 name: auditing-a-game
-description: Use in core, or any clone of it, to check a game folder, `games/<game>/`, against every rule of the phase skills and the prime directive while it is being written, and to move what breaks a rule into its home. Triggers on "audit the game", "check the game against the rules", "review the game folder", "does this follow the prime directive", "what is in the wrong place", "clean up the game", before a game or a piece of it is called done, and on picking up a game someone else wrote. It covers each check (a number in a rule or a look, a fixed value on a prefab, an actor importing another, logic in a page, a fetch outside the loader, a score on the `player` row, `Math.random` in a rule, state at the top of a plugin, a seat's argument unchecked, a missing test), the command that finds it, the list the audit hands back (file and line, rule broken, home), and migrating every finding with every file and test that uses it.
+description: Use in core, or any clone of it, to check a game folder, `games/<game>/`, against every rule of the phase skills and the prime directive while it is being written, and to move what breaks a rule into its home. Triggers on "audit the game", "check the game against the rules", "review the game folder", "does this follow the prime directive", "what is in the wrong place", "clean up the game", before a game or a piece of it is called done, and on picking up a game someone else wrote. It covers each check (a number in a rule or a look, a fixed value on a prefab, an actor importing another, logic in a page, a fetch outside the loader, the seat's thing or its own state on a row the `player` row spawns, a page that does not run the scene ahead, a missing press test, `Math.random` in a rule, `Math.sin` or `**` in a rule, state at the top of a plugin, a seat's argument unchecked, a missing test), the command that finds it, the list the audit hands back (file and line, rule broken, home), and migrating every finding with every file and test that uses it.
 ---
 
 # Auditing a game
@@ -9,9 +9,10 @@ An audit reads one game folder, `games/<game>/`, against every rule the phase sk
 directive give, lists what breaks one, and moves each of those into its home. It is run while the
 game is being written, not once at the end: after a phase skill's work, before a piece is called
 done, and on picking up a game someone else wrote. The rules are theirs: `prime-directive`,
-`starting-a-game`, `designing-a-kind`, `input-and-seats`, `building-a-level`, `bringing-in-art`,
-`writing-the-look`, `scene-flow`, `building-the-hud`, `sound`, `tuning-feel`, `building-a-plugin`,
-`building-an-extension` and `proving-a-game`. This skill adds none. Each check below names the skill
+`starting-a-game`, `designing-a-kind`, `designing-a-seat`, `input-and-seats`, `building-a-level`,
+`bringing-in-art`, `writing-the-look`, `scene-flow`, `building-the-hud`, `sound`, `tuning-feel`,
+`building-a-plugin`, `building-an-extension` and `proving-a-game`, with `going-multiplayer`'s step 7
+and press test for what every page that runs a scene ahead draws. This skill adds none. Each check below names the skill
 that says it; where a check and its skill differ, the skill is right and this one is fixed.
 
 A game passes its own tests and breaks rules all the same: every finding an audit makes is one the
@@ -23,8 +24,9 @@ It applies to everything in a game folder: its scene files, its data files, its 
 its pages, its own plugins, addons and extensions, and its tests. It does not cover:
 
 - distribution: seats over a socket, `security`, `vision`, `interest` and a bad network are
-  `going-multiplayer`; accounts and records kept between runs are `persisting-players`; hosting a
-  game and taking core's updates are `shipping-a-game`.
+  `going-multiplayer`, but for the seat's thing and its pages being run ahead, which every game
+  has and this audit checks (Seats and prediction); accounts and records kept between runs are `persisting-players`; hosting a
+  game and taking core's updates are `publishing-a-game`.
 - core's own folders on their own account. The audit asks whether the game's work changed one (The
   folder, below), and a finding whose migration runs into a top-level plugin, addon or the editor
   (Old code a game writes around, below) is built and proven there by `building-a-plugin` or
@@ -102,8 +104,8 @@ old code first.
 
 - **A file named for what it does.** Every file is named after a kind, a scene or the game, beside
   `assets/` and the game's own `plugins/<n>/`, `addons/<n>/` and `extensions/<n>/`. The page loads a
-  look as `<kind>.client.ts` and the player plugin a rule as `<kind>.sim.ts`, so `helpers.ts` or
-  `coins.ts` is loaded by neither. Find: `ls games/<game>` against the kinds, the scenes and the game's
+  look by its kind's name, `<kind>.client.ts`, so `helpers.ts` or `coins.ts` is never loaded as one.
+  Find: `ls games/<game>` against the kinds, the scenes and the game's
   name. Home: code kinds share goes to a plugin of the game's own, `games/<game>/plugins/<name>/`;
   a kind's code to its kind's files.
 - **A kind named after a scene.** `<scene>.sim.ts` is the scene's sim and `<kind>.sim.ts` a kind's
@@ -124,8 +126,7 @@ old code first.
   editor extensions`, and `git diff --stat <the branch the work began from> -- engine plugins addons
   editor extensions`. An edit to `engine/` goes back out; a plugin's change for one game is that
   game's kind; a change that is general is built and proven in its home by `building-a-plugin`. A
-  defect of core met while making the game (`tuning-feel` names the page's clock under a paused editor
-  and the self-ending body on whole steps) is fixed there with its test, never worked around in the
+  defect of core met while making the game is fixed there with its test, never worked around in the
   game, the testbed or a way of looking round it.
 - **A core file naming this game.** No file, header, test or skill outside `games/` names a game in
   `games/`, as an example, a model or a fixture: core ships none, and cites its own tests
@@ -142,9 +143,12 @@ old code first.
   A comment naming a kind, a field, a file or a thing the game does not have is wrong and is fixed in
   the same change (prime-directive, When a doc disagrees). Find: read the top of each file beside
   what the file does. The headers `yarn new-game` wrote (`start.sim.ts`, `player.sim.ts`,
-  `body.sim.ts`, `body.client.ts`, `<scene>.sim.ts`, `<game>.sim.ts`, the pages' comments) describe
-  the scene file as it was written, so each is read again against the scene file and the definitions
-  whenever a prefab, an `actors` entry or a data file changes. The `start.sim.ts` header says a start
+  `player.client.ts`, `<scene>.sim.ts`, `<game>.sim.ts`, the pages' comments, and `body.sim.ts` and
+  `body.client.ts` until the fold deletes them) describe the scene file as it was written, so each is
+  read again against the scene file and the definitions whenever a prefab, an `actors` entry or a
+  data file changes; a header that still says the `player` row spawns a body, or that its row is sent
+  to its own seat alone, is a finding once the fold is made (`starting-a-game`, Fold the body into
+  the player row). The `start.sim.ts` header says a start
   holds its slot and its `pos` "and nothing else"; once a game's starts carry what the thing they
   become starts with (a `look`, a heading, a speed: `starting-a-game`, `input-and-seats`), that
   header is a finding.
@@ -158,10 +162,15 @@ old code first.
   Find: `ls games/<game>` for the pages it holds, then `grep -nE
   "addEventListener|keydown|entry|seed|\.go\(|textContent|innerHTML|addons/"` over each of them but
   `dev.html`, named one by one, and `games/<game>/<game>.server.ts`; then read each page beside the
-  `page(...)` and `MOUNT` lines of `extensions/games/games.route.ts`. A page `gameFiles` writes that the
-  game lacks, or one in an older shape, is a finding too: it is written again as `gameFiles` writes it
-  now (`starting-a-game`, The pages). Home: a rule into its actor, a number into the scene file, a key
-  into `player.client.ts`, a HUD into a kind's look, a trial into `dev.html`.
+  `page(...)` and `MOUNT` lines of `extensions/games/games.route.ts` for `index.html` and
+  `<game>.server.ts`, and `client.html` beside the page `starting-a-game` gives whole (The pages),
+  which wraps the link in `predict`: `gameFiles` still writes the `client.html` of before `predict`
+  while the editor is on hold, so for that page alone the skill's text is the model and the
+  template's is a finding. A page the game lacks, or one in an older shape, is a finding too: it is
+  written again as `starting-a-game` (The pages) gives it. A `client.html` that holds two panes, a
+  network panel, readouts or keys of its own is a testbed in the wrong page. Home: a rule into its
+  actor, a number into the scene file, a key into `player.client.ts`, a HUD into a kind's look, a
+  trial, a second seat on one screen or a network panel into `dev.html`.
 - **A page attaching the game's own addon.** A game's own addon is a home (prime-directive), but
   nothing loads one by its name the way `shipped` loads a game's own plugins (`building-a-plugin`),
   and a page that attaches it is no longer the same in every game. Find: the page reading above, for
@@ -226,9 +235,9 @@ old code first.
   "\"(pads|spawns|starts)\"" games/<game> --include='*.json'`; each scene's starts counted against its
   `seats`, one per slot and never a second for a slot that has one, since `w.find` takes the first
   (`building-a-level`); `grep -n "w.find('start'" games/<game>/player.sim.ts`. A seat that stands
-  nowhere, a quiz's or a hand of cards', has no `start`, and a `start`, a `body` or their checks kept
-  for it are a finding: they go with the body, and `player.sim.ts` and `player.client.ts` stay
-  (`input-and-seats`, Where a seat starts).
+  nowhere, a quiz's or a hand of cards', has no `start`, and a `start`, a `pos`, a `placed` or their
+  checks kept for it are a finding: they go, and `player.sim.ts` and `player.client.ts` stay as the
+  thing the seat plays and its keys (`input-and-seats`, Where a seat starts).
 - **A value only the page uses, on a row or sent.** A volume, a mute, a brightness, rebound keys, a
   best score the page keeps: keys of the store (`building-the-hud`, `input-and-seats`). Find: read
   prefabs and acts for such a field. And every key read has a starting value, or `get` throws `store
@@ -262,13 +271,13 @@ the way of. Each phase skill lists once every file its move touches; the audit p
   uses the store moves them there first (`building-the-hud`, step 9, which lists every file the move
   touches), so a game that lists `store` always meets it. Find: `grep -n '"store"'
   games/<game>/*.scene.json`, read for the prefab.
-- **The stick's deadzone under `bind` on the `player` prefab.** `bind` reads
-  `prefabs.player.deadzone` (`plugins/player/player.plugin.ts:745-746`) where `control` reads
-  `world.player.deadzone` (`:830`); the deadzone is fixed for the scene, so it is `world.player.deadzone`
-  (`input-and-seats`). Find: `grep -rn '"deadzone"' games/<game> --include='*.json'`, read for the
-  `player` prefab. The move touches those reads, the header of `player.plugin.ts` (lines 107-108),
-  `plugins/player/player.plugin.test.ts`, and every game on `bind` that binds the stick, its scene
-  file and its tests.
+- **The stick's deadzone on the `player` prefab.** `bind` and `control` both read
+  `world.player.deadzone` (`deadzone()` in `plugins/player/player.plugin.ts`), and a table that
+  holds a side of a stick throws `the player table holds a side of a stick, and the scene gives no
+  world.player.deadzone` without it; a `deadzone` left on the `player` prefab is read by nothing and
+  rides every `player` row to every seat. Find: `grep -rn '"deadzone"' games/<game>`, read for the
+  `player` prefab. It moves to `world.player.deadzone`, in the manager's `world` when every child
+  plays by it, and leaves the prefab.
 
 ### Rules (designing-a-kind, starting-a-game, scene-flow)
 
@@ -276,6 +285,14 @@ the way of. Each phase skill lists once every file its move touches; the audit p
   "Math.random" games/<game> --exclude='*.test.ts'`. Home: `w.die()`, or `seeded` from
   `engine/engine.ts` over a hash of the row's id and a step count the row keeps. Proven by a test that
   seeks under the recorder (Tests, Replay) and a check against `seeded(world.seed)`.
+- **A rule computing with what engines differ on.** `Math.sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
+  `atan2`, the hyperbolics, `exp`, `expm1`, the logs, `pow`, `**`, `cbrt` and `hypot` differ between
+  node and a browser in the last bit, so a page that runs the scene ahead ends a hair from the server;
+  so does anything a rule takes from three outside three's `src/math` (a curve, the scene graph).
+  Find: `yarn vitest run games/games.test.ts -t "no game's rule computes"`, which names every rule,
+  game plugin's server half and truth-side mod that breaks it. Home: `plugins/math`, `math.sin(a)` for
+  `Math.sin(a)`, `math.pow(a, b)` for `a ** b`, and three's vectors, quaternions and matrices for the
+  rest (`designing-a-kind`, Maths in a rule).
 - **The die rolled in a scene with no seed.** It throws `scene has no seed` the step it first rolls.
   Find: `grep -rnF ".die()" games/<game> --include='*.ts' --exclude='*.test.ts'`, the game's own
   plugins included, then `grep -n '"seed"' games/<game>/*.scene.json` for each scene whose rules roll.
@@ -296,8 +313,8 @@ the way of. Each phase skill lists once every file its move touches; the audit p
   model posed by hand where anim does, an effect where particle2d or particle3d does
   (`bringing-in-art`, `writing-the-look`). Find: read each look and rule against the plugins core has.
   Home: the plugin's table on `world`, and the look goes.
-- **A rule writing another kind's row.** The field then has rules in two files, and by default the
-  page never runs the step ahead. It calls that kind's act (`designing-a-kind`), and a function of a
+- **A rule writing another kind's row.** The field then has rules in two files. It calls that kind's
+  act (`designing-a-kind`), and a function of a
   plugin writes only the row it was handed, a ledger's row excepted (`building-a-plugin`). Find:
   `grep -nE "w\.(find|get|all)\("` over the rules and the game's plugins, then read each: a write to
   the row found, or the row's array handed to a function that writes into it. The second is found
@@ -341,20 +358,25 @@ the way of. Each phase skill lists once every file its move touches; the audit p
   send at a row it does not own; a kind reached only through rules or through the `player` row lists
   no `open` (`designing-a-kind`, `input-and-seats`). Find: the `open:` hits above, each read for who
   sends it. Home: the `open` entry goes.
-- **A score as a field of a kind that exists for another reason.** A new system is a new kind, never
-  a field added to a kind that exists for another reason (prime-directive, Actor): a score is a kind of
-  its own, never a `score` field on the body or on the `player` row, which is the seat's handle and
-  holds none of the game's state, a score only its own seat should see included (`designing-a-kind`,
-  `building-the-hud`). Find: `grep -rn '"score"' games/<game> --include='*.json'`, and read whose
-  prefab it is on; then read each `player` prefab for a field that counts while the level plays. A
-  field that holds what `arrive` brought, `carried` say, and that `before` spawns the seat's own count
-  from, is not one (`scene-flow`, step 7); one that goes on counting is. Home: a kind of its own, one
-  `actors` entry the seats share, or a public row per seat that the `player` row spawns in its
-  `before` and keeps by id and that ends itself once no `player` row names it (`building-the-hud`),
-  its look drawing it.
-- **`w.find` or `w.get` where the row may be gone or not sent.** Both throw. A row that may have
-  ended, and in a rule the page runs ahead a row the seat is not sent, is asked with `w.all`. Find: the
-  `w.(find|get|all)` list above, read for kept ids and other seats' rows.
+- **A seat's thing, or its own state, on a row the `player` row spawns.** The `player` row is the
+  thing the seat plays as, and everything the seat owns, its place, health, ammo, lives, score,
+  laps, is a field of it (prime-directive, Row or local; `designing-a-seat`; `designing-a-kind`,
+  step 2). Find: `grep -n "w.spawn(" games/<game>/player.sim.ts`,
+  each hit read: a row spawned once, in `before` or an `arrive`, whose id the `player` row keeps in a
+  field (`body`, `car`, `hero`, `tally`, `hud`) is one, and so is a kind whose rule ends its row when
+  no `player` row names it, `grep -rnE "w\.all\('player'\)\.some" games/<game> --include='*.sim.ts'`;
+  a shot, a ball or a footprint the seat's thing makes and lets go of is not. Then each prefab of a
+  kind keyed by slot or by a player's id, read for a field that is one seat's own. Home: the fields
+  onto the `player` prefab, the rule's hooks and acts into `player.sim.ts`, its look into
+  `player.client.ts` drawn for every row, its definition into the `player` entry, its entry in a
+  plugin's kind table under `player`, and the spawned kind's files, prefab, `sim` entry and
+  definition deleted (`starting-a-game`, Fold the body into the player row, is the shape for any
+  game). A field only its own seat may read is listed in the scene's `security` block,
+  `{ "player": { "<field>": "me" } }`, with `masks: []` on the `player` prefab. A value no seat owns,
+  a team's total or the coins left, stays a kind of its own. Proven by the kind's tests read off the
+  `player` row and by `<game>.predict.test.ts` (Seats and prediction).
+- **`w.find` or `w.get` where the row may be gone.** Both throw. A row that may have ended is asked
+  with `w.all`. Find: the `w.(find|get|all)` list above, read for kept ids.
 - **A rule that reads another row's move in `tick`.** It reads it a step late whenever that row
   stands later; it reads it in `after` (`designing-a-kind`). Find: read each rule that tests one row
   against another.
@@ -499,7 +521,8 @@ the way of. Each phase skill lists once every file its move touches; the audit p
   on the land themselves. Find: the `actors` entries of a scene with terrain3d, their `pos[1]` read
   against the land. Home: the land's height written into `pos[1]` of its entry.
 - Proven by the scene's test, `<scene>.sim.test.ts`: every start stands clear of the walls for the
-  body the seat plays, and every cell a body can stand in is reachable from every start.
+  thing the seat plays, its `player` row, and every cell that thing can stand in is reachable from
+  every start.
 
 ### Sound (sound)
 
@@ -523,9 +546,9 @@ the way of. Each phase skill lists once every file its move touches; the audit p
 - **A listener of the game's own.** The player plugin listens; `player.client.ts` hands it one table
   in `setup` and calls `unbind` in `remove`. Find: `grep -rn "addEventListener" games/<game>
   --exclude='*.test.ts'`.
-- **An action bound before its act exists.** A press of an act the `player` kind does not have throws
-  `no action player.<act>` and the page stops. Find: every act `player.client.ts` sends against the
-  acts of `player.sim.ts`.
+- **An action bound before its act exists.** The engine refuses every press of an act the `player`
+  kind does not have, and the key does nothing with nothing said. Find: every act `player.client.ts`
+  sends against the acts of `player.sim.ts`.
 - **The slot passed as a seat.** `go` and every act take the truth's seat number, never
   `me.data.seat`. Find: `grep -rnE "'go'|scenemanager\.go\(" games/<game> --exclude='*.test.ts'`, each
   read for the seat it passes; a hook passes one its row kept from an act (Scenes, below).
@@ -534,19 +557,86 @@ the way of. Each phase skill lists once every file its move touches; the audit p
   Find: `grep -n "control(" games/<game>/player.client.ts`, then read each scene's `plugins` and
   `world.player`.
 - **A child giving `world.player` that drops the manager's.** A child's own `player` key replaces
-  all of it, `actions`, `deadzone`, `ledgers`, `repeat`, `steps` and `window` together. Find: `grep -n
-  '"player"' games/<game>/*.scene.json`, read for `world` blocks.
-- **A ledger the scene does not name.** A scene that lists `audio`, `particle2d`, `particle3d`,
-  `volley2d` or `volley3d` names its kind in `world.player.ledgers`, and so does a child that gives its
-  own `world.player`. Find: `grep -nE "\"(audio|particle2d|particle3d|volley2d|volley3d|ledgers)\""
-  games/<game>/*.scene.json`. Proven by the page test of the press, a key's or a UI button's through
-  `plugins.player.<act>`: drawn at once, the sound once (`sound`, Proving it).
-- **Whole steps without their costs.** A scene with `world.player.steps` runs no step that spawns,
-  ends a row, rolls or writes the world on the page; every row a step reads is sent to the seat; and
-  every kind the seat is sent a row of has a rule the page can load, beside the page or in
-  `plugins/<kind>/`, so a game's own plugin's row makes the page's frame throw (`tuning-feel`,
-  `building-a-plugin`). Find: `grep -n '"steps"' games/<game>/*.scene.json`, then each kind the scene's
-  seats are sent. A missing piece is built in `plugins/player` or `addons/player`, never worked around.
+  all of it, `actions`, `deadzone` and `repeat` together. Find: `grep -n '"player"'
+  games/<game>/*.scene.json`, read for `world` blocks.
+
+### Seats and prediction (designing-a-seat, going-multiplayer, input-and-seats, sound)
+
+Every seat is sent every `player` row; the seat's own carries `mine`, and `possessed(rows)` finds
+it. The thing a seat controls, and all of its own state, are fields of its `player` row. On
+`client.html` the page draws every row from the copy that runs ahead (`addons/predict`), on the frame
+after the key. A game can break this and still pass every test that reads the server's rows, so each
+check here is run on every game whose seat controls anything.
+
+- **The thing the seat plays as on a row the `player` row spawns.** Find: `grep -n "w.spawn("
+  games/<game>/player.sim.ts`, each hit read for a row spawned once and kept by id; `grep -nF
+  "w.call(w.get(me.data." games/<game>/player.sim.ts`, an act forwarded to such a row; and the
+  generated `body.sim.ts`, `ls games/<game>`. Home: the `player` row, the whole of it moved as
+  Rules has it (A seat's thing, or its own state, on a row the `player` row spawns).
+- **The seat's own row found as the first `player` row.** `rows.find(r => r.kind === 'player')` is
+  whichever seat's row came first. Find: `grep -rnF "kind === 'player'" games/<game> --include='*.ts'
+  --include='*.html'`, each hit read: in a look, a page, a browser plugin, a playtester's think or a
+  test, one that means the seat's own row is a finding; a rule or a filter over every seat's row, a
+  touch asking whether a row is a seat's thing, is not. Home: `possessed(rows)`, imported from
+  `#plugins/player/player.plugin.ts` on a page, a look or a browser plugin and from
+  `#addons/player/player.addon.ts` in a rule, a test or a node script.
+- **Keys bound, or the camera moved, for every seat's row; or the thing drawn only for `mine`.**
+  `player.client.ts` is set up once for every `player` row the page is sent. It draws the thing for
+  every row, and binds keys, moves the camera and starts a playtester only for the row that is
+  `mine` (`designing-a-seat`, The look). Find: `grep -nE "\.(bind|control)\(|camera|playtester"
+  games/<game>/player.client.ts` and `grep -n "mine" games/<game>/player.client.ts`, then its `setup`,
+  `tick` and `remove` read: each bind, camera move and playtester behind the row being `mine`, the
+  drawing before any return on it, `unbind` only for the row that bound. Every other look that binds:
+  `grep -rnE "player\.(bind|control)\(" games/<game> --include='*.client.ts'`, read the same way.
+- **An act on the `player` row that only rules should call.** A seat may send any act its own
+  `player` row has, so `hurt`, `award`, `heal`, `gain` or `power` there is one it sends itself
+  (`designing-a-seat`, Acts a seat can send). Find: `grep -n -A 60 "acts:" games/<game>/player.sim.ts`,
+  every act listed; each against what `player.client.ts`, the HUD's buttons and the pages send
+  (`grep -rnE "'[a-zA-Z]+'" games/<game>/player.client.ts`, read); and `grep -rnE "w\.call\("
+  games/<game> --include='*.ts' --exclude='*.test.ts'`, each call read for one made on a `player`
+  row. An act other kinds call that does not return at once for `seat >= 0` is a finding. Home: the
+  act refusing a seat, `if (seat >= 0) return`, called by rules with `-1`, or the effect a plain
+  function of a game plugin, handed the row. Proven by the kind's test sending that act from the
+  seat's own connection with `seat.take`: the step runs and the row is as it was.
+- **A scene a seat plays in with no `world.predict`.** Without it the page draws the packets, its own
+  thing a round trip late. Find: `grep -n '"predict"' games/<game>/*.scene.json`, against each scene
+  whose `plugins` list `player`, read; the manager's `world` gives it to every child. A block of
+  another shape than `{ epsilon, cutoff, halflife, snap, below }` throws as the scene loads.
+  Home: the block in that scene's `world`, or the manager's (`starting-a-game`, Fold the body into
+  the player row, step 1).
+- **`client.html` that does not wrap `predict`.** Find: `grep -nF "predict(" games/<game>/client.html`;
+  nothing is a finding. Then the page read whole against `starting-a-game` (The pages): `tap(dial(url),
+  wire => predict(link(wire), file, import.meta.url, mount))`, `page.input()` then `await
+  page.frame(now)`, and nothing else; `index.html` read against the same section, `view` over a
+  `loopback`, input, steps, `page.frame(owed / dt)`, and no `predict`. Home: the page written again
+  as that section gives it, its extra lines into `dev.html`.
+- **No press test.** Find: `ls games/<game>` for `<game>.predict.test.ts`; then the file read for
+  pages made by `predict(link(loopback(accept(manager(truth)), time, net)), ...)` on a server stepped
+  by `run`, a clean wire and bad ones, a press every frame at `possessed(...)`'s id, the row drawn,
+  `possessed(page.client.plugins.wire.rows)`, checked on every frame against the presses sent by the
+  frame before and by that frame, and `stats.corrections` 0 (`going-multiplayer`, How it is proven).
+  A test of the server's rows alone, or a simulation of `view` pages, is not one. Home: the test,
+  beside the manager, run with `yarn vitest run games/<game>/<game>.predict.test.ts`.
+- **The seat's own sounds raised on the ledger.** A sound the seat's thing makes, its jump, shot or
+  hurt, raised `from` its `player` row rides that row's `voiced` list and is heard on the frame after
+  the key; one raised with only `at`, or `from` another row, goes on the ledger and is heard a round
+  trip late on its own page (`plugins/audio/audio.sim.ts`, `sound`). Find: `grep -rnE "sound\(w|'play'"
+  games/<game> --include='*.ts' --exclude='*.test.ts'`, each hit in `player.sim.ts`, or in a rule
+  acting on a seat's thing (a hit on it, a pickup by it), read for its `from`. Home: `from` the
+  `player` row's id, `sound(w, cue, undefined, me.id)`.
+- **A `player` row a rule ends or spawns.** The player addon spawns one for each seat and ends it when
+  the seat leaves; a respawn resets the same row's fields, so the seat keeps its row id and its page
+  keeps predicting it (`designing-a-seat`). Find: `grep -rnE "w\.end\(|spawn\('player'"
+  games/<game> --include='*.sim.ts'`, each read for a `player` row. Home: the fields reset from its
+  start in the row's own rule.
+- **A seat's private field hidden by moving it off its row.** Find: the `security` block of each
+  scene, `grep -n '"security"' games/<game>/*.scene.json`, against the kinds the `player` row spawns
+  (above). Home: the field on the `player` row, listed `{ "player": { "<field>": "me" } }`, with
+  `masks: []` on the `player` prefab.
+- **A test of a scene that runs ahead numbering a visit's messages with a gap.** The scene takes a
+  seat's messages in order from 1, and one numbered past a gap waits for ever, so the test reads a
+  row that never changes. Find: `grep -nE "seq:" games/<game>/*.test.ts`, read for each visit's
+  numbers. Home: `++seq` from 1 per visit, as the client numbers them.
 
 ### Scenes (scene-flow)
 
@@ -576,12 +666,13 @@ the way of. Each phase skill lists once every file its move touches; the audit p
   games/<game>`. The first game that names a scene in `world` extends `namingsOf` in
   `plugins/scenemanager/scenemanager.extension.tsx` to walk each scene file's `world`, with its test
   beside it. Proven by `<game>.extension.test.tsx` (`ed.typeOf`, and `removeScene` refused).
-- **A hook calling `go` with a seat nobody stored.** A hook has no seat. `player.client.ts`'s `setup`
-  calls an act of the `player` row that writes the seat it is handed, on every arrival; `arrive` writes
-  it only when the `go` carried args. Find: each hook that calls `go`, read for where its seat came
-  from.
-- **A level whose `player` waits for `arrive`, entered with no args.** Nothing spawns: every `go` into
-  that level carries args, a title's button included. Find: each `go` into such a level, read.
+- **A hook calling `go` with a seat nobody stored.** A hook has no seat. `player.client.ts`'s `setup`,
+  for the row that is `mine`, calls an act of the `player` row that writes the seat it is handed, on
+  every arrival; `arrive` writes it only when the `go` carried args. Find: each hook that calls `go`,
+  read for where its seat came from.
+- **A level whose `player` waits for `arrive`, entered with no args.** The row never stands: every
+  `go` into that level carries args, a title's button included. Find: each `go` into such a level,
+  read.
 - **Args sent to a scene that lists no `player`.** They are dropped. Find: each `go` with args,
   against the next scene's `plugins`.
 - **A menu, a results screen or a game-over screen that lists `player`.** It seats by slot, so a
@@ -733,10 +824,12 @@ the way of. Each phase skill lists once every file its move touches; the audit p
   of more than one seat is played over a socket (`going-multiplayer`, `input-and-seats`). A kind with
   no rule (`start`) has no rule to test; a screen kind with no rule, a title card a shared look draws,
   is proven by that look's page test and by its `<kind>.sim.test.ts` refusing a message a seat sends
-  at its row (`designing-a-kind`). Find: `ls` the game's folder and each folder in it, pairing
-  each file with its test, and `grep -n '"seats"' games/<game>/*.scene.json`. A new game shows
-  `body.sim.ts` and `body.client.ts` on its first audit: `yarn new-game` writes no test beside either,
-  and proves the body through `<game>.sim.test.ts`.
+  at its row (`designing-a-kind`); and the game, `<game>.predict.test.ts`, the press test, once a seat
+  controls anything (Seats and prediction). Find: `ls` the game's folder and each folder in it,
+  pairing each file with its test, and `grep -n '"seats"' games/<game>/*.scene.json`. A new game
+  that was never folded shows `body.sim.ts` and `body.client.ts` on its first audit: the finding is
+  the body itself, which the fold takes into `player` (`starting-a-game`), not a test missing beside
+  it.
 - **A look's test that checks the wrong thing.** A look's test checks what the look built from the
   row and the definition: one drawing per row on its layer, standing on the row's `pos`, of the
   definition's size and colour, gone when the row ends. Whether it looks right is seen in Chrome,
@@ -772,11 +865,11 @@ the way of. Each phase skill lists once every file its move touches; the audit p
   games/<game>/*.test.ts` and `grep -nE "readFileSync|/games/|assets/" games/<game>/*.test.ts`, each
   hit read: an `import` of the scene file or the definitions, and the literal path above, are not
   one. Home: the assertion of what the value does; the file through its entry.
-- **A page test that presses or clicks without holding the page's clock.** A test that presses a
-  key the player plugin handles, or clicks a mouse button a table binds or a UI button whose tap calls
-  `plugins.player.<act>()`, holds the clock with `vi.spyOn(performance, 'now')` and pins the step the
-  press lands on (`input-and-seats`, `proving-a-game`). Find: `grep -lE "keyCode|pointertap"
-  games/<game>/*.test.ts`, each file read for the clock and for rows read within a range of steps.
+- **A page test that presses or clicks and pins no step.** A test that presses a key the player
+  plugin handles, or clicks a mouse button a table binds or a UI button whose tap calls
+  `plugins.player.<act>()`, pins the step the press lands on (`input-and-seats`, `proving-a-game`).
+  Find: `grep -lE "keyCode|pointertap" games/<game>/*.test.ts`, each file read for rows read within a
+  range of steps.
 - **A HUD test that does the ui's arithmetic.** A panel's place is `ui.panel(name).position`, read
   off the page, never worked out again from `world.ui`'s anchor, `at` and the canvas's size
   (`building-the-hud`). Find: `grep -nE "anchor|\.at\b|width *[-/]" games/<game>/*.client.test.ts`,
@@ -807,11 +900,13 @@ the way of. Each phase skill lists once every file its move touches; the audit p
   scene. Find: `grep -rn "playtester" games/<game>`, read.
 - **A HUD test that cannot tell the two entries apart.** Its stand-in for `PIXI.Assets.load` hands
   back a new texture on every call (`building-the-hud`).
-- **A simulator run with no `watch`, or a press check short of its list.** It records no rows; and a
-  summary's corrections count whole steps only. A body a seat drives has the press check, whose one
-  list is `going-multiplayer`'s, every fact of it for each page, the frame-by-step comparison among
-  them (`going-multiplayer`, `tuning-feel`, `proving-a-game`). Find: `grep -rn "simulate(" games/<game>`,
-  read against the list.
+- **A simulator run with no `watch`, or a simulation standing in for the press test.** A run with no
+  `watch` records no rows. A page standing for a player is `predict: true`, and `watch.own` names the
+  seat's `player` row itself with `[]`, never a field it holds the id of the thing in. What a key
+  puts on screen is proven by `<game>.predict.test.ts` and nothing else; a simulation of `view`
+  pages states a round trip of lag on the seat's own thing as if it were the game's
+  (`going-multiplayer`, `tuning-feel`, `proving-a-game`). Find: `grep -rn "simulate(" games/<game>`,
+  read for `predict`, `watch` and what it asserts of the seat's own row.
 - **Replay.** A game proves it replays, in the scene's `<scene>.sim.test.ts`: a real page,
   `view(rec.link, …)`, played by presses or a bot under `recorder(file, sim, here)`, never messages
   handed to `rec.link.send` by the test; `await rec.step()` after each frame with the child's rows
@@ -843,7 +938,8 @@ disagrees). So each entry of the list is moved, in the same piece of work:
 4. Run the test files beside every file touched, one a call, `yarn vitest run <file>`; `yarn tsc`,
    read for the game; `yarn eslint` on each extension or route touched.
 5. Play it where what is drawn or how it plays changed: `yarn editor <game>`, `index.html`, and
-   `client.html` against `node --experimental-strip-types games/<game>/<game>.server.ts`.
+   `client.html` against `node --experimental-strip-types games/<game>/<game>.server.ts`, the seat's
+   thing moving on the frame after its key.
 
 A finding whose home is missing in core is built there first, general, set from the scene file and
 tested (`building-a-plugin`, `building-an-extension`), never worked around in the game and never left
@@ -858,13 +954,17 @@ nobody reads, a screen it could lose, the person is asked what it should do.
 - A dotted name grepped as a pattern, which matches every import of the scenemanager.
 - Tests counted as the game: their stand-ins for what node lacks, their `node:fs`, a stand-in canvas's
   size.
-- What the skills allow listed as broken: `player.sim.ts` and `player.client.ts`; a `<scene>.sim.ts`,
+- What the skills allow listed as broken: `player.sim.ts` and `player.client.ts`; a seat's own score,
+  health, ammo or lives as fields of its `player` row; a shot or a ball the `player` row spawns and
+  lets go of; a `<scene>.sim.ts`,
   `<game>.server.ts` or test importing kinds, or a look importing its own kind's rule; an `import
   type` from a `.plugin.ts`; arithmetic on the definition's numbers; a static thing's `pos` and what
   a start hands on; a look test's literal path for the url asked for; an extension's own snap or step.
 - What the skills forbid passed over as allowed: a starting angle taken for a direction, a gap of
   spaces in a string taken for no number, a test's input that works only because of the layout taken
-  for the test's own.
+  for the test's own, a car, a gun or a hero on a row the `player` row spawns taken for a kind of its
+  own because the generated `body` is one, a round trip of lag on the seat's own thing taken for a
+  fact of the network.
 - A field taken for fixed because no rule of the game writes it, when a plugin the scene lists does.
 - A write to another row taken as clean because no grep shows it: a rule handing that row's array to
   a plugin's function, which writes into it. Every `w.find`, `w.get` and `w.all` is read through to

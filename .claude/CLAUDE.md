@@ -8,6 +8,7 @@ the HUD, a plugin, an extension, proving it, going multiplayer, shipping); load 
 ## Commands
 
 ```
+yarn health                           # does this machine have what core needs: node, packages, and for baking Blender, the library, a WebP gltfpack, a WebP magick
 yarn new-game <name>                  # games/<name>/: a game of one scene and a seat, as the editor's File → New Game writes it
 yarn test                             # vitest run — the whole suite but the view tests
 yarn vitest run <path>                # one file
@@ -16,11 +17,16 @@ yarn test:view                        # the view tests (`.view.test.tsx`) only
 yarn test:view <path>                 # one view test file
 yarn tsc                              # typecheck, no emit
 yarn lint                             # eslint
-yarn editor [game]                    # localhost:5173/editor/?game=<game>, one game a page; games/<game>/index.html or client.html
+yarn editor [game] [--port <port>]    # localhost:5173/editor/?game=<game>, one game a page; games/<game>/index.html or client.html
+                                      # 5173 busy (another clone's editor)? `yarn editor --port 5174`, or `--port 0` for any free one; it prints its url
                                       # and the editor's MCP server at /api/mcp (.mcp.json): every command of the open page is a tool
                                       # no HMR: a page takes in or reloads for every change to the files of its game or of none, its own, another page's or the disk's; the server restarts on its own code
 node --experimental-strip-types games/<game>/<game>.server.ts
 ```
+
+Baking art reads `BLENDER`, `PATCHWORK_LIBRARY`, `GLTFPACK` and `MAGICK` from the shell, else from
+`.env` at the root (copied from `.env.example`, which lists them and their defaults; `.env` is not
+committed). `yarn health` runs each one.
 
 A `.test.ts` runs in node; a `.test.tsx` runs in jsdom with Testing Library. A test that attaches a
 game view (`session.attach`, directly or through the Game panel), so the game's client is made and

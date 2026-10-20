@@ -16,7 +16,9 @@
 //   timer, which is how a server that loses steps is played again. `server.steps`, times of the
 //   timeline, steps the manager at each of them and at no other, as a recording's server did
 //   (`timing`).
-// - Each page opens its link at `join` ms: a `view` on `link(loopback(accept(manager), time, net))`
+// - Each page opens its link at `join` ms: a `view` on `link(loopback(accept(manager), time, net))`,
+//   or with `predict` a page that runs its scene ahead (`addons/predict`), as `client.html` makes it,
+//   whose frame is handed the page's clock,
 //   with the page's `up` and `down` legs, which hand each envelope on the millisecond it arrives, a
 //   wire that opens `open` ms later, as a socket's handshake does. Its display draws `display.hz`
 //   frames a second, its vsyncs `display.phase` ms past each multiple of a frame's time (a phase of
@@ -59,30 +61,36 @@
 // - `run`: what was played: the mode, the seed, the milliseconds, the server's and each page's
 //   knobs, `watch`, and `clocks`, each page's clock at the timeline's 0.
 // - `frame`: one page's frame. `t` the timeline's ms it was called at, `clock` the page's clock as
-//   the player read it to place the frame's step; `n` the step of the packet it drew from and `step`
-//   the step drawn (the player's, which runs ahead); `took`, every envelope
-//   that arrived since the frame before, its `k`, its step `n`, and when it was `sent` and arrived
-//   (`at`); `ack`, `lead` and `reruns` as the player holds them, and `fix`, when this frame corrected
-//   what the page had run, how many rows differed and the largest distance between a watched field
-//   as the page ran it and as the packet had it. `rows` holds each row of a watched kind the page
+//   the frame began; `n` the step of the packet it drew; `took`, every envelope that arrived since
+//   the frame before, its `k`, its step `n`, and when it was `sent` and arrived (`at`). `rows` holds
+//   each row of a watched kind the page
 //   drew, id to its kind and watched fields (every row when `watch.kinds` is unset, every field
-//   when `watch.fields` is); `own` the id of the page's own row: the id its `player` row holds in the
-//   field `watch.own`, or, for a list of fields, the id each row reached holds in the next field, as
-//   drive's `['car', 'chassis']` reaches a car's body through its car; `eye` the camera's
+//   when `watch.fields` is); `own` the id of the page's own row: with `watch.own` an empty list, `[]`,
+//   the page's own `player` row itself (`possessed`), the thing the seat plays as; else the id its
+//   `player` row holds in the field `watch.own`, or, for a list of fields, the id each row reached
+//   holds in the next field, as `['held', 'chassis']` reaches the body of the car a `player` row
+//   holds. A field names a row by its id, a number, or by `{ id }`, as a `player` row's `held`
+//   does (`plugins/player/player.sim.ts`); `eye` the camera's
 //   `{ pos, dir, target }` as the actor that exports `eye()` holds it, where one does, and where none
 //   does its `{ pos, dir }` as the first of the scene's plugins that exports `eye()` holds it, as
-//   chasecamera3d does.
+//   chasecamera3d does; `drawn`, when `watch.drawn` asks for it, where the page drew things on that
+//   frame, between the steps and after a page that runs ahead eased them: the camera's place, each
+//   row's drawn place by its id (`rows`), and every mesh tied to no row by its three.js id (`meshes`),
+//   as the first of the scene's plugins that exports
+//   `drew(f)` hands them (render3d does, canvas or none). Smoothness is read off these, never off
+//   `rows`, which hold a step's places and not what was drawn. With `drawn` come `between`, how far
+//   past the step it drew the page's clock stood (`engine/browser.ts`, Drawing between steps).
 // - `step`: one manager step. `n` the manager's step after it, `scenes` each scene's; `applied` each
-//   page's message a scene took this step, with the step it was stamped for and how many steps late
-//   it was taken; `rows`, each scene's watched rows; and `cost`, when asked for.
+//   page's message a scene answered this step, with `n` the scene's step that answered it, as `heard`
+//   (`addons/heard`) lists it; `rows`, each scene's watched rows; and `cost`, when asked for.
 // - `press`: an input handed to a page, and whether the page had a client to take it.
 // - `packet` and `message`: each envelope down and each message up, when it was sent and each time it
 //   arrived: none when it was lost, two when it was duplicated; and for an envelope, each time the
 //   page's word that it got it (`Got`) reached the server. Written once the run is over.
 //
 // `parse` reads a JSONL file's records back. `summary` reads any run's records, a real one's too, and
-// `histogram`, `standoff`, `leads`, `corrections`, `packets` and `late` are its parts, for a test to
-// state a fact such as "every frame moves one step" about a run; `report` prints a summary. From
+// `histogram`, `standoff` and `packets` are its parts, for a test to state a fact such as "every
+// frame moves one step" about a run; `report` prints a summary. From
 // node:
 //   node --experimental-strip-types addons/simulator/simulator.addon.ts run <config.json> [out.jsonl]
 //   node --experimental-strip-types addons/simulator/simulator.addon.ts real <config.json> [out.jsonl]
@@ -94,34 +102,36 @@ import type { Client } from '#engine/browser.ts'
 import { accept, link, load, manager, run as keep, scenes, view, type Diff, type Got, type Up } from '#addons/scenemanager/scenemanager.addon.ts'
 import { loopback, type Accept, type Leg, type Time, type Wire } from '#addons/loopback/loopback.addon.ts'
 import { dial, serve } from '#addons/socket/socket.addon.ts'
-import type { Think } from '#addons/player/player.addon.ts'
+import { heard } from '#addons/heard/heard.addon.ts'
+import { predict } from '#addons/predict/predict.addon.ts'
+import { possessed, type Think } from '#addons/player/player.addon.ts'
 
 export type Display = { hz: number; at?: number[]; phase?: number; wobble?: number; drop?: number; long?: { every: number; ms: number }; hidden?: [number, number][]; stall?: number }
 export type Press = { at: number; act?: [string, ...Arg[]]; key?: string; up?: boolean }
-export type Page = { join?: number; open?: number; display: Display; clock?: { offset?: number; ppm?: number }; up: Leg; down: Leg; presses?: Press[]; think?: Think }
+export type Page = { join?: number; open?: number; display: Display; clock?: { offset?: number; ppm?: number }; up: Leg; down: Leg; presses?: Press[]; think?: Think; predict?: boolean }
 export type Server = { steps?: number[]; loop?: 'owed' | 'interval'; grain?: number; late?: number; pause?: { every: number; ms: number }; ppm?: number }
-export type Watch = { kinds?: string[]; fields?: string[]; own?: string | string[] }
+export type Watch = { kinds?: string[]; fields?: string[]; own?: string | string[]; drawn?: boolean }
+export type Drawn = { camera: number[]; rows: Record<number, number[]>; meshes: Record<number, number[]> }
 type Game = {
   file: Scene; sim: Sim; base: string; ms: number; watch?: Watch; mount?: (me: Client, scene: Scene) => void
   ready?: (truth: Truth) => void | Promise<void>; turns?: { at: number; turn: () => void }[]; cost?: boolean; write?: (line: string) => void
 }
 export type Run = Game & { seed: number; server?: Server; pages: Page[] }
-export type RealPage = { join?: number; hz: number; presses?: Press[]; think?: Think }
+export type RealPage = { join?: number; hz: number; presses?: Press[]; think?: Think; predict?: boolean }
 export type RealRun = Game & { pages: RealPage[]; url?: string; port?: number }
 
 export type Took = { k: number; n: number; sent: number | null; at: number }
 export type Watched = Record<string, Record<string, unknown>>
 export type Eye = { pos: number[]; dir: number[]; target?: number[] }
 export type FrameRecord = {
-  type: 'frame'; page: number; t: number; clock: number; n: number | null; step: number | null; took: Took[]
-  ack: number; lead: number; reruns: number; fix: { rows: number; size: number } | null
-  rows: Watched; own?: number; eye?: Eye; cost?: number
+  type: 'frame'; page: number; t: number; clock: number; n: number | null; took: Took[]
+  rows: Watched; own?: number; eye?: Eye; drawn?: Drawn; between?: number; cost?: number
 }
-export type Applied = { page: number; scene: string; seq: number; action: string; stamp: number; n: number; late: number }
+export type Applied = { page: number; scene: string; seq: number; action: string; n: number }
 export type StepRecord = { type: 'step'; t: number; n: number; scenes: Record<string, number>; applied: Applied[]; rows?: Record<string, Watched>; cost?: number }
 export type PressRecord = { type: 'press'; page: number; t: number; act?: [string, ...Arg[]]; key?: string; up?: boolean; taken: boolean }
 export type PacketRecord = { type: 'packet'; page: number; scene: string; seat: number; k: number; n: number; sent: number; at: number[]; got: number[] }
-export type MessageRecord = { type: 'message'; page: number; scene: string; seat: number; seq: number; action: string; stamp: number; sent: number; at: number[] }
+export type MessageRecord = { type: 'message'; page: number; scene: string; seat: number; seq: number; action: string; sent: number; at: number[] }
 export type RunRecord = { type: 'run'; mode: 'sim' | 'real'; seed?: number; ms: number; clocks?: number[]; server?: Server; url?: string; pages: unknown[]; watch?: Watch }
 export type Record_ = RunRecord | FrameRecord | StepRecord | PressRecord | PacketRecord | MessageRecord
 
@@ -249,21 +259,11 @@ type Live = {
   i: number
   clock: () => number
   listeners: Listeners
-  tab?: ReturnType<typeof view>
+  tab?: ReturnType<typeof view> | ReturnType<typeof predict>
   arrived: Took[]
   eyes: Map<number, (() => Eye) | null>
-  reruns: number
-  // The page's clock as the player's last tick read it, to tell a frame it ticked in.
-  seen?: number
-}
-
-// The distance between two values of a field: numbers apart, arrays of numbers as points apart,
-// anything else 0 when equal and 1 when not.
-function apart(a: unknown, b: unknown): number {
-  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b)
-  if (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every(x => typeof x === 'number') && b.every(x => typeof x === 'number'))
-    return Math.hypot(...a.map((x, i) => x - (b[i] as number)))
-  return JSON.stringify(a) === JSON.stringify(b) ? 0 : 1
+  // The client whose drawing is listened to, and what it drew on the frame just run.
+  drawing?: { client: Client; last?: Drawn }
 }
 
 function watched(rows: Row[], watch: Watch | undefined): Watched {
@@ -288,7 +288,7 @@ type Plan = {
   start(tapped: Accept<Up | Got, Diff> | undefined): Promise<void>
   // Page `i`'s wire to its seat.
   wire(i: number): Wire<Up | Got, Diff>
-  pages: { join: number; clock: () => number; think?: Think; presses: Press[]; frames(frame: () => Promise<void>): void }[]
+  pages: { join: number; clock: () => number; think?: Think; predict?: boolean; presses: Press[]; frames(frame: () => Promise<void>): void }[]
   head: RunRecord
 }
 
@@ -326,7 +326,7 @@ async function play(game: Game, plan: Plan): Promise<Record_[]> {
         return {
           take(u) {
             if ('msg' in u) messages.get(`${u.scene}/${u.seat}/${u.msg.seq}`)?.at.push(clock.now())
-            else mine.get(u.got)?.got.push(clock.now())
+            else if ('got' in u) mine.get(u.got)?.got.push(clock.now())
             seat.take(u)
           },
           close: () => seat.close(),
@@ -353,10 +353,8 @@ async function play(game: Game, plan: Plan): Promise<Record_[]> {
         }),
       }
       const row = manager(truth)
-      const read = new Map<string, number>() // how far into each scene's log is read
-      const pending = new Map<string, { page: number; entry: Truth['log'][number] }[]>()
-      const ran = new Map<string, number>()
-      for (const [name, child] of scenes(row)) ran.set(name, child.n)
+      // What each scene's steps answered since the last step was written down.
+      const answered = new Map([...scenes(row)].map(([name, child]) => [name, heard(child)]))
       // A step is written down by the listener of the manager's steps registered last, so its cost
       // holds everything the step did, every connection sending its packet too: each connection the
       // server makes registers one after its own, and only the newest writes.
@@ -373,23 +371,11 @@ async function play(game: Game, plan: Plan): Promise<Record_[]> {
         const at: Record<string, number> = {}
         for (const [name, child] of scenes(row)) {
           at[name] = child.n
-          const list = pending.get(name) ?? []
-          for (const entry of child.log.slice(read.get(name) ?? 0)) {
-            const page = visits.get(`${name}/${entry.seat}`)
-            if (entry.msg.seq !== 0 && page !== undefined) list.push({ page, entry })
+          // A seq of 0 is the server's own, an entry's act or an arrival, which no page sent.
+          for (const h of answered.get(name)!.splice(0)) {
+            const page = visits.get(`${name}/${h.seat}`)
+            if (h.msg.seq !== 0 && page !== undefined) applied.push({ page, scene: name, seq: h.msg.seq, action: h.msg.action, n: h.at })
           }
-          read.set(name, child.log.length)
-          // A message is taken on the step the scene is at when it lands in the inbox, or on the
-          // step it is stamped for when that is later.
-          const stepped = child.n > ran.get(name)!
-          ran.set(name, child.n)
-          const left: typeof list = []
-          for (const p of list) {
-            const due = Math.max(p.entry.at, p.entry.msg.n)
-            if (stepped && due < child.n) applied.push({ page: p.page, scene: name, seq: p.entry.msg.seq, action: p.entry.msg.action, stamp: p.entry.msg.n, n: due, late: due - p.entry.msg.n })
-            else left.push(p)
-          }
-          pending.set(name, left)
         }
         const rec: StepRecord = { type: 'step', t: clock.now(), n: truth.n, scenes: at, applied }
         if (game.watch) rec.rows = Object.fromEntries([...scenes(row)].map(([name, child]) => [name, watched(child.rows, game.watch)]))
@@ -414,7 +400,7 @@ async function play(game: Game, plan: Plan): Promise<Record_[]> {
     }
 
     for (const [i, p] of plan.pages.entries()) {
-      const live: Live = { i, clock: p.clock, listeners: new Map(), arrived: [], eyes: new Map(), reruns: 0 }
+      const live: Live = { i, clock: p.clock, listeners: new Map(), arrived: [], eyes: new Map() }
       lives.push(live)
       clock.at(p.join, () => {
         const inner = plan.wire(i)
@@ -429,16 +415,20 @@ async function play(game: Game, plan: Plan): Promise<Record_[]> {
           })
           return {
             send(u) {
-              if ('msg' in u) {
+              // A page that runs its scene ahead sends a message again until it is acked: written
+              // down once, when it was first sent.
+              const key = 'msg' in u ? `${u.scene}/${u.seat}/${u.msg.seq}` : undefined
+              if ('msg' in u && !messages.has(key!)) {
                 visits.set(`${u.scene}/${u.seat}`, i)
-                messages.set(`${u.scene}/${u.seat}/${u.msg.seq}`, { type: 'message', page: i, scene: u.scene, seat: u.seat, seq: u.msg.seq, action: u.msg.action, stamp: u.msg.n, sent: clock.now(), at: [] })
+                messages.set(key!, { type: 'message', page: i, scene: u.scene, seat: u.seat, seq: u.msg.seq, action: u.msg.action, sent: clock.now(), at: [] })
               }
               w.send(u)
             },
             close: () => w.close(),
           }
         }
-        live.tab = view(link(wire), structuredClone(game.file), game.base, game.mount ?? (() => {}))
+        // A page that runs its scene ahead, as `client.html` makes it, or one that draws what it is sent.
+        live.tab = (p.predict ? predict : view)(link(wire), structuredClone(game.file), game.base, game.mount ?? (() => {}))
       })
       p.frames(async () => {
         const tab = live.tab
@@ -451,7 +441,11 @@ async function play(game: Game, plan: Plan): Promise<Record_[]> {
         const took = live.arrived.splice(0)
         const t = clock.now(), start = live.clock()
         const c0 = spent()
-        await as(live, () => tab.frame())
+        // The page's input before its steps, as `client.html`'s loop calls it.
+        await as(live, () => tab.input())
+        listen(live, game.watch)
+        // A page that runs ahead steps its copy on the page's clock, as `requestAnimationFrame` hands it.
+        await as(live, () => ('stats' in tab ? tab.frame(start) : tab.frame()))
         const cost = spent() - c0
         put(await frameOf(live, took, t, start, game.watch, game.cost ? cost : undefined))
       })
@@ -486,42 +480,19 @@ async function play(game: Game, plan: Plan): Promise<Record_[]> {
 
 // One page's frame as a record: what its client holds after the frame, which began at `t` on the
 // run's clock and `start` on the page's, with the envelopes it took, what `watch` names, and `cost`
-// when the run times its frames. Its clock is the one the player placed the frame's step from, as
-// its tick read it, or `start` in a frame the player did not tick: a real frame lets other work run
-// while it waits, so the page may read its clock well after the frame was called.
+// when the run times its frames.
 async function frameOf(live: Live, took: Took[], t: number, start: number, watch: Watch | undefined, cost: number | undefined): Promise<FrameRecord> {
   const c = live.tab!.client
-  const player = c?.plugins.player
-  const reruns: number = player?.reruns ?? 0
-  let fix: FrameRecord['fix'] = null
-  if (reruns > live.reruns && player.fixed) {
-    const { was, now } = player.fixed as { was: Row[]; now: Row[] }
-    const had = new Map(was.map(r => [r.id, r]))
-    let rows = 0, size = 0
-    for (const r of now) {
-      const w = had.get(r.id)
-      had.delete(r.id)
-      if (!w || JSON.stringify(w.data) !== JSON.stringify(r.data)) rows++
-      if (w && watch && (!watch.kinds || watch.kinds.includes(r.kind)))
-        for (const f of watch.fields ?? Object.keys(r.data)) size = Math.max(size, apart(w.data[f], r.data[f]))
-    }
-    fix = { rows: rows + had.size, size }
-  }
-  live.reruns = reruns
-  const read: number | undefined = player?.seen
-  const seen = typeof read === 'number' && Number.isFinite(read) && read !== live.seen ? read : start
-  live.seen = read
   const rec: FrameRecord = {
-    type: 'frame', page: live.i, t, clock: seen,
-    n: c ? c.n : null, step: c ? (player ? player.step : c.n) : null, took,
-    ack: c ? c.plugins.wire.ack : 0, lead: player?.lead ?? 0, reruns, fix,
+    type: 'frame', page: live.i, t, clock: start, n: c ? c.n : null, took,
     rows: watched(c?.rows ?? [], watch),
   }
   if (c && watch?.own) {
-    let at: Row | undefined = c.rows.find(r => r.kind === 'player')
+    let at: Row | undefined = possessed(c.rows)
     let id: unknown
     for (const field of [watch.own].flat()) {
-      id = at?.data[field]
+      const named: unknown = at?.data[field]
+      id = typeof named === 'object' && named !== null && 'id' in named ? named.id : named
       at = typeof id === 'number' ? c.rows.find(r => r.id === id) : undefined
     }
     if (at) rec.own = at.id
@@ -530,8 +501,27 @@ async function frameOf(live: Live, took: Took[], t: number, start: number, watch
     const eye = await eyeOf(live, c)
     if (eye) rec.eye = eye
   }
+  if (live.drawing?.last) {
+    rec.drawn = live.drawing.last
+    live.drawing.last = undefined
+    if (c?.plugins.wire.between !== undefined) rec.between = c.plugins.wire.between
+  }
   if (cost !== undefined) rec.cost = cost
   return rec
+}
+
+// Listens, before a frame runs, to where the page's client draws things: the first of the scene's
+// plugins that exports `drew(f)` hands `f` each frame's drawn places (render3d does). A client made
+// again, a new scene's, is listened to afresh.
+function listen(live: Live, watch: Watch | undefined) {
+  const c = live.tab?.client
+  if (!watch?.drawn || !c || live.drawing?.client === c) return
+  const drawing: Live['drawing'] = { client: c }
+  live.drawing = drawing
+  for (const name of c.plugins.wire.scene.plugins ?? []) {
+    const p = c.plugins[name]
+    if (p && 'drew' in p && typeof p.drew === 'function') { p.drew((d: Drawn) => { drawing.last = d }); return }
+  }
 }
 
 // The listeners of a page on real clocks, where the page's clock is the machine's own.
@@ -544,13 +534,15 @@ async function listening<T>(page: Live, f: () => T | Promise<T>): Promise<T> {
 
 const copy = (e: Eye): Eye => ({ pos: [...e.pos], dir: [...e.dir], ...(e.target ? { target: [...e.target] } : {}) })
 
-// The camera of the actor that exports `eye()`, by the module the client loaded for its row.
+// The camera of the actor that exports `eye()`, by the module the client runs for its row (`actor`
+// in `engine/browser.ts`). A row whose actor is not set up yet is asked again on a later frame.
 async function eyeOf(live: Live, c: Client): Promise<Eye | undefined> {
   for (const r of c.rows) {
     let eye = live.eyes.get(r.id)
     if (eye === undefined) {
-      const mod = await import(/* @vite-ignore */ new URL(`${r.kind}.client.ts?row=${r.id}`, c.plugins.wire.home).href).catch(() => undefined)
-      eye = typeof mod?.eye === 'function' ? mod.eye as () => Eye : null
+      const mod = c.actor(r.id) as (Record<string, unknown> | undefined)
+      if (!mod) continue
+      eye = typeof mod.eye === 'function' ? mod.eye as () => Eye : null
       live.eyes.set(r.id, eye)
     }
     if (eye) {
@@ -608,6 +600,7 @@ export async function simulate(run: Run): Promise<Record_[]> {
       join: p.join ?? 0,
       clock: () => offset + clock.now() * prate,
       think: p.think,
+      predict: p.predict,
       presses: p.presses ?? [],
       net,
       frames(frame: () => Promise<void>) {
@@ -668,6 +661,7 @@ export async function real(run: RealRun): Promise<Record_[]> {
     join: p.join ?? 0,
     clock: () => performance.now(),
     think: p.think,
+    predict: p.predict,
     presses: p.presses ?? [],
     // Frame k at k frames' time, as a display's vsyncs are: each frame is on a later one than the
     // last, however early a timer fires, and one that ran past vsyncs draws on the next one after it.
@@ -709,10 +703,13 @@ export async function real(run: RealRun): Promise<Record_[]> {
 // to know, and is null), and the lines go to the simulator's route (`simulator.route.ts`), which
 // writes them to `addons/simulator/runs/<name>.jsonl`, the run line first, then a batch a second and
 // the last as the page is hidden. The address's `kinds` and `fields`, each a list split by commas,
-// and `own`, fields split by dots, are the watch. Without `?tap` it is the view, untouched.
+// and `own`, fields split by dots, are the watch, and `drawn`, present, records where each frame drew
+// things. Without `?tap` it is the view, untouched.
 // `send` is how the lines leave the page, `fetch` to the route unless another is handed in, and
 // `search` the address's query, the page's own unless another is handed in.
-export type Tapped = { frame(): Promise<void>; readonly client: Client | undefined; close(): void }
+// `input` before the page's steps, as `client.html`'s loop calls it; `frame` handed the time
+// `requestAnimationFrame` handed the loop, which a page that runs its scene ahead steps its copy on.
+export type Tapped = { input(): void; frame(now?: number): Promise<void>; readonly client: Client | undefined; close(): void }
 export function tap<V extends Tapped>(wire: Wire<Up | Got, Diff>, make: (wire: Wire<Up | Got, Diff>) => V, options: {
   search?: string
   send?: (body: { name: string; first: boolean; lines: string[] }, last: boolean) => void
@@ -722,8 +719,8 @@ export function tap<V extends Tapped>(wire: Wire<Up | Got, Diff>, make: (wire: W
   if (!name) return make(wire)
   if (!NAME.test(name)) throw new Error(`the tap is named ${JSON.stringify(name)}: letters, digits, _, . and - only`)
   const list = (key: string, by: string) => query.get(key)?.split(by).filter(Boolean)
-  const watch: Watch | undefined = query.has('kinds') || query.has('fields') || query.has('own')
-    ? { ...(list('kinds', ',') ? { kinds: list('kinds', ',') } : {}), ...(list('fields', ',') ? { fields: list('fields', ',') } : {}), ...(list('own', '.') ? { own: list('own', '.') } : {}) }
+  const watch: Watch | undefined = query.has('kinds') || query.has('fields') || query.has('own') || query.has('drawn')
+    ? { ...(list('kinds', ',') ? { kinds: list('kinds', ',') } : {}), ...(list('fields', ',') ? { fields: list('fields', ',') } : {}), ...(list('own', '.') ? { own: list('own', '.') } : {}), ...(query.has('drawn') ? { drawn: true } : {}) }
     : undefined
   const send = options.send ?? ((body, last) => {
     const json = JSON.stringify(body)
@@ -732,7 +729,7 @@ export function tap<V extends Tapped>(wire: Wire<Up | Got, Diff>, make: (wire: W
   })
   const start = performance.now()
   const now = () => performance.now() - start
-  const live: Live = { i: 0, clock: () => performance.now(), listeners: new Map(), arrived: [], eyes: new Map(), reruns: 0 }
+  const live: Live = { i: 0, clock: () => performance.now(), listeners: new Map(), arrived: [], eyes: new Map() }
   let lines: string[] = [JSON.stringify({ type: 'run', mode: 'real', ms: 0, clocks: [start], pages: [{ browser: typeof navigator === 'undefined' ? 'unknown' : navigator.userAgent }], ...(watch ? { watch } : {}) } satisfies RunRecord)]
   let first = true
   const flush = (last: boolean) => {
@@ -752,10 +749,12 @@ export function tap<V extends Tapped>(wire: Wire<Up | Got, Diff>, make: (wire: W
   live.tab = inner as unknown as Live['tab']
   return {
     get client() { return inner.client },
-    async frame() {
+    input() { inner.input() },
+    async frame(at?: number) {
       const took = live.arrived.splice(0)
       const t = now(), start = live.clock()
-      await inner.frame()
+      listen(live, watch)
+      await inner.frame(at)
       lines.push(JSON.stringify(await frameOf(live, took, t, start, watch, undefined)))
     },
     close() {
@@ -814,7 +813,7 @@ export function timing(records: Record_[]): { ms: number; server: Server; pages:
           delay: middle(said.flatMap(m => m.at.map(a => a - m.sent))),
           wait: (item: unknown, now: number) => {
             const u = item as Up | Got
-            return until('got' in u ? got.get(u.got) : heard.get(`${u.scene}/${u.seat}/${u.msg.seq}`), now)
+            return until('got' in u ? got.get(u.got) : 'msg' in u ? heard.get(`${u.scene}/${u.seat}/${u.msg.seq}`) : undefined, now)
           },
         },
         down: {
@@ -833,36 +832,29 @@ export function parse(text: string): Record_[] {
   return text.split('\n').filter(l => l.trim()).map(l => JSON.parse(l) as Record_)
 }
 
-const framesOf = (records: Record_[], page: number) => records.filter((r): r is FrameRecord => r.type === 'frame' && r.page === page && r.step !== null)
-// A page's frames after its join: after the frame that took the first ack, which moves the page on
-// by the lead that round trip measured.
-const settledOf = (records: Record_[], page: number) => {
-  const fs = framesOf(records, page)
-  return { join: fs.findIndex(f => f.ack > 0), fs }
-}
+// A page's frames that drew a packet: every frame from its first packet on.
+const framesOf = (records: Record_[], page: number) => records.filter((r): r is FrameRecord => r.type === 'frame' && r.page === page && r.n !== null)
 const count = (xs: number[]) => {
   const out: Record<number, number> = {}
   for (const x of xs) out[x] = (out[x] ?? 0) + 1
   return out
 }
 
-// How many frames of a page moved its step by 0, 1, 2… steps, from the frame after its join; and how
-// many the join frame moved, or null when the page never took an ack.
-export function histogram(records: Record_[], page: number): { join: number | null; counts: Record<number, number> } {
-  const { join, fs } = settledOf(records, page)
-  if (join < 0) return { join: null, counts: {} }
-  const moved = fs.slice(join).map((f, i, a) => (i ? f.step! - a[i - 1].step! : 0)).slice(1)
-  return { join: join > 0 ? fs[join].step! - fs[join - 1].step! : 0, counts: count(moved) }
+// How many frames of a page moved the step it drew by 0, 1, 2… steps, from the frame after its first
+// packet's; and the timeline's ms of that first frame, or null when the page drew no packet.
+export function histogram(records: Record_[], page: number): { first: number | null; counts: Record<number, number> } {
+  const fs = framesOf(records, page)
+  if (!fs.length) return { first: null, counts: {} }
+  return { first: fs[0].t, counts: count(fs.slice(1).map((f, i) => f.n! - fs[i].n!)) }
 }
 
-// The page's own row (`watch.own`) against its camera, frame by frame from its join: `d` the
+// The page's own row (`watch.own`) against its camera, frame by frame from its first packet: `d` the
 // distance from the camera's eye to the row's `field` (a point), and how much it changed from one
 // frame to the next at most and on the root mean square: a camera following smoothly changes it
 // little, one that judders changes it every frame.
 export function standoff(records: Record_[], page: number, field = 'pos'): { frames: { t: number; d: number }[]; jitter: { max: number; rms: number } } {
-  const { join, fs } = settledOf(records, page)
   const out: { t: number; d: number }[] = []
-  for (const f of fs.slice(Math.max(join, 0))) {
+  for (const f of framesOf(records, page)) {
     const at = f.own !== undefined ? f.rows[f.own]?.[field] : undefined
     if (!f.eye || !Array.isArray(at)) continue
     out.push({ t: f.t, d: Math.hypot(...f.eye.pos.map((e, i) => e - (at[i] as number))) })
@@ -874,27 +866,9 @@ export function standoff(records: Record_[], page: number, field = 'pos'): { fra
   }
 }
 
-// A page's lead, frame by frame.
-export function leads(records: Record_[], page: number): { t: number; lead: number }[] {
-  return framesOf(records, page).map(f => ({ t: f.t, lead: f.lead }))
-}
-
-// A page's corrections: how many, and each one's frame, rows and size.
-export function corrections(records: Record_[], page: number): { count: number; each: { t: number; rows: number; size: number }[] } {
-  const fs = framesOf(records, page)
-  return { count: fs.length ? fs[fs.length - 1].reruns : 0, each: fs.filter(f => f.fix).map(f => ({ t: f.t, ...f.fix! })) }
-}
-
-// How many frames of a page took 0, 1, 2… envelopes, from its join.
+// How many frames of a page took 0, 1, 2… envelopes, from the frame after its first packet's.
 export function packets(records: Record_[], page: number): Record<number, number> {
-  const { join, fs } = settledOf(records, page)
-  return count(fs.slice(Math.max(join + 1, 0)).map(f => f.took.length))
-}
-
-// A page's presses the server took after the step they were stamped for. A probe, the player's
-// message whose action is '', is stamped with a step the server has passed on purpose, so it is none.
-export function late(records: Record_[], page: number): Applied[] {
-  return records.flatMap(r => (r.type === 'step' ? r.applied.filter(a => a.page === page && a.late > 0 && a.action !== '') : []))
+  return count(framesOf(records, page).slice(1).map(f => f.took.length))
 }
 
 export type Summary = {
@@ -902,7 +876,7 @@ export type Summary = {
   ms: number
   steps: number
   rate: number
-  pages: { page: number; frames: number; histogram: ReturnType<typeof histogram>; standoff: { max: number; rms: number }; lead: { min: number; max: number; last: number }; corrections: number; largest: number; packets: Record<number, number>; late: number }[]
+  pages: { page: number; frames: number; histogram: ReturnType<typeof histogram>; standoff: { max: number; rms: number }; packets: Record<number, number> }[]
 }
 
 // Every part of a run, per page, and the server's steps and their rate.
@@ -918,21 +892,13 @@ export function summary(records: Record_[]): Summary {
     ms,
     steps: stepped,
     rate: ms > 0 ? stepped / (ms / 1000) : 0,
-    pages: ids.map(page => {
-      const ls = leads(records, page).map(l => l.lead)
-      const c = corrections(records, page)
-      return {
-        page,
-        frames: records.filter(r => r.type === 'frame' && r.page === page).length,
-        histogram: histogram(records, page),
-        standoff: standoff(records, page).jitter,
-        lead: { min: ls.length ? Math.min(...ls) : 0, max: ls.length ? Math.max(...ls) : 0, last: ls.length ? ls[ls.length - 1] : 0 },
-        corrections: c.count,
-        largest: c.each.reduce((m, x) => Math.max(m, x.size), 0),
-        packets: packets(records, page),
-        late: late(records, page).length,
-      }
-    }),
+    pages: ids.map(page => ({
+      page,
+      frames: records.filter(r => r.type === 'frame' && r.page === page).length,
+      histogram: histogram(records, page),
+      standoff: standoff(records, page).jitter,
+      packets: packets(records, page),
+    })),
   }
 }
 
@@ -941,9 +907,8 @@ export function report(s: Summary): string {
   const lines = [`${s.mode} run of ${s.ms} ms: ${s.steps} server steps, ${s.rate.toFixed(2)} a second`]
   const hist = (h: Record<number, number>) => Object.entries(h).map(([k, v]) => `${k}:${v}`).join(' ')
   for (const p of s.pages) {
-    lines.push(`page ${p.page}: ${p.frames} frames; steps a frame ${hist(p.histogram.counts)} (join ${p.histogram.join ?? '-'})`)
-    lines.push(`  lead ${p.lead.min}..${p.lead.max}, last ${p.lead.last}; corrections ${p.corrections}, largest ${p.largest.toFixed(4)}; envelopes a frame ${hist(p.packets)}; late presses ${p.late}`)
-    lines.push(`  standoff jitter max ${p.standoff.max.toFixed(4)}, rms ${p.standoff.rms.toFixed(4)}`)
+    lines.push(`page ${p.page}: ${p.frames} frames; steps a frame ${hist(p.histogram.counts)} (first packet drawn at ${p.histogram.first === null ? '-' : `${p.histogram.first.toFixed(1)} ms`})`)
+    lines.push(`  envelopes a frame ${hist(p.packets)}; standoff jitter max ${p.standoff.max.toFixed(4)}, rms ${p.standoff.rms.toFixed(4)}`)
   }
   return lines.join('\n')
 }

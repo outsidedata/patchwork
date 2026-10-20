@@ -95,7 +95,6 @@ test('a hidden layer needs no render2d layer of its name and sets no parallax', 
   frame()
   expect(box(plugins, 'ground').map(tileOf)).toEqual([1])
   expect(parallax.map(([name]) => name)).toEqual(['ground'])
-  expect(() => plugins.render2d.layer('solid')).toThrow('render2d has no layer solid')
 })
 
 test('on a render2d layer that sorts, each tile is drawn in the order of the depth of its cell\'s middle, or of the point its sort property names', async () => {

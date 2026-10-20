@@ -4,13 +4,13 @@
 // frame. render3d is handed a canvas stand-in and no renderer, so nothing is drawn, and particle3d,
 // listed after volley3d, runs the page's effects. `world.volley3d.mods` hands volley3d hitscan3d's
 // `shoot` and `bodies`, and hitscan3d meets terrain3d's ground, level at 0, and walker's bodies: a
-// dummy, a metre round and four tall, stands in front of one tube. Four `tube` rows each hold a
+// dummy, a metre round and four tall, stands in front of one tube. Five `tube` rows each hold a
 // pattern, a muzzle and an aim, and each one's `pull(n)` act fires that round on the server with
-// `from` its id and `n` the count it is handed, as a launcher's rule does on its press. The page fires
-// the same round with `fire`, keyed `[tube, n]`, on the frame it sends the press; a tube with a
-// `target` fires at that body. `volleys()` is read against `flight` on the page's clock, against the
-// packet's ledger, and against particle3d's effects: the look drawn, a round with no key, a key fired
-// twice, a body met past the page's ground, a guided round, and the order of the plugins.
+// `from` its id and `n` the count it is handed, as a launcher's rule does on its press; a tube with a
+// `target` fires at that body. The page sends the press, and `volleys()` is read against the packet's
+// ledger and against particle3d's effects: a round drawn from its entry's age, the look drawn and
+// stopped where the server says it met the ground, a body met, a guided round, a round of the page's
+// alone, and the order of the plugins.
 import { afterAll, expect, test, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -30,7 +30,6 @@ import { volley3d as page } from './volley3d.plugin.ts'
 const DT = 1 / 60
 const P = DT * 1000
 const LAG = 4
-const WAIT = 0.5
 
 const field: Field = {
   program: { world: 600, hscale: 10, sea: 0.5, flood: false, out: 'level', nodes: [{ id: 'level', op: 'const', value: 0 }] },
@@ -80,7 +79,7 @@ const yard: Scene = {
     terrain3d: { field: 'land' },
     walker: { kinds: { dummy: DUMMY } },
     hitscan3d: { mods: { ground: 'terrain3d', bodies: 'walker' }, kinds: { dummy: { parts: { legs: [0, 0.5], chest: [0.5, 1] } } }, rewind: 1 },
-    volley3d: { patterns: 'patterns', hold: 0.25, wait: WAIT, mods: { shoot: 'hitscan3d', bodies: 'hitscan3d' } },
+    volley3d: { patterns: 'patterns', hold: 0.25, mods: { shoot: 'hitscan3d', bodies: 'hitscan3d' } },
     particle3d: { effects: 'effects', hold: 0.1 },
   },
   plugins: ['loader', 'scenemanager', 'volley3d', 'particle3d', 'render3d'],
@@ -93,9 +92,8 @@ const yard: Scene = {
     dummy: { pos: [0, 0, 0] },
   },
   // `level` fires flat at the dummy's chest, 11 m off; `low` down onto the ground 2.67 m off; `high`
-  // straight up; `other` up and away, another shooter's. `seek` fires a guided round off to one side of
-  // the dummy, at it; `stab` down onto a second dummy, whose side it meets 2.81 m along its line, short
-  // of the ground it would reach 3.33 m along, inside that dummy.
+  // straight up; `other` up and away, meeting nothing in its life. `seek` fires a guided round off to
+  // one side of the dummy, at it.
   actors: [
     { is: 'scenemanager' }, { is: 'loader' }, { is: 'volley3d' },
     { is: 'tube', name: 'level', muzzle: [0, 3, 0], aim: [0, 0, 1] },
@@ -104,8 +102,6 @@ const yard: Scene = {
     { is: 'tube', name: 'other', muzzle: [-10, 2, 0], aim: [0, 0.6, 0.8] },
     { is: 'dummy', pos: [0, 0, 12] },
     { is: 'tube', name: 'seek', pattern: 'seeker', muzzle: [0, 3, 0], aim: [0.3, 0, 1], target: 8 },
-    { is: 'tube', name: 'stab', muzzle: [20, 2, 0], aim: [0, -0.6, 0.8] },
-    { is: 'dummy', pos: [20, 0, 3.25] },
   ],
 }
 
@@ -136,7 +132,7 @@ let now = 0
 vi.spyOn(performance, 'now').mockImplementation(() => now)
 
 type Hit = { point: number[]; what: string; id?: number | null }
-type Volley = { key: [number, number]; pos: number[]; local: boolean; hit?: Hit }
+type Volley = { key: [number, number]; pos: number[]; hit?: Hit }
 type Entry = { id: number; at: number[]; dir: number[]; age: number; from: number; n: number; pos: number[]; vel: number[]; hit?: Hit }
 
 // The yard booted and a page on it, stepped until the page has its client. `frame(during)` is one
@@ -172,87 +168,27 @@ async function opened() {
   const client = tab.client!
   expect(client).toBeDefined()
   const tube = (name: string): Row => client.rows.find(r => r.kind === 'tube' && r.data.name === name)!
-  const volley3d = client.plugins.volley3d
-  const volleys = (): Volley[] => volley3d.volleys()
+  const volleys = (): Volley[] => client.plugins.volley3d.volleys()
   const mine = (id: number, n: number) => volleys().filter(v => v.key[0] === id && v.key[1] === n)
   // The server's entry of that key in the packet the page last took.
   const entry = (id: number, n: number): Entry | undefined =>
     (client.rows.find(r => r.kind === 'volley3d')?.data.live as Entry[] | undefined)?.find(e => e.from === id && e.n === n)
-  // The page fires what the tube's rule fires, keyed [tube, n], and, with `press`, sends the press.
-  const shoot = (t: Row, n: number, press: boolean) => {
-    volley3d.fire(t.data.pattern, t.data.muzzle, t.data.aim, [t.id, n])
-    if (press) client.plugins.wire.send(t.id, 'pull', n)
-  }
-  return { client, frame, tube, volleys, mine, entry, shoot }
+  // The press that has the tube's rule fire its `n`th round on the server.
+  const pull = (t: Row, n: number) => client.plugins.wire.send(t.id, 'pull', n)
+  return { client, frame, tube, volleys, mine, entry, pull }
 }
 
 const close = (got: number[], want: number[], digits = 9) => got.forEach((g, i) => expect(g).toBeCloseTo(want[i], digits))
+const effectsOf = (client: { plugins: Record<string, any> }, name: string) => (client.plugins.particle3d.effects as readonly Effect[]).filter(fx => fx.name === name)
+// How far apart two points are.
+const apart = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
-test('a round the page fires is in volleys() at once, local, before any packet brings it, and flies as flight says on the page\'s clock', async () => {
-  const { frame, tube, volleys, mine, entry, shoot } = await opened()
-  const high = tube('high')
-  let first: Volley[] = []
-  await frame(() => {
-    shoot(high, 1, false)
-    first = volleys()
-  })
-  expect(first).toHaveLength(1)
-  expect(first[0]).toMatchObject({ key: [high.id, 1], local: true })
-  close(first[0].pos, high.data.muzzle)
-  expect(first[0].hit).toBeUndefined()
-  // It leaves the tube on the frame it is fired, and is a step further on every frame after.
-  close(mine(high.id, 1)[0].pos, high.data.muzzle)
-  for (let i = 1; i <= 20; i++) {
-    await frame()
-    const [v] = mine(high.id, 1)
-    expect(v.local).toBe(true)
-    close(v.pos, flight(rocket, high.data.muzzle, high.data.aim, i * DT))
-  }
-  expect(entry(high.id, 1)).toBeUndefined()
-})
+// ---------------------------------------------------------------- the server's rounds
 
-test('the server\'s entry of the page\'s key is adopted: one round for the key, flown on the page\'s clock, whose hit is the server\'s', async () => {
-  const { frame, tube, volleys, mine, entry, shoot, client } = await opened()
-  const level = tube('level')
-  const dummy = client.rows.find(r => r.kind === 'dummy')!
-  await frame(() => shoot(level, 1, true))
-  let adopted = 0, hit: Hit | undefined
-  for (let i = 1; i <= 60 && !hit; i++) {
-    await frame()
-    const e = entry(level.id, 1)
-    const got = mine(level.id, 1)
-    expect(got).toHaveLength(1)
-    expect(volleys()).toHaveLength(1)
-    if (e) adopted++
-    if (e?.hit) {
-      hit = e.hit
-      expect(got[0].hit).toEqual(e.hit)
-    } else {
-      // The page's own round, however far behind the packet's entry is: the page does not decide
-      // what it met.
-      expect(got[0].hit).toBeUndefined()
-      close(got[0].pos, flight(rocket, level.data.muzzle, level.data.aim, i * DT))
-    }
-  }
-  expect(adopted).toBeGreaterThan(10)
-  expect(hit).toMatchObject({ what: 'body', id: dummy.id })
-})
-
-test('a round the page fires and the server never does is dropped wait seconds after it was fired', async () => {
-  const { frame, tube, mine, shoot } = await opened()
-  const high = tube('high')
-  await frame(() => shoot(high, 7, false))
-  const wait = Math.round(WAIT / DT)
-  for (let i = 1; i <= wait - 2; i++) await frame()
-  expect(mine(high.id, 7)).toHaveLength(1)
-  for (let i = 0; i < 4; i++) await frame()
-  expect(mine(high.id, 7)).toEqual([])
-})
-
-test('another shooter\'s entry, which the page never fired, is drawn from its age, not local', async () => {
-  const { frame, tube, mine, entry, client } = await opened()
+test('an entry of the ledger is drawn from its age under its key [from, n], from the packet that brings it', async () => {
+  const { frame, tube, mine, entry, pull } = await opened()
   const other = tube('other')
-  await frame(() => client.plugins.wire.send(other.id, 'pull', 1))
+  await frame(() => pull(other, 1))
   let drawn = 0
   for (let i = 1; i <= 30; i++) {
     await frame()
@@ -262,7 +198,7 @@ test('another shooter\'s entry, which the page never fired, is drawn from its ag
       continue
     }
     const [v] = mine(other.id, 1)
-    expect(v).toMatchObject({ key: [other.id, 1], local: false })
+    expect(v).toMatchObject({ key: [other.id, 1] })
     expect(v.hit).toEqual(e.hit)
     close(v.pos, flight(rocket, e.at, e.dir, e.age))
     drawn++
@@ -270,84 +206,136 @@ test('another shooter\'s entry, which the page never fired, is drawn from its ag
   expect(drawn).toBeGreaterThan(20)
 })
 
-test('a round of the page\'s own bursts on the ground the frame it reaches it, before the server\'s packet says so, and only once', async () => {
-  const { frame, tube, mine, entry, shoot, client } = await opened()
+test('a round is drawn with its look: its body carried with it and its trail thrown from it while it flies, both stopped where the server says it met the ground, a burst there thrown back the way it came, once, and gone when its entry is', async () => {
+  const { client, frame, tube, mine, entry, pull } = await opened()
   const low = tube('low')
-  const booms = () => client.plugins.particle3d.effects.filter((fx: { name: string }) => fx.name === 'boom')
-  // From 2 m up, 0.6 of 30 m/s down: the ground in 1/9 s, between the page's 6th frame and its 7th.
-  await frame(() => shoot(low, 1, true))
-  for (let i = 1; i <= 6; i++) {
+  // From 2 m up, 0.6 of 30 m/s down: the ground in 1/9 s, 2.67 m on.
+  await frame(() => pull(low, 1))
+  let flew = 0
+  let e: Entry | undefined
+  let flame: Effect | undefined, smoke: Effect | undefined
+  for (let i = 1; i <= 30; i++) {
     await frame()
-    expect(mine(low.id, 1)).toHaveLength(1)
-    expect(mine(low.id, 1)[0].hit).toBeUndefined()
-    expect(booms()).toEqual([])
-  }
-  await frame()
-  const where = [5, 0, 24 / 9]
-  expect(mine(low.id, 1)).toHaveLength(1)
-  const [v] = mine(low.id, 1)
-  expect(v.hit!.what).toBe('ground')
-  close(v.hit!.point, where, 3)
-  expect(booms()).toHaveLength(1)
-  close(booms()[0].at, where, 3)
-  expect(entry(low.id, 1)?.hit).toBeUndefined()
-  // The server's packet says so a few frames on; the page bursts no second time.
-  let said = false
-  for (let i = 0; i < 20 && !said; i++) {
-    await frame()
-    said = !!entry(low.id, 1)?.hit
-    expect(mine(low.id, 1).length).toBeLessThanOrEqual(1)
-  }
-  expect(said).toBe(true)
-  expect(entry(low.id, 1)!.hit!.what).toBe('ground')
-  expect(booms()).toHaveLength(1)
-})
-
-// ---------------------------------------------------------------- more of the page
-
-const effectsOf = (client: { plugins: Record<string, any> }, name: string) => (client.plugins.particle3d.effects as readonly Effect[]).filter(fx => fx.name === name)
-
-test('a round is drawn with its look: its body carried with it and its trail thrown from it while it flies, both stopped where it ends, and a burst there thrown back the way it came', async () => {
-  const { frame, tube, mine, shoot, client } = await opened()
-  const low = tube('low')
-  await frame(() => shoot(low, 1, true))
-  expect([effectsOf(client, 'flame'), effectsOf(client, 'smoke')].map(l => l.length)).toEqual([1, 1])
-  const [flame] = effectsOf(client, 'flame'), [smoke] = effectsOf(client, 'smoke')
-  close(flame.at, low.data.muzzle)
-  close(flame.dir!, low.data.aim)
-  for (let i = 1; i <= 6; i++) {
-    await frame()
+    e = entry(low.id, 1)
+    // Nothing of it is drawn, and nothing thrown, until a packet brings its entry.
+    if (!e) {
+      expect(mine(low.id, 1)).toEqual([])
+      expect(effectsOf(client, 'flame')).toEqual([])
+      continue
+    }
+    if (e.hit) break
     const [v] = mine(low.id, 1)
+    expect([effectsOf(client, 'flame'), effectsOf(client, 'smoke')].map(l => l.length)).toEqual([1, 1])
+    // The one body and the one trail, put on the first frame it is drawn and carried with it.
+    flame ??= effectsOf(client, 'flame')[0]
+    smoke ??= effectsOf(client, 'smoke')[0]
+    expect(effectsOf(client, 'flame')[0]).toBe(flame)
+    expect(effectsOf(client, 'smoke')[0]).toBe(smoke)
     close(flame.at, v.pos)
     close(smoke.at, v.pos)
+    close(flame.dir!, [0, -0.6, 0.8])
     expect([flame.life, smoke.life]).toEqual([Infinity, Infinity])
+    expect(effectsOf(client, 'boom')).toEqual([])
+    flew++
   }
-  await frame()
+  expect(flew).toBeGreaterThan(0)
+  // The frame the packet says it met the ground: there, its body and trail stopped, and a burst.
+  expect(e!.hit!.what).toBe('ground')
+  const where = e!.hit!.point
+  close(where, [5, 0, 24 / 9], 3)
   const [v] = mine(low.id, 1)
-  expect(v.hit!.what).toBe('ground')
-  for (const fx of [flame, smoke]) {
-    close(fx.at, v.hit!.point)
+  expect(v.hit).toEqual(e!.hit)
+  close(v.pos, where)
+  for (const fx of [flame!, smoke!]) {
+    close(fx.at, where)
     expect(fx.life).toBeLessThan(Infinity)
     expect(fx.age).toBeGreaterThanOrEqual(fx.life)
   }
   const [boom] = effectsOf(client, 'boom')
-  close(boom.at, v.hit!.point)
+  close(boom.at, where)
   close(boom.dir!, [0, 0.6, -0.8])
+  // It bursts no second time, and leaves volleys() the frame its entry leaves the row.
+  for (let i = 0; i < 40 && entry(low.id, 1); i++) {
+    await frame()
+    expect(effectsOf(client, 'boom')).toHaveLength(1)
+    expect(mine(low.id, 1)).toHaveLength(entry(low.id, 1) ? 1 : 0)
+  }
+  expect(entry(low.id, 1)).toBeUndefined()
+  expect(mine(low.id, 1)).toEqual([])
 })
 
-test('a round fired with no key is the page\'s alone: no entry is looked for, it flies to the end of its life and is kept hold seconds after', async () => {
-  const { frame, tube, volleys, client } = await opened()
+test('a round that meets a body is drawn where the server says, the body\'s id and all, and bursts there', async () => {
+  const { client, frame, tube, mine, entry, pull } = await opened()
+  const level = tube('level')
+  const dummy = client.rows.find(r => r.kind === 'dummy')!
+  await frame(() => pull(level, 1))
+  let hit: Hit | undefined
+  for (let i = 1; i <= 60 && !hit; i++) {
+    await frame()
+    hit = entry(level.id, 1)?.hit
+    if (!hit) expect(effectsOf(client, 'boom')).toEqual([])
+  }
+  expect(hit).toMatchObject({ what: 'body', id: dummy.id })
+  const [v] = mine(level.id, 1)
+  expect(v.hit).toEqual(hit)
+  close(v.pos, hit!.point)
+  const booms = effectsOf(client, 'boom')
+  expect(booms).toHaveLength(1)
+  close(booms[0].at, hit!.point)
+})
+
+test('a guided round is drawn at its entry\'s pos, which no closed form gives, until it meets the body it seeks', async () => {
+  const { client, frame, tube, mine, entry, pull } = await opened()
+  const seek = tube('seek')
+  const dummy = client.rows.find(r => r.kind === 'dummy')!
+  await frame(() => pull(seek, 1))
+  let drawn = 0, turned = false, hit: Hit | undefined
+  for (let i = 1; i <= 90 && !hit; i++) {
+    await frame()
+    const e = entry(seek.id, 1)
+    if (!e) {
+      expect(mine(seek.id, 1)).toEqual([])
+      continue
+    }
+    const [v] = mine(seek.id, 1)
+    if (e.hit) {
+      hit = e.hit
+      expect(v.hit).toEqual(e.hit)
+      close(v.pos, e.hit.point)
+      continue
+    }
+    expect(v.pos).toEqual(e.pos)
+    // Turned toward the dummy: off the line it was fired along.
+    if (apart(e.pos, flight(seeker, e.at, e.dir, e.age)) > 0.01) turned = true
+    drawn++
+  }
+  expect(drawn).toBeGreaterThan(5)
+  expect(turned).toBe(true)
+  expect(hit).toMatchObject({ what: 'body', id: dummy.id })
+})
+
+// ---------------------------------------------------------------- the page's alone
+
+test('a round of the page\'s alone is in volleys() the frame it is fired, flies as flight says a step a frame to the end of its life, and is kept hold seconds after', async () => {
+  const { client, frame, tube, volleys } = await opened()
   const high = tube('high')
-  let key: number[] = []
-  await frame(() => { key = client.plugins.volley3d.fire('rocket', high.data.muzzle, high.data.aim) })
+  let key: number[] = [], first: Volley[] = []
+  await frame(() => {
+    key = client.plugins.volley3d.fire('rocket', high.data.muzzle, high.data.aim)
+    first = volleys()
+  })
   expect(key).toEqual([0, 1])
+  expect(first).toEqual([{ key: [0, 1], pos: high.data.muzzle }])
+  // It leaves the tube on the frame it is fired, and is a step further on every frame after.
+  close(volleys()[0].pos, high.data.muzzle)
   const [flame] = effectsOf(client, 'flame')
   const life = Math.round(rocket.life / DT), hold = Math.round(0.25 / DT)
   for (let i = 1; i <= life + hold - 2; i++) {
     await frame()
     const got = volleys()
     expect(got).toHaveLength(1)
-    expect(got[0]).toMatchObject({ key: [0, 1], local: true })
+    expect(got[0].key).toEqual([0, 1])
+    expect(got[0].hit).toBeUndefined()
     close(got[0].pos, flight(rocket, high.data.muzzle, high.data.aim, Math.min(i * DT, rocket.life)))
   }
   expect(flame.life).toBeLessThan(Infinity)
@@ -355,63 +343,11 @@ test('a round fired with no key is the page\'s alone: no entry is looked for, it
   expect(volleys()).toEqual([])
 })
 
-test('a key already drawn is not fired again', async () => {
-  const { frame, tube, mine, shoot } = await opened()
-  const high = tube('high')
-  await frame(() => { shoot(high, 3, false); shoot(high, 3, false) })
-  expect(mine(high.id, 3)).toHaveLength(1)
-  await frame(() => shoot(high, 3, false))
-  expect(mine(high.id, 3)).toHaveLength(1)
-  close(mine(high.id, 3)[0].pos, flight(rocket, high.data.muzzle, high.data.aim, DT))
-})
-
-test('a round the page burst on the ground bursts again where the server says it met a body, which the page never decides', async () => {
-  const { frame, tube, mine, entry, shoot, client } = await opened()
-  const stab = tube('stab')
-  const [, second] = client.rows.filter(r => r.kind === 'dummy')
-  await frame(() => shoot(stab, 1, true))
-  for (let i = 1; i <= 7; i++) await frame()
-  // The page's own reaches the ground inside the dummy on the 7th frame, passing through its side.
-  expect(mine(stab.id, 1)[0].hit!.what).toBe('ground')
-  expect(effectsOf(client, 'boom')).toHaveLength(1)
-  let said = false
-  for (let i = 0; i < 20 && !said; i++) {
-    await frame()
-    said = !!entry(stab.id, 1)?.hit
-  }
-  expect(said).toBe(true)
-  const hit = entry(stab.id, 1)!.hit!
-  expect(hit).toMatchObject({ what: 'body', id: second.id })
-  expect(mine(stab.id, 1)[0].hit).toEqual(hit)
-  close(mine(stab.id, 1)[0].pos, hit.point)
-  expect(effectsOf(client, 'boom')).toHaveLength(2)
-  close(effectsOf(client, 'boom')[1].at, hit.point)
-})
-
-test('a guided round flies as the page\'s own until the server\'s entry comes, then is drawn at the entry\'s pos carried on along its vel to the page\'s own age', async () => {
-  const { frame, tube, mine, entry, shoot, client } = await opened()
-  const seek = tube('seek')
-  const dummy = client.rows.find(r => r.kind === 'dummy')!
-  await frame(() => shoot(seek, 1, true))
-  let adopted = 0, hit: Hit | undefined
-  for (let i = 1; i <= 90 && !hit; i++) {
-    await frame()
-    const e = entry(seek.id, 1)
-    const [v] = mine(seek.id, 1)
-    if (e?.hit) hit = e.hit
-    else if (!e) close(v.pos, flight(seeker, seek.data.muzzle, seek.data.aim, i * DT))
-    else {
-      adopted++
-      close(v.pos, e.pos.map((c, k) => c + e.vel[k] * (i * DT - e.age)))
-    }
-  }
-  expect(adopted).toBeGreaterThan(5)
-  expect(hit).toMatchObject({ what: 'body', id: dummy.id })
-})
+// ---------------------------------------------------------------- the order
 
 test('listed after particle3d, or in a scene with no particle3d, it throws', () => {
   const bare = (order: string[]) => page().afterTick({
-    wire: { scene: { plugins: order, world: { volley3d: { patterns: 'patterns', hold: 0.25, wait: WAIT } }, prefabs: { engine: { dt: DT } } }, rows: [] },
+    wire: { scene: { plugins: order, world: { volley3d: { patterns: 'patterns', hold: 0.25 } }, prefabs: { engine: { dt: DT } } }, rows: [] },
   } as never)
   expect(() => bare(['loader', 'particle3d', 'volley3d', 'render3d'])).toThrow('volley3d is listed after particle3d, which would draw every round a frame late')
   expect(() => bare(['loader', 'volley3d', 'render3d'])).toThrow('volley3d draws its rounds through particle3d, which this scene does not name')

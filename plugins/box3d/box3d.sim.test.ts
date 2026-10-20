@@ -16,6 +16,7 @@ import { jsonAt, loader, written } from '#plugins/loader/loader.sim.ts'
 import { load } from '#addons/scenemanager/scenemanager.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 import { heightAt, type Field } from '#plugins/terrain3d/terrain3d.sim.ts'
+import { dial, serve } from '#addons/socket/socket.addon.ts'
 import { pathToFileURL } from 'node:url'
 import {
   b3, box3d, castMover, castRay, castRayClosest, castShape, clipVector, collideMover, contacts, counters,
@@ -97,6 +98,46 @@ test('a stack of two crates stands within the slop and sleeps', () => {
   expect(dist(hi.data.pos, [0, 1.5, 0])).toBeLessThan(SLOP)
   expect([lo.data.awake, hi.data.awake]).toEqual([false, false])
   expect(hi.data.vel).toEqual([0, 0, 0])
+})
+
+// What the server says, as the page hears it across a real socket (`addons/socket`).
+async function across<T>(said: T): Promise<T> {
+  const server = await serve<never, T>(0, send => { send(said); return { take() {}, close() {} } })
+  const heard = await new Promise<T>(r => { const page = dial<never, T>(`ws://localhost:${server.port}`)(d => { page.close(); r(d) }) })
+  await server.close()
+  return heard
+}
+
+// A page that runs a scene ahead joins a stack still settling. The server saves its truth and box3d
+// hands out its world beside it (`hold`), the world as Box3D's own image of bytes, and both cross a
+// real socket; the page loads the save into a truth of its own and box3d takes the world (`take`).
+// From then on both step alike to the bit, and the server, which only handed its world out, steps
+// exactly as a server nobody joined. Without the world, from the rows alone, the page parts from the
+// server.
+test('a truth loaded from a save, given what box3d held beside it, steps exactly as the server, a stack settling between', async () => {
+  const crates = [{ is: 'crate', pos: [0, 0.6, 0] }, { is: 'crate', pos: [0.1, 1.8, 0] }, { is: 'crate', pos: [-0.1, 3, 0.1] }]
+  const joined = async (memory: boolean) => {
+    const alone = boot(scene(crates), sim)
+    const server = boot(scene(crates), sim)
+    run(alone, 20)
+    run(server, 20)
+    const box = server.rows.find(r => r.kind === 'box3d')!
+    const sent = await across({ save: server.save(), held: box3d.hold!(box) as { image: Uint8Array } })
+    const page = boot(scene(crates), sim)
+    page.load(sent.save)
+    if (memory) box3d.take!(page.rows.find(r => r.kind === 'box3d')!, sent.held)
+    let parted = 0
+    for (let i = 0; i < 120; i++) {
+      alone.step(DT)
+      server.step(DT)
+      page.step(DT)
+      expect(server.rows).toEqual(alone.rows)
+      if (JSON.stringify(page.rows) !== JSON.stringify(server.rows)) parted++
+    }
+    return parted
+  }
+  expect(await joined(true)).toBe(0)
+  expect(await joined(false)).toBeGreaterThan(0)
 })
 
 test('a box, a sphere and a capsule each come to rest on the ground at its own half height', () => {

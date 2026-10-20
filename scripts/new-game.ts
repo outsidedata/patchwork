@@ -3,7 +3,7 @@
 // the editor's New game (`extensions/games/games.route.ts`'s `make`, whose header lists the files), on
 // the disk: a game of one scene, `main` (`play` for a game named `main`, whose manager is
 // `main.scene.json`), 960 by 540, serving on the port after the highest the games there use, or 9001.
-// It refuses, writing nothing, a name that is no lower-case letter then letters and digits, one of
+// It refuses, writing nothing, a name that is no lower-case letter then letters, digits and underscores, one of
 // the new game's kinds', a plugin's or an addon's, and a game's that is there.
 import { fileURLToPath } from 'node:url'
 import { Files } from '#editor/server/files.ts'

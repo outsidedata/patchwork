@@ -34,6 +34,9 @@ import { valueAt, type At } from '#editor/server/files.ts'
 import type { RouteFiles, Router } from '#editor/server/routes.ts'
 
 const NAME = /^[a-z][a-zA-Z0-9]*$/
+// A game's name: its folder's, a lower-case letter then lower-case letters, digits and underscores
+// (`extensions/games/games.route.ts`).
+const GAME = /^[a-z][a-z0-9_]*$/
 // The words a kind's name cannot be, since the name is an identifier of its rule's module.
 const RESERVED = new Set([
   'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else', 'enum', 'export', 'extends',
@@ -127,7 +130,7 @@ type Place = { file: string; at: At; table: boolean }
 async function make(body: unknown, files: RouteFiles) {
   const b = body as { game?: unknown; name?: unknown; like?: unknown; sims?: unknown; prefab?: unknown; definitions?: unknown; places?: unknown } | null
   const game = b?.game, name = b?.name, like = b?.like ?? null, sims = b?.sims
-  if (typeof game !== 'string' || !NAME.test(game)) throw new Error('make makes a kind of a game, named by its folder')
+  if (typeof game !== 'string' || !GAME.test(game)) throw new Error('make makes a kind of a game, named by its folder')
   const folder = `games/${game}`
   if (!(await files.list(folder).catch(() => [] as string[])).includes(`${folder}/${game}.scene.json`)) throw new Error(`there is no game ${game}`)
   if (typeof name !== 'string' || !NAME.test(name)) throw new Error(`a kind's name is a lower-case letter and then letters and digits, and not ${JSON.stringify(name)}`)
@@ -201,7 +204,7 @@ async function make(body: unknown, files: RouteFiles) {
 
 async function gameOf(query: URLSearchParams, files: RouteFiles) {
   const game = query.get('game') ?? ''
-  if (!NAME.test(game)) throw new Error('name a game')
+  if (!GAME.test(game)) throw new Error('name a game')
   const folder = `games/${game}`
   const all = await files.list(folder).catch(() => [] as string[])
   const here = all.filter(f => !f.slice(folder.length + 1).includes('/'))

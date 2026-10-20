@@ -57,7 +57,7 @@ const MANAGER = {
     loader: { assets: { land: asset('land'), patterns: asset('patterns'), effects: asset('effects'), range: asset('range') } },
     terrain3d: { field: 'land' },
     hitscan3d: { mods: { ground: 'terrain3d' }, kinds: {}, rewind: 1 },
-    volley3d: { patterns: 'patterns', hold: 0.25, wait: 0.5, mods: { shoot: 'hitscan3d', bodies: 'hitscan3d' } },
+    volley3d: { patterns: 'patterns', hold: 0.25, mods: { shoot: 'hitscan3d', bodies: 'hitscan3d' } },
     particle3d: { effects: 'effects', hold: 0.1 },
   },
   prefabs: {
@@ -273,7 +273,8 @@ test('the selected pattern loops through the view\'s client as a round of the pa
   await pick(user, 'dart')
   await waitFor(() => expect(previews(ed)).toHaveLength(1))
   const [first] = previews(ed)
-  expect(first.local).toBe(true)
+  // The page's only round: the range's ledger has none.
+  expect(volleys(ed)).toEqual([first])
   const spawn = { heading: 0, elevation: 10, height: 2 }
   expect(mark).toHaveBeenCalledWith(marks(PATTERNS.patterns.dart, middle(ed), spawn), expect.any(Number))
   // Its body carried with it and its trail thrown from it, put on the first frame it is drawn.

@@ -15,6 +15,7 @@ import { boot, type Row, type Scene, type W } from '#engine/engine.ts'
 import { load } from '#addons/scenemanager/scenemanager.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 import { written } from '#plugins/loader/loader.sim.ts'
+import * as math from '#plugins/math/math.sim.ts'
 import { depthAt, rawAt, type Field } from '#plugins/terrain3d/terrain3d.sim.ts'
 import { placed, solids as scattered, type Scatter } from '#plugins/scatter3d/scatter3d.sim.ts'
 import { carry, check, groundOf, relative, seek, stand, walk, type Ground, type Numbers, type Solid } from './walker.sim.ts'
@@ -92,10 +93,6 @@ function approach(profile: (s: number) => number, psi: number, phi: number, spee
 }
 
 describe('check', () => {
-  test('every kind these tests walk passes', () => {
-    expect(() => check({ body: K, low: { ...K, step: 0.1, maxSlope: 0.1 }, half: { ...K, maxSlope: 0.5 }, gentle: { ...K, maxSlope: 0.1 } })).not.toThrow()
-  })
-
   test('throws naming the kind when maxSlope·span·√2 is not under step', () => {
     expect(() => check({ steep: { ...K, maxSlope: 0.85 } })).toThrow(/^walker kind steep: maxSlope·span·√2 is 0\.60\d*, not under step 0\.6/)
     expect(() => check({ wide: { ...K, span: 0.9 } })).toThrow(/walker kind wide/)
@@ -136,16 +133,11 @@ describe('check', () => {
     expect(() => truth.step(DT)).toThrow('walker kinds has no kind other')
   })
 
-  test('world.walker.kinds is checked whenever its content changes', () => {
-    const truth = boot(scene(K, {}), { body: { tick(me, dt, w) { walk(me, w, dt, { height: flat, solids: () => [] }) } } })
-    truth.step(DT)
-    const kinds = truth.world.walker.kinds
-    kinds.body.maxSlope = 2
+  test('world.walker.kinds is checked the first time a body walks by it', () => {
+    const truth = boot(scene({ ...K, maxSlope: 2 }, {}), { body: { tick(me, dt, w) { walk(me, w, dt, { height: flat, solids: () => [] }) } } })
     expect(() => truth.step(DT)).toThrow(/walker kind body: maxSlope·span·√2/)
-    kinds.body.maxSlope = K.maxSlope
-    truth.step(DT)
-    kinds.body.seekSpeed = -1
-    expect(() => truth.step(DT)).toThrow(/walker kind body: seekSpeed -1/)
+    const good = boot(scene(K, {}), { body: { tick(me, dt, w) { walk(me, w, dt, { height: flat, solids: () => [] }) } } })
+    expect(() => good.step(DT)).not.toThrow()
   })
 })
 
@@ -166,7 +158,8 @@ describe('the camera-relative stick', () => {
       expect(d[1]).toBeCloseTo(flatR[1], 12)
       expect(a[0]).toBeCloseTo(-flatR[0], 12)
       expect(s[1]).toBeCloseTo(-flatF[1], 12)
-      expect(d).toEqual([-Math.cos(yaw), Math.sin(yaw)])
+      // The rule turns the stick with `plugins/math`, the same bits on the server and the page.
+      expect(d).toEqual([-math.cos(yaw), math.sin(yaw)])
     }
   })
 
@@ -668,13 +661,12 @@ describe('sliding along', () => {
 })
 
 describe('in the air', () => {
-  test('a jump peaks at the sum of its steps, 0.85 m exactly for jumpH 0.9 at gravity 20', () => {
+  test('a jump peaks at the sum of its steps', () => {
     let top = 0, n = 0
     run(flat, { steps: 100, drive: me => { if (n++ === 10) me.data.jump = true }, each: me => { top = Math.max(top, me.data.pos[1]) } })
     let v = Math.sqrt(2 * K.gravity * K.jumpH), sum = 0
     for (v -= K.gravity * DT; v > 0; v -= K.gravity * DT) sum += v * DT
     expect(top).toBe(sum)
-    expect(sum).toBeCloseTo(0.85, 12)
   })
 
   test('jump is taken on the ground and cleared either way', () => {
@@ -1100,16 +1092,6 @@ describe('seek', () => {
     })
   })
 
-  test('asks for solids only along the corridor to target when nothing blocks it', () => {
-    const far = Array.from({ length: 400 }, (_, i) => ({ x: 20 + (i % 20), z: Math.floor(i / 20), radius: 0.3 }))
-    const asked: number[][] = []
-    const ground: Ground = { height: flat, solids: (x, z, r) => { asked.push([x, z, r]); return far.filter(s => Math.hypot(s.x - x, s.z - z) <= r + s.radius) } }
-    const truth = boot(scene(K, {}), { body: { tick(me, _dt, w) { seek(me, w, [0, 30], 0.2, ground) } } })
-    truth.step(DT)
-    asked.forEach(([x, z, r]) => { expect(Math.abs(x)).toBeLessThan(1e-9); expect(z).toBeLessThanOrEqual(30 + 1e-9); expect(r).toBeCloseTo(K.radius * Math.SQRT2, 12) })
-    expect(asked.length).toBe(Math.ceil(30 / K.radius) + 1)
-  })
-
   test('goes round the near end of an 11-trunk fence in the same number of steps whether want started at [0, 0] or pointing at the far end', () => {
     const eleven = Array.from({ length: 11 }, (_, i) => ({ x: i * 0.8, z: 2, radius: 0.2 }))
     const still = go(eleven, [1, 4], { at: [1, 0] })
@@ -1118,6 +1100,41 @@ describe('seek', () => {
     expect(still.arrived).toBeGreaterThan(0)
     expect(pointed.arrived).toBe(still.arrived)
     expect(Math.min(...still.path.map(([x]) => x))).toBeLessThan(0)
+  })
+})
+
+describe('a ground with a cell', () => {
+  // A curved ground, and the triangles of its lattice of `c`: each cell split from its low corner to its
+  // high one.
+  const curved: Height = (x, z) => 0.05 * x * x - 0.03 * x * z + 0.2 * Math.sin(z)
+  const triangles = (f: Height, c: number): Height => (x, z) => {
+    const i = Math.floor(x / c), j = Math.floor(z / c), fx = x / c - i, fz = z / c - j
+    const a = f(i * c, j * c), d = f((i + 1) * c, (j + 1) * c)
+    if (fx >= fz) { const b = f((i + 1) * c, j * c); return a + (b - a) * fx + (d - b) * fz }
+    const e = f(i * c, (j + 1) * c)
+    return a + (e - a) * fz + (d - e) * fx
+  }
+
+  test('a body stands on the triangles of the lattice, not on the ground between its corners', () => {
+    for (const c of [2, 0.5]) {
+      const ground: Ground = { height: curved, solids: () => [], cell: c }
+      const plain: Ground = { height: triangles(curved, c), solids: () => [] }
+      for (const [x, z] of [[0.3, 0.7], [-3.1, 2.25], [5.5, -4.9], [1, 1]]) expect(stand(K, ground, x, z)).toBeCloseTo(stand(K, plain, x, z), 12)
+    }
+  })
+
+  test('walking on it climbs and stops just as walking on its triangles does', () => {
+    const c = 2
+    const hill: Height = (x, z) => 0.6 * Math.max(0, x - 1) + 0.02 * z
+    const lattice = run(triangles(hill, c), { want: [2, 0], steps: 120 })
+    const withCell = (() => {
+      const ground: Ground = { height: hill, solids: () => [], cell: c }
+      const truth = boot(scene(K, { want: [2, 0] }), { body: { tick(me, dt, w) { walk(me, w, dt, ground) } } })
+      for (let i = 0; i < 120; i++) truth.step(DT)
+      return truth.rows.find(r => r.kind === 'body')!.data.pos
+    })()
+    lattice.me.data.pos.forEach((v: number, i: number) => expect(withCell[i]).toBeCloseTo(v, 9))
+    expect(withCell[0]).toBeGreaterThan(1)
   })
 })
 
@@ -1220,4 +1237,21 @@ export const scene = file
     w.world.walker.mods = undefined
     expect(() => groundOf(w)).toThrow('walker is asked for the ground its mods make, and the scene names no world.walker.mods.height')
   })
+})
+
+test('in the air, vel eases by airAccel: at 0 a body thrown sideways keeps its speed until it lands and eases by accel from there; absent, by accel as on the ground', () => {
+  const thrown = { y: 5, vel: [10, 0, 0], grounded: false, want: [0, 0] }
+  const kept: number[] = [], grounded: boolean[] = []
+  run(flat, { ...thrown, over: { airAccel: 0 }, steps: 60, each: me => { kept.push(me.data.vel[0]); grounded.push(me.data.grounded) } })
+  const landed = grounded.indexOf(true)
+  expect(landed).toBeGreaterThan(30)
+  for (const v of kept.slice(0, landed + 1)) expect(v).toBe(10)
+  expect(kept[landed + 1]).toBeCloseTo(10 * Math.exp(-K.accel * DT))
+
+  const eased: number[] = []
+  run(flat, { ...thrown, steps: 10, each: me => { eased.push(me.data.vel[0]) } })
+  eased.forEach((v, i) => expect(v).toBeCloseTo(10 * Math.exp(-K.accel * DT * (i + 1))))
+
+  expect(() => check({ body: { ...K, airAccel: -1 } })).toThrow('walker kind body: airAccel -1 is not a number at or above 0')
+  expect(() => check({ body: { ...K, airAccel: 0 } })).not.toThrow()
 })

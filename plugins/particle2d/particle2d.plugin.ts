@@ -12,11 +12,6 @@
 // effects file has an effect of that name, false until the file has been read; this half asks the
 // loader for it in its `tick`, before any actor ticks, so an actor can ask.
 //
-// particle3d is this plugin drawn in render3d's world: the two read the same fields with the same
-// meanings, each in its own space, and every field of an effect's layers of the one is a field of the
-// other (`particle3d.plugin.test.ts` measures the one against the other). A render2d layer is this
-// half's alone, the file's `layer` and a spawn's, since render3d's world has none.
-//
 // An effect's point, `at`, is a point of the world, [x, y] or [x, y, h] (`plugins/render2d`), and
 // its particles are thrown from where render2d draws that point. From there every length, speed and
 // pull is in the stage's pixels, as it looks on the screen: x grows to the right and y down, and a

@@ -1,9 +1,8 @@
 // scatter3d's mod for cover3d, given to cover3d by one key of a scene: `world.cover3d.mods.solids` is
 // 'scatter3d'. The test writes a manager and one child, `wood`, which `load` boots as a game's would:
 // hills with firs that stand `tall`, trunks that stand without end and ferns that are no solid, placed
-// through `world.scatter3d.mods.ground`. The mod's solids are scatter3d's there, each as tall as its
-// row's `tall` times its size or without end, and cover3d finds cover behind them. Its `probe` hands
-// the test the child's `w`.
+// through `world.scatter3d.mods.ground`. cover3d finds cover behind them, each as tall as its row's
+// `tall` times its size or without end. Its `probe` hands the test the child's `w`.
 import { afterAll, expect, test } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -15,7 +14,7 @@ import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 import { written } from '#plugins/loader/loader.sim.ts'
 import type { Field } from '#plugins/terrain3d/terrain3d.sim.ts'
 import { spots } from '#plugins/cover3d/cover3d.sim.ts'
-import { place, placed, solids as over, type Cell, type Scatter } from './scatter3d.sim.ts'
+import type { Scatter } from './scatter3d.sim.ts'
 import { solids } from './scatter3d.cover3d.ts'
 
 const DT = 1 / 60
@@ -82,28 +81,6 @@ async function booted() {
 test('the scene\'s one key gives cover3d scatter3d\'s solids, loaded before the first step', async () => {
   const { child } = await booted()
   expect(mod(child.world, 'cover3d', 'solids')).toBe(solids)
-})
-
-test('solids are scatter3d\'s on the ground world.scatter3d.mods.ground names, a fir tall·size, a trunk without end, a fern none', async () => {
-  const { w } = await booted()
-  const pack = scatter.packs.trees
-  const cells = new Map<string, Cell>()
-  for (let j = -15; j <= 15; j++) for (let i = -15; i <= 15; i++) {
-    const c = place(pack, i, j, placed(w))
-    if (c) cells.set(`${c.x} ${c.z}`, c)
-  }
-  const rows = new Set<string>()
-  for (const [x, z, r] of [[30, 20, 12], [-70, 45, 30], [0, 0, 20]]) {
-    const got = solids(w, x, z, r)
-    expect(got).toEqual(over(w, x, z, r, placed(w)))
-    for (const s of got) {
-      const c = cells.get(`${s.x} ${s.z}`)
-      if (!c) continue
-      rows.add(c.row)
-      expect(s).toEqual(c.row === 'fir' ? { x: c.x, z: c.z, radius: 0.35 * c.size, tall: 6 * c.size } : { x: c.x, z: c.z, radius: 0.3 * c.size })
-    }
-  }
-  expect([...rows].sort()).toEqual(['fir', 'trunk'])
 })
 
 test('cover3d finds cover behind them: each spot against the far side of one of them, straight on from the threat', async () => {

@@ -283,7 +283,7 @@ function expected(r: Whole, tone: 'aces' | 'neutral' | 'none' | undefined, ao: b
 }
 
 test('the palette, the key light, the hemisphere light, the fog and the exposure follow their formulas through a day, clear and in a storm, with and without ao', () => {
-  for (const [render, ao] of [[{ tone: 'aces' }, false], [{ tone: 'neutral' }, false], [{ tone: 'none' }, false], [{ tone: 'aces', ao: { radius: 1, thickness: 1, falloff: 1, scale: 1, intensity: 1, samples: 8 } }, true]] as const) {
+  for (const [render, ao] of [[{ tone: 'aces' }, false], [{ tone: 'neutral' }, false], [{ tone: 'none' }, false], [{ tone: 'aces', ao: { on: true, radius: 1, thickness: 1, falloff: 1, scale: 1, intensity: 1, samples: 8 } }, true]] as const) {
     for (const mix of [CLEAR, STORM]) {
       const { me, plugins, frame, set } = page({ canvas: true, render })
       for (let k = 0; k < 24; k++) {
@@ -412,8 +412,8 @@ test('the key light\'s bias is turned over only for reversed depth with a PCF ma
   expect(pcf).not.toContain('USE_REVERSED_DEPTH_BUFFER')
   const rest = chunk.slice(chunk.indexOf('#elif defined( SHADOWMAP_TYPE_VSM )'), chunk.indexOf('float getPointShadow('))
   expect(rest.match(/#ifdef USE_REVERSED_DEPTH_BUFFER\s+shadowCoord\.z -= shadowBias;/g)?.length).toBe(2)
-  const ao = { radius: 1, thickness: 1, falloff: 1, scale: 1, intensity: 1, samples: 8 }
-  const bias = (render: Record<string, unknown>) => {
+  const ao = { on: true, radius: 1, thickness: 1, falloff: 1, scale: 1, intensity: 1, samples: 8 }
+  const bias =(render: Record<string, unknown>) => {
     const { me, frame } = page({ canvas: true, render })
     frame()
     return me.sky()!.key.shadow.bias

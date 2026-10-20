@@ -44,7 +44,7 @@ function page(world: any = { grid: GRID }) {
   r2.PIXI = { ...PIXI, Assets: { load: async () => new PIXI.Texture({ source: new PIXI.TextureSource({ width: 128, height: 29 }) }) } }
   const assets = { tiles: { type: 'sheet', url: sheetUrl, nearest: true } }
   const plugins: any = {
-    wire: { n: 0, ack: 0, rows: truth.packet(seat).rows, scene: { world: { ...world, loader: { assets }, render2d: ISO }, prefabs: { engine: { dt: 1, width: 320, height: 200 }, loader: {} } } },
+    wire: { n: 0, rows: truth.packet(seat).rows, scene: { world: { ...world, loader: { assets }, render2d: ISO }, prefabs: { engine: { dt: 1, width: 320, height: 200 }, loader: {} } } },
     render2d: r2,
     loader: loader(),
   }
@@ -56,13 +56,12 @@ function page(world: any = { grid: GRID }) {
     r2.tick(plugins)
     me.afterTick(plugins)
   }
-  // A step of the truth with `f` as its rule, and its packet taken, acking the seat's messages up to `ack`.
-  const step = (f: (w: W) => void = () => {}, ack = plugins.wire.ack) => {
+  // A step of the truth with `f` as its rule, and its packet taken.
+  const step = (f: (w: W) => void = () => {}) => {
     job = f
     truth.step(1)
     job = () => {}
     plugins.wire.rows = [...truth.packet(seat).rows, { id: 99, kind: 'loader', data: {} }]
-    plugins.wire.ack = ack
   }
   return { plugins, me, frameOnce, step, truth }
 }
@@ -177,41 +176,15 @@ test('a list of frames plays on the page\'s clock at its fps, as a clip the shee
   expect(() => p.frameOnce()).toThrow('a list of frames times none of its frames, and the draw gives no fps above 0')
 })
 
-test('a pending edit is drawn at once and until a packet acks its message, then the rows say what the server did', async () => {
+test('a preview is drawn over the cells the packets bring until the next preview replaces it, and ahead is without it', async () => {
   const p = page()
+  p.step(w => cells(w).set('kind', 1, 0, 1))
   await ready(p)
-  p.me.pending(3, [['kind', 3, 0, 1]])
-  p.frameOnce()
-  expect(drawn(p.plugins)).toContainEqual(['tall', 48, 40])
-  expect(p.me.cells()!.get('kind', 3, 0)).toBe(1)
-  // A packet that does not ack it yet: still drawn.
-  p.step(() => {}, 2)
-  p.frameOnce()
-  expect(drawn(p.plugins)).toContainEqual(['tall', 48, 40])
-  // The server refused it: the packet that acks it has no such edit, and the cell is flat again.
-  p.step(() => {}, 3)
-  p.frameOnce()
-  expect(drawn(p.plugins)).not.toContainEqual(['tall', 48, 40])
-  // One the server made: drawn from the rows once acked.
-  p.me.pending(4, [['kind', 0, 3, 1]])
-  p.step(w => cells(w).set('kind', 0, 3, 1), 4)
-  p.frameOnce()
-  expect(drawn(p.plugins)).toContainEqual(['tall', -48, 40])
-  // A message the pipe refused is numbered 0 and pends nothing.
-  p.me.pending(0, [['kind', 1, 1, 1]])
-  p.frameOnce()
-  expect(p.me.cells()!.get('kind', 1, 1)).toBe(0)
-})
-
-test('a preview is drawn over the cells, pending edits too, until the next preview replaces it, and ahead is without it', async () => {
-  const p = page()
-  await ready(p)
-  p.me.pending(5, [['kind', 1, 0, 1]])
   p.me.preview([['kind', 1, 0, 0], ['kind', 2, 0, 1]])
   p.frameOnce()
   expect(p.me.cells()!.get('kind', 1, 0)).toBe(0)
   expect(drawn(p.plugins)).toContainEqual(['tall', 32, 32])
-  // Ahead is what the pending edit leaves, without the preview.
+  // Ahead is the packets' cells, without the preview.
   expect([p.me.ahead()!.get('kind', 1, 0), p.me.ahead()!.get('kind', 2, 0)]).toEqual([1, 0])
   p.me.preview([['height', 2, 0, 3]])
   p.frameOnce()

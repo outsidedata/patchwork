@@ -87,7 +87,7 @@ export function Runs() {
   )
 }
 
-// One recording: its summary, a timeline of what happened when, each page's lead, steps a frame and
+// One recording: its summary, a timeline of what happened when, each page's steps a frame and
 // standoff over time, and the frame of the page picked at the time picked.
 function Recording({ records, page, setPage, at, setAt }: { records: Record_[]; page: number; setPage(p: number): void; at: number; setAt(t: number): void }) {
   const s = useMemo(() => { try { return summary(records) } catch { return undefined } }, [records])
@@ -109,11 +109,8 @@ function Recording({ records, page, setPage, at, setAt }: { records: Record_[]; 
           columns={[
             { key: 'page', title: 'page', cell: p => p.page, numeric: true },
             { key: 'frames', title: 'frames', cell: p => p.frames, numeric: true },
-            { key: 'steps', title: 'steps a frame', cell: p => `${counts(p.histogram.counts)} (join ${p.histogram.join ?? '–'})` },
-            { key: 'lead', title: 'lead', cell: p => `${p.lead.min}–${p.lead.max}, last ${p.lead.last}` },
-            { key: 'fix', title: 'corrections', cell: p => `${p.corrections}, largest ${round(p.largest, 4)}` },
+            { key: 'steps', title: 'steps a frame', cell: p => `${counts(p.histogram.counts)} (first packet ${p.histogram.first === null ? '–' : `${round(p.histogram.first, 1)} ms`})` },
             { key: 'envelopes', title: 'envelopes a frame', cell: p => counts(p.packets) },
-            { key: 'late', title: 'late presses', cell: p => p.late, numeric: true },
             { key: 'standoff', title: 'standoff jitter', cell: p => `max ${round(p.standoff.max, 4)}, rms ${round(p.standoff.rms, 4)}` },
           ]}
         />
@@ -122,7 +119,6 @@ function Recording({ records, page, setPage, at, setAt }: { records: Record_[]; 
         <Timeline label="recording" lanes={lanes} head={at} span={s.ms} grain={1} fit={s.ms} format={t => `${Math.round(t)} ms`} onSeek={t => setAt(t)} />
       </Section>
       <Section title="Over time">
-        <Chart label="lead" series={charts.lead} x={{ label: 'ms' }} y={{ label: 'lead, steps' }} />
         <Chart label="steps a frame" series={charts.steps} x={{ label: 'ms' }} y={{ label: 'steps' }} />
         <Chart label="standoff" series={charts.standoff} x={{ label: 'ms' }} y={{ label: 'camera to own row' }} />
       </Section>
@@ -138,9 +134,7 @@ function Recording({ records, page, setPage, at, setAt }: { records: Record_[]; 
 // three places.
 function FrameView({ frame }: { frame: FrameRecord }) {
   const fields: [string, string][] = [
-    ['t', `${round(frame.t, 3)} ms`], ['clock', `${round(frame.clock, 3)} ms`], ['step drawn', String(frame.step ?? '–')],
-    ['packet step', String(frame.n ?? '–')], ['ack', String(frame.ack)], ['lead', String(frame.lead)], ['corrections', String(frame.reruns)],
-    ['this frame\'s correction', frame.fix ? `${frame.fix.rows} rows, ${round(frame.fix.size, 4)}` : '–'],
+    ['t', `${round(frame.t, 3)} ms`], ['clock', `${round(frame.clock, 3)} ms`], ['packet step', String(frame.n ?? '–')],
     ['camera', frame.eye ? `at ${frame.eye.pos.map(v => round(v, 2)).join(', ')}` : '–'],
     ...(frame.cost !== undefined ? [['cost', `${round(frame.cost, 3)} ms`] as [string, string]] : []),
   ]

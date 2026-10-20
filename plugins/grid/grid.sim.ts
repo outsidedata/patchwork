@@ -54,6 +54,7 @@
 // does one with a layer of other bits, before any cell is written, so no picture fills half a grid.
 import type { Kind, Row, W } from '#engine/engine.ts'
 import type { Pixels } from '#plugins/loader/loader.sim.ts'
+import * as math from '#plugins/math/math.sim.ts'
 
 export type Layer = { bits: number; scale: number }
 export type Spec = { size: [number, number]; chunk: number; layers: Record<string, Layer> }
@@ -66,7 +67,7 @@ export const width = (bits: number) => Math.ceil(bits / 6)
 
 export function encode(v: number, chars: number): string {
   let s = ''
-  for (let i = chars - 1; i >= 0; i--) s += DIGITS[Math.floor(v / 64 ** i) % 64]
+  for (let i = chars - 1; i >= 0; i--) s += DIGITS[Math.floor(v / math.pow(64, i)) % 64]
   return s
 }
 
@@ -104,7 +105,7 @@ export function spec(world: any): Spec {
 }
 
 // How many values a chunk holds of a layer.
-const count = (s: Spec, l: Layer) => (s.chunk / l.scale) ** 2
+const count = (s: Spec, l: Layer) => math.pow(s.chunk / l.scale, 2)
 const chunks = (s: Spec) => (s.size[0] / s.chunk) * (s.size[1] / s.chunk)
 const zeros = (s: Spec, l: Layer) => 'A'.repeat(count(s, l) * width(l.bits))
 
@@ -187,7 +188,7 @@ export function cells(from: W | { world: any; rows: Row[] }): Cells {
     },
     set(name, x, y, v) {
       const { l, row, i } = place(name, x, y)
-      if (!Number.isInteger(v) || v < 0 || v >= 2 ** l.bits) throw new Error(`${v} is not a value of ${name}, a whole number from 0 to ${2 ** l.bits - 1}`)
+      if (!Number.isInteger(v) || v < 0 || v >= math.pow(2, l.bits)) throw new Error(`${v} is not a value of ${name}, a whole number from 0 to ${math.pow(2, l.bits) - 1}`)
       const values = valuesOf(row, name, l)
       if (values[i] === v) return
       const chars = width(l.bits)
@@ -213,8 +214,8 @@ function packing(layers: [string, Layer][]): { planes: number; at: Map<string, {
 }
 
 // The 32 bits of a pixel, red lowest.
-const word = (d: Uint8ClampedArray, o: number) => d[o] + d[o + 1] * 2 ** 8 + d[o + 2] * 2 ** 16 + d[o + 3] * 2 ** 24
-const bitsOf = (u: number, bit: number, bits: number) => Math.floor(u / 2 ** bit) % 2 ** bits
+const word = (d: Uint8ClampedArray, o: number) => d[o] + d[o + 1] * math.pow(2, 8) + d[o + 2] * math.pow(2, 16) + d[o + 3] * math.pow(2, 24)
+const bitsOf = (u: number, bit: number, bits: number) => Math.floor(u / math.pow(2, bit)) % math.pow(2, bits)
 
 // The grid as a picture, its layers packed as the header says, and their names, bits and scales in
 // the text `grid`.
@@ -227,10 +228,10 @@ export function picture(from: W | { world: any; rows: Row[] }): Pixels {
   const words = new Float64Array(w * h * planes)
   for (const [name] of layers) {
     const { plane, bit } = at.get(name)!
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) words[(plane * h + y) * w + x] += c.get(name, x, y) * 2 ** bit
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) words[(plane * h + y) * w + x] += c.get(name, x, y) * math.pow(2, bit)
   }
   const data = new Uint8ClampedArray(w * h * planes * 4)
-  words.forEach((u, i) => { for (let b = 0; b < 4; b++) data[i * 4 + b] = Math.floor(u / 2 ** (8 * b)) % 256 })
+  words.forEach((u, i) => { for (let b = 0; b < 4; b++) data[i * 4 + b] = Math.floor(u / math.pow(2, 8 * b)) % 256 })
   return { width: w, height: h * planes, data, text: { grid: JSON.stringify(layers.map(([name, l]) => ({ name, ...l }))) } }
 }
 

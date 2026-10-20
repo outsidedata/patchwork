@@ -7,12 +7,13 @@
 // starting under the ground meets it at once.
 import type { W } from '#engine/engine.ts'
 import { json } from '#plugins/loader/loader.sim.ts'
+import * as math from '#plugins/math/math.sim.ts'
 import { normalAt, ray } from './terrain3d.sim.ts'
 
 export function ground(w: W, from: number[], dir: number[], far: number) {
   const p = ray(w, from, dir, far)
   if (!p) return undefined
-  const t = Math.hypot(p[0] - from[0], p[1] - from[1], p[2] - from[2])
+  const t = math.hypot(p[0] - from[0], p[1] - from[1], p[2] - from[2])
   const step = (json(w, w.world.terrain3d.field) as { analysis: { slopeStep: number } }).analysis.slopeStep
   return { t, normal: normalAt(w, p[0], p[2], step) }
 }

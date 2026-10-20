@@ -34,18 +34,24 @@ Ask the prime directive's questions in order; the first yes is the home.
   off, a theme): a key of the store (`plugins/store/store.plugin.ts`), never a plugin's number. A
   plugin that reads one names its store key in `world.<p>`, as `world.audio.volume` names the keys
   `{ level, muted }` that `plugins/audio/audio.plugin.ts` reads the volume from.
-- It is one game's, but shared by several of its kinds, or a system of that game's: a plugin or an
-  addon of the game's own, `games/<game>/plugins/<name>/` or `games/<game>/addons/<name>/`, by the
+- It is used by one game only, however general it could be described, shared by several of its
+  kinds or a system of that game's: a plugin or an addon of the game's own, `games/<game>/plugins/<name>/` or `games/<game>/addons/<name>/`, by the
   rules below, except that it may name that game's kinds and has no prefab of numbers: it reads
   every number off the definition of the kind whose row it is handed, as that kind's rule would, or
   off a file that definition names. Kinds share code through it, never by one actor importing
   another.
-- It could be described without naming a game, and it lives in the world (rows, the step) or in the
-  player's browser (drawing, input, camera, sound, UI): a plugin, `plugins/<p>/`, with a server half,
-  a browser half, or both.
-- It holds a truth (seats, connections, sockets, files, timers, more than one truth, what a packet
-  carries): an addon, `addons/<a>/`. It runs where the truth is; a transport's page side and the
-  scenemanager's `view` run in the page.
+- It is used by a second game or by core itself, and it lives in the world (rows, the step) or in
+  the player's browser (drawing, input, camera, sound, UI): a plugin, `plugins/<p>/`, with a server
+  half, a browser half, or both, moved up from the game that had it (Moving shared code into a
+  plugin, below).
+- It is used by a second game or by core itself, and it holds a truth (seats, connections, sockets,
+  files, timers, more than one truth, what a packet carries): an addon, `addons/<a>/`. It runs where
+  the truth is; a transport's page side and the scenemanager's `view` run in the page.
+
+A new folder in `plugins/` or `addons/`, or a new exported piece of an existing one (a call, a
+setting, a mod), is asked of the person you are working for in planning, before any code, with which games and core code use
+it and why it cannot stay in the game (prime directive, A new top-level plugin or addon is asked
+for). No answer is a no.
 
 Addon or plugin is never a question to ask: it is question 4 or question 5. Nothing goes in the
 engine. A setting only one game would set is that game's actor, never a plugin's setting.
@@ -120,24 +126,29 @@ extension and a route as a plugin does (`addons/simulator/`). A game's own addon
    hits without it, is added to what it returns, in the plugin, with its test, the moment a rule needs
    it. A rule never runs the plugin's arithmetic again off the plugin's row to get it back; code that
    does is old code, never a pattern. A ledger row is the exception to writing only the row handed:
-   `emit` in `plugins/particle2d/particle2d.sim.ts` appends to the ledger row directly,
-   and the page's prediction drops what a run writes to a ledger kind. A plugin whose own row's tick
-   writes the rows of other kinds, as box2d's and box3d's write every body, is predicted only by whole
-   steps (Wrapping a library). Arrays it changes it writes as new arrays, `me.data.pos = [x, y]`, as
-   `plugins/walker/walker.sim.ts` says, never element by element.
+   `emit` in `plugins/particle2d/particle2d.sim.ts` appends to the ledger row directly (below).
+   Arrays it changes it writes as new arrays, `me.data.pos = [x, y]`, as
+   `plugins/walker/walker.sim.ts` says, never element by element. It computes with `plugins/math`,
+   `math.sin(a)` for `Math.sin(a)` and `math.pow(a, b)` for `a ** b`, and so does a mod a server half
+   asks: a page that runs the scene ahead steps the same code, and engines differ in the last bit of
+   `Math`'s functions (`designing-a-kind`, Maths in a rule; `plugins/math/math.sim.test.ts` fails on
+   a top-level plugin that does not).
 4. Write the browser half when the plugin draws, listens or plays: `<p>.plugin.ts`, its state inside
    the exported function. It reads the last packet's rows off `plugins.wire.rows`, its fixed numbers
    off `plugins.wire.scene.world.<p>` (a game's own: the definitions, `def(plugins.wire, row.kind)`),
-   and the plugins it draws through off `plugins` (`plugins.render2d`, `plugins.loader`). It may
-   import its own server half's pure functions, as `plugins/volley2d/volley2d.plugin.ts` imports
-   `./volley2d.sim.ts`.
+   and the plugins it draws through off `plugins` (`plugins.render2d`, `plugins.loader`). The seat's
+   own row is `possessed(plugins.wire.rows)`, imported from `#plugins/player/player.plugin.ts`, the
+   `player` row that carries `mine`; never `rows.find(r => r.kind === 'player')`, which is whichever
+   seat's row came first, since every seat is sent every `player` row. On a page running the scene
+   ahead (`addons/predict`) every row is the copy's, on the frame after the key. It may import its own server half's pure functions, as
+   `plugins/volley2d/volley2d.plugin.ts` imports `./volley2d.sim.ts`.
 5. The scene's side, in the game's scene file: the fixed numbers in `world.<p>` (for a scene
    manager's children, written once in the manager's `world` when every child shares them), the
    plugin in `plugins` in the order its header asks (a game's own with a browser half: `shipped` there
    and its name in `world.shipped.plugins`, with what that means for mods, above), and when it has a
    row: its kind in the scene's `sim`, a prefab of that
-   row's changing fields in `prefabs.<p>`, and an `actors` entry for it. A ledger row's kind goes in
-   `world.player.ledgers` (below). Each mod it wants in `world.<p>.mods`.
+   row's changing fields in `prefabs.<p>`, and an `actors` entry for it. Each mod it wants in
+   `world.<p>.mods`.
 6. Write the tests beside each file (How it is proven), run each with `yarn vitest run <file>`, run
    the tests of every game file the change touched, and `yarn tsc`.
 7. Play it (How it is proven).
@@ -149,7 +160,9 @@ browser half as `plugins.wire.scene.world.<p>`, whichever half reads them, and w
 row or not. No packet carries `world`: the server boots from the scene file and the page reads the
 same file. A catalogue, a cue table, the kinds it acts on, a size, a rate: fixed, so on `world`, never
 on a row or a prefab, however convenient the row is to reach. The kinds a top-level plugin acts on are
-named there too, as `world.walker.kinds` and `world.box3d.kinds` name theirs.
+named there too, as `world.walker.kinds` and `world.box3d.kinds` name theirs. The thing a seat plays
+as is its `player` row (`designing-a-seat`), so a scene whose seat drives, walks or flies through
+such a plugin gives it an entry for `player`, never for a kind the `player` row spawns.
 
 A child scene's `world` is the manager's with the child's own over it key by key
 (`child` in `addons/scenemanager/scenemanager.addon.ts`). A child that gives `world.<p>` has its own
@@ -167,22 +180,19 @@ A top-level plugin's row is of the kind named as the plugin, its rule exported u
 `plugins/<p>/<p>.sim.ts`. A game draws a plugin's row with a `<p>.client.ts` in its folder, since a
 file named after a plugin is loaded as the actor of that plugin's row.
 
-How the page's prediction treats a plugin's row (the header of `plugins/player/player.plugin.ts`, and
-its test `no rule file is asked for a plugin's kind, and the player's is`). By default the page asks
-for no rule file for a plugin's kind, any name in the scene's `plugins` or `world.shipped.plugins`
-but `player`, and a press whose rule calls an act on a plugin's row is not run ahead: it waits for
-the packet. A call on a ledger's row is the one exception: it is dropped and the rest of the press is
-run ahead. With `world.player.steps`, the page runs whole steps of every row and looks for each kind's
-rule as `<kind>.sim.ts` beside the page, else `plugins/<kind>/<kind>.sim.ts`, and a call on a plugin
-row's act runs there. A game's own plugin's row has its rule in neither place, so in a scene with
-`world.player.steps` the page's step throws on it. Finding that rule is `plugins/player`'s to build,
-never a game's to work around.
-
 A row that only appends events for the page to play or draw once is a ledger: `audio`'s,
-`particle2d`'s, `particle3d`'s, `volley2d`'s, `volley3d`'s. Every scene that uses one names its kind in
-`world.player.ledgers`, so a press the page runs ahead drops what it writes there and the event comes
-once, from the packet. A new plugin whose row only appends events is a ledger, and its header says
+`particle2d`'s, `particle3d`'s, `volley2d`'s, `volley3d`'s. A page draws only the last packet of a
+frame, so a value a rule sets for one step and clears is missed whenever two packets land in one
+frame; an entry stays on a ledger longer than a step (audio's, particle2d's, particle3d's and
+volley3d's for their `world.<p>.hold` seconds), and the page plays or draws each entry once, by its
+id. A new plugin whose row only appends events is a ledger, and its header says
 so.
+
+A page running the scene ahead (`addons/predict`) draws a ledger row from its copy like every other
+row, so an entry a press raises is seen on the frame after the key. Audio's `sound` puts an entry
+raised `from` a `player` row on that row's own `voiced` list and every other entry on the ledger, its
+`before` takes the old entries off both, and its browser half plays both lists once each
+(`plugins/audio/audio.sim.ts`, `audio.plugin.ts`).
 
 A game's own plugin has no numbers of its own. Its one entry in `world` is `world.<p>.mods`, and it
 has no prefab of numbers. It reads each number off the definition of the kind whose row it is handed
@@ -191,16 +201,15 @@ the next is a field on that row, its starting value in that kind's prefab beside
 fields. When its server half has changing state of its own that is no kind's row, it has a row of its
 own, as any plugin may; the engine boots and spawns no row without a prefab (`engine/engine.ts`), so
 that row's prefab holds its changing fields and nothing else. A browser that arrives later is sent
-rows and nothing else, so memory kept anywhere else is lost to it, to the page's prediction and to
-the recorder's replay.
+rows and nothing else, so memory kept anywhere else is lost to it and to the recorder's replay.
 
 A game's own plugin handed no row has no definition to read. A thing of the game's that no plugin
 of core draws and that holds numbers of its own, a road or a track no ground plugin draws, is
 therefore a kind with one `actors` entry: its definition holds its numbers, or names the data file
 of its points in `assets/`, and its look draws it, its own `<kind>.client.ts`, or this plugin's
 browser half when the drawing is shared with other kinds, drawing that kind's row by its
-definition as it draws theirs. A rule that asks it, how far along the road a body is or which way
-is out of it, calls a function of this plugin handed that row, `w.find('<kind>')`, which reads
+definition as it draws theirs. A rule that asks it, how far along the road a `player` row or a
+rival is or which way is out of it, calls a function of this plugin handed that row, `w.find('<kind>')`, which reads
 `def(w, row.kind)` and the file it names. The plugin never takes a `world.<p>` of numbers to get
 round having no row: its numbers are the definitions of the kinds whose rows it is handed, and the
 road's are its own kind's (`building-a-level`, Where a level's pieces go).
@@ -242,12 +251,6 @@ is the pattern, and `plugins/box2d/box2d.sim.ts` the same in 2D:
   (`castRayClosest(w, …)`), never by holding the library's objects.
 - Every number of the library's own that the scene does not give is the library's default, read from
   the library, never written in the plugin.
-- Its row's tick moves the rows of other kinds, which the page cannot run ahead one row at a time,
-  so a scene that wants a press drawn at once predicts by whole steps, `world.player.steps`, where the
-  page runs every row's passes over its own rows (the header of `plugins/player/player.plugin.ts`).
-  Going back there puts every body back but not the library's memory, which is why box2d offers
-  `world.box2d.rollback` (the Going back part of `plugins/box2d/box2d.sim.ts`'s header). Using it in a
-  game is `input-and-seats` and `tuning-feel`.
 - The library reaches the plugin as a package dependency, imported, as `box3d.js` and `box2d.js` are.
   Any file it reads, and a library shipped as a file of the game's own (a compiled module), is an
   entry of the scene's loader catalogue, `world.loader.assets`, and reaches the plugin through the
@@ -269,7 +272,11 @@ What it is. Plugin `a` provides for plugin `p` with a file `<a>.<p>.ts` that exp
 the names `p` asks for, written with everything `a` knows. `p` declares the type `F` of each function
 it asks for and asks `mod<F>(world, '<p>', '<function>')`, which hands back the function, or undefined
 when the scene names none. A scene switches one on with `world.<p>.mods: { <function>: '<a>' }`.
-Before the first step, on the server and on the page alike, the scenemanager imports every mod a
+A `p` that takes one function from several plugins at once, as box3d takes `props` (the fixed
+things standing on the land) from every placer a scene names, asks `modsOf<F>(world, '<p>',
+'<function>')`, which hands back each one's function in the list's order, and the scene names them
+`{ <function>: ['<a>', '<b>'] }`; a single name is a list of one. `mod` throws on an entry naming
+more than one, since it hands back one. Before the first step, on the server and on the page alike, the scenemanager imports every mod a
 scene's `world` names and throws `<url> does not export <function>` for a file that does not export the
 function it is named for. So `p` never imports `a`, `a` never changes `p`, and swapping one provider
 for another is changing that one value.
@@ -303,7 +310,7 @@ says where a mod is. Every placement is shown in the forge test of
 Server and page. A server mod takes `w` and reads the truth (`ground(w, key)` in
 `plugins/terrain3d/terrain3d.box3d.ts`, `wind(w)` in `plugins/skydome3d/skydome3d.ocean3d.ts`). A browser
 half calls a server mod through a `w`-shaped reader of the wire's rows, as `reading` in
-`plugins/volley3d/volley3d.plugin.ts` does. A browser mod takes `plugins` first and hands back what
+`plugins/ocean3d/ocean3d.plugin.ts` does. A browser mod takes `plugins` first and hands back what
 `a`'s browser half holds (`land(plugins)` in `plugins/terrain3d/terrain3d.ocean3d.ts` is terrain3d's
 live `ground`, unsaved strokes and all; `light(plugins)` in `plugins/skydome3d/skydome3d.ocean3d.ts`;
 `whisper(plugins, …)` in `plugins/chat/chat.party.ts`); a
@@ -370,8 +377,8 @@ drawing the first frame it is shown and destroys it after the first frame nobody
 of one kind never share a key, or the second `show` throws `ui showed <panel> <key> twice in one
 frame`. Each kind imports the server half from `./plugins/<p>/<p>.sim.ts`.
 
-When it can be described without naming a game, and another game wants it, it moves to
-`plugins/<p>/`, and in the same change:
+When another game wants it, and the person you are working for says yes in planning, it moves to `plugins/<p>/`, and in the
+same change:
 
 - its numbers move off the kinds' definitions into `world.<p>`, the kinds it acts on named there too,
   keyed by kind, as `world.walker.kinds` is; it names none of the game's kinds;
@@ -404,7 +411,8 @@ is `building-an-extension`.
   handed to it, `plugins.<a>`, never imported; what another plugin knows reaches it through a mod; a
   pure function of another plugin's is imported (`json`, `def`). Types from anywhere, as `import type`.
 - Its browser half: its own server half's pure functions, `./<p>.sim.ts`.
-- Its server half: `mod` from `#addons/scenemanager/scenemanager.addon.ts` for each mod it asks for.
+- Its server half: `mod` from `#addons/scenemanager/scenemanager.addon.ts` for each mod it asks for,
+  and `math` from `#plugins/math/math.sim.ts` for any function `Math` leaves to the engine.
 - A mod `<a>.<p>.ts`: `a`'s own server half for what `a` knows, and `p`'s types alone.
 - A game's own plugin: the same, and it may name that game's kinds. The game's kinds import its
   server half; no kind imports another.
@@ -438,15 +446,8 @@ is `building-an-extension`.
   folder, `new URL('../../', import.meta.url).href` from `games/<game>/plugins/<p>/`, or the child
   scenes are not found and `world.scenemanager.home` names the plugin's folder, where no mod is.
 - Memory kept in a module-level map keyed by row id, or in the browser half, of something a rule
-  needs next step: a later browser, the page's prediction and the recorder never see it. It is a field
-  of the row; its starting value is in the prefab.
-- A function a rule calls that writes another kind's row directly. The page runs a press or a row's
-  step ahead only when it writes the row it ran for and the rows whose acts it called, and ledger
-  rows, whose writes it drops (the header of `plugins/player/player.plugin.ts`); another kind's row is
-  reached through `w.call`, and a plugin whose tick moves other rows is predicted only by whole
-  steps.
-- A ledger's kind left out of `world.player.ledgers`. A press that writes it or calls it is not run
-  ahead at all, and waits a round trip for the packet.
+  needs next step: a later browser and the recorder never see it. It is a field of the row; its
+  starting value is in the prefab.
 - An actor that asks a game's own plugin in its `setup`. On the first frame it is not on `plugins` yet.
 - A look that imports a `.plugin.ts` and calls what it exports for its own row, or a browser half no
   scene's `world.shipped.plugins` names. The plugin is made once per client, by the client or
@@ -457,7 +458,7 @@ is `building-an-extension`.
   The function hands it back.
 - Browser state at the top of the file, read by the next scene's client.
 - A change to a game's scene that moves what the game's other tests read: placing things where
-  `<game>.sim.test.ts` drives its body fails it. Run the tests of every file the change touched.
+  `<game>.sim.test.ts` drives the seat's `player` row fails it. Run the tests of every file the change touched.
 - Something short-lived (a flash, a burst) judged from a screenshot taken too late. Read it off the
   rows, or add a readout in `dev.html`.
 

@@ -27,6 +27,7 @@
 // so a map of the page's own darkens each cell as the fog does.
 import type { Plugins } from '#engine/browser.ts'
 import { sight, teamOf, type Block } from '#addons/vision/vision.addon.ts'
+import { possessed } from '#addons/player/player.addon.ts'
 
 type Fog = Block & { layer: string; unexplored: number; explored: number }
 
@@ -63,7 +64,7 @@ export function vision() {
         explored = new Uint8Array(w * h)
         cells = new Uint8Array(w * h)
       }
-      const me = wire.rows.find(r => r.kind === 'player')
+      const me = possessed(wire.rows)
       const team = teamOf(fog, me?.data.seat)
       const now = team === undefined ? undefined : sight(fog, wire.rows.filter(r => teamOf(fog, r.data[fog.slot]) === team)).get(team)
       const px = drawn.image.data

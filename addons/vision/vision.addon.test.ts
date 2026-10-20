@@ -141,7 +141,8 @@ test('sees answers for a slot as its seat\'s packets do, in a rule and outside o
   move('scout0', [105, 75])
   check()
   expect(row('scout0').data.spots).toEqual(['far'])
-  // A world vision was never attached to, as the page's copy of the rules has.
+  // A world vision was never attached to, as a truth's is before the player addon first seats or
+  // counts a seat on it (`join`, `free`): every row is seen.
   const bare = boot(scene(), sim)
   expect(bare.rows.every((r: Row) => sees(bare.world, 0, r))).toBe(true)
 })

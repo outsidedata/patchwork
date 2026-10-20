@@ -1,6 +1,6 @@
 ---
 name: persisting-players
-description: Use in core, or any clone of it, when a game needs to know who a player is or keep something for them between visits. That covers accounts, register, log in, passwords, a token that logs a reloaded page back in, a login screen, logged out elsewhere, saving progress, characters, an inventory or a score kept per account, records that survive a server restart, and the database behind them (sqlite on node, IndexedDB in a tab). It covers the `accounts` addon (`accounts`, `signin`, `login`, `register`, `relogin`, `who`, `local`, its refusals), the `persist` addon and kind (`persist`, `claim`, `flush`, `sqlite`, `indexeddb`, `urgent`, `forget`), `world.accounts` and `world.persist`, and the one addon call `gameFiles` writes into every game's pages to take them. It also says why the store and `plugins/local` keep nothing. Also use it when a count resets after a restart, a record never loads, or a login screen throws "this link was not made on a signin wire".
+description: Use in core, or any clone of it, when a game needs to know who a player is or keep something for them between visits. That covers accounts, register, log in, passwords, a token that logs a reloaded page back in, a login screen, logged out elsewhere, saving progress, a character's level, inventory or score kept per account and copied onto the seat's `player` row while it plays, records that survive a server restart, and the database behind them (sqlite on node, IndexedDB in a tab). It covers the `accounts` addon (`accounts`, `signin`, `login`, `register`, `relogin`, `who`, `local`, its refusals), the `persist` addon and kind (`persist`, `claim`, `flush`, `sqlite`, `indexeddb`, `urgent`, `forget`), `world.accounts` and `world.persist`, and the one addon call `gameFiles` writes into every game's pages to take them. It also says why the store and `plugins/local` keep nothing. Also use it when a count resets after a restart, a record never loads, or a login screen throws "this link was not made on a signin wire".
 ---
 
 # Persisting players
@@ -30,7 +30,7 @@ them. It does not cover:
 - running the server for other people, seats, what each seat is sent (a `security` block, vision),
   what a seat may send: `going-multiplayer`.
 - putting the game where players on other machines reach it, and serving `wss://` so a secret does
-  not cross the network as it was typed: `shipping-a-game`.
+  not cross the network as it was typed: `publishing-a-game`.
 - the files a new game starts with: `starting-a-game`. Moving seats between scenes, `go` and
   `arrive`: `scene-flow`. A record kind's own rules beyond being kept: `designing-a-kind`. Keys a
   player rebinds: `input-and-seats`. A panel and its words: `building-the-hud`.
@@ -40,7 +40,8 @@ Two things keep nothing for a player:
 - The store (question 2). A key of the store is a value only the page uses: a volume, a theme,
   rebound keys. The server never reads it, writes it or is sent it. It lives on the page's link
   (`link.store`, `plugins/store/store.plugin.ts`) for as long as the page is open: every scene of the
-  page reads one table, and a reload starts it again from the scene's `store` prefab. Anything a rule
+  page reads one table, and a reload starts it again from the scene's starting values (`world.store`,
+  once the store's read of a `store` prefab is moved there, `building-the-hud` step 9). Anything a rule
   reads, and anything kept for an account, is never a key of the store.
 - `plugins/local` is the page's actors with no row. It keeps nothing.
 
@@ -218,6 +219,15 @@ out of the next step. The rows a record kind holds for an account end when the a
 kind's `before` ends its row once no `player` row holds its account, and the addon writes it a last
 time.
 
+A record row is storage and nothing else. What the seat controls, the character, the car, the hero,
+is its `player` row (`designing-a-seat`), and the character's level, gold, inventory and place are
+fields of that row while it plays. So the `player` row's `before` claims the account's record, on a
+later step copies the record's fields onto itself, and from then plays on its own fields; each field
+it keeps that changes is written back onto the record through an act of the record's kind that lists
+no `open`, `w.call(record, 'keep', -1, ...)`, so persist writes the record as it changes. The record
+row draws nothing, binds nothing and is read by no look: the HUD, the look and every rule that reads
+the character read the `player` row.
+
 There are two stores, five calls each (`load`, `save`, `drop`, `batch`, `close`): `sqlite(file, busy)`
 on node, over `node:sqlite`, and `indexeddb(name)` in a tab. One store serves the accounts addon and
 every truth of the process.
@@ -262,11 +272,16 @@ every truth of the process.
 
 5. **Logged out elsewhere**: the plugin every scene lists, as above, with its test beside it.
 
-6. **The scene that keeps records.** Its scene file gets `{ "is": "persist" }` and the `player`
-   prefab's field that says it has asked. Its sim names `persist` and each record kind, whose rule is
-   `<kind>.sim.ts`. The `player` row's `before` claims the account's records, and on a later step
-   changes the one it finds, or spawns it when there is none, and owns it. The scene's `security`
-   block lists every field only the owner may see.
+6. **The scene that keeps records.** Its scene file gets `{ "is": "persist" }`, and the `player`
+   prefab gets the field that says it has asked and every field of the record it plays with (a
+   level, gold, an inventory), at the values a new account starts with. Its sim names `persist` and
+   each record kind, whose rule is `<kind>.sim.ts`. The `player` row's `before` claims the account's
+   records; on a later step it copies the fields of the one it finds onto itself, or spawns the record
+   from its own fields when there is none, and owns it. From then the `player` row plays on its own
+   fields, and writes each change of a kept field back onto the record through the record kind's
+   act, which lists no `open` (What is kept). A seat that sends that act at the record is refused, and
+   it is no act of the `player` row, so a seat cannot send it there either. The scene's `security`
+   block lists every field only the owner may see, on the record and on the `player` row alike.
 
 7. **The pages take them in one call, the same in every game.** Every line of a page is the same in
    every game but the file names it imports (prime directive, Page), so what `world.accounts` and
@@ -276,7 +291,9 @@ every truth of the process.
    (`sqlite` on `world.persist`'s `file` and `busy` on node, `indexeddb` on its `file` in a tab),
    attaches the persist addon's one call on the manager, and wraps the seat's way in: `accounts` with
    the rules of `world.accounts` on the server, `local` in `index.html`, and `signin` with the
-   accounts addon's `keep`, named off the scene file, on the pages that dial. Its home is an addon
+   accounts addon's `keep`, named off the scene file, on the pages that dial, between the dial and the
+   `link` that `client.html` hands `predict` (the prime directive's The pages), so the page still runs
+   its scenes ahead. Its home is an addon
    (question 5). It is built with its test, `gameFiles` writes it, its route test
    (`extensions/games/games.route.test.ts`) makes each page's views as the page's lines make them, and
    every game in `games/` is moved to the pages `gameFiles` then writes, in the same change
@@ -315,6 +332,12 @@ every truth of the process.
   mark the row, read on a later step.
 - An account taken from an act's argument, checked for its shape or not. It is the page's word.
 - A record keyed by a row id or an account's name. Key it by uid.
+- The character kept as a second live row, the record row, that the seat steers through its `player`
+  row, or whose level and gold the HUD reads. It is drawn from the server's packets, a round trip
+  after the key. The record is storage: the `player` row copies its fields onto itself, plays on
+  them, and writes them back (What is kept).
+- A `player` row act that writes the record, `save` or `keep`, which a seat may send at its own row
+  with any values. The write-back is an act of the record's kind, called by the `player` row's rule.
 - A record's `owner`, or any row id it holds, read as if it named a row of this boot. A rule races
   the packet to write `owner` over, or a skill says the stale one crashes: the player addon handles
   it, built there (What is kept).
@@ -347,13 +370,6 @@ every truth of the process.
 - A page that freezes on the last frame of its scene: its account logged in elsewhere, and nothing on
   that scene noticed.
 - A page that asks `relogin` by itself after `elsewhere`, and two tabs log each other out in turn.
-- `claim` in a rule the page runs ahead throws on the page today: it finds the `persist` row, which
-  no seat is sent, in an act the seat presses, in the per-step rule of a row a press wrote, and in
-  every row's rule under `world.player.steps` (`plugins/player/player.plugin.ts`), so a scene on
-  whole steps could not claim at all. A game kept from claiming there, or a guard written round it,
-  is core missing a piece: what `claim` does in the page's run, which never holds the `persist` row,
-  is built in `plugins/persist/persist.sim.ts`, and in the player plugin where it reads that, with
-  their tests, when a job meets it.
 - A second account refused at the scene that keeps records: its `seats` is 1. Raise it and add a
   `start` per slot (`going-multiplayer`).
 - A test reading the store in the same turn as the step that wrote: writes go out after the step.
@@ -377,9 +393,11 @@ every truth of the process.
 - `games/<game>/<game>.sim.test.ts` boots the manager as the server file does, `load`s it with
   `import.meta.url`, and attaches persist over `sqlite` in a temp file (`mkdtempSync`). After each
   step it awaits a turn of node's loop (`setImmediate`) so a load lands. It checks that a seat logged
-  in moves from the entry scene to the next; that a visit counts, is on disk after that step (read on a
-  second `sqlite` connection to the file, as another process would), and counts again on the next
-  visit; that `flush`, `close` and a second boot on the same file count on; and that a seat is sent
+  in moves from the entry scene to the next; that the seat's `player` row holds the record's fields on
+  the step after the claim landed; that a visit counts on the `player` row, reaches the record that
+  step, is on disk after it (read on a second `sqlite` connection to the file, as another process
+  would), and counts again on the next visit; that a seat sending the record's write-back act, at the
+  record or at its own `player` row, changes nothing; that `flush`, `close` and a second boot on the same file count on; and that a seat is sent
   another account's record without the fields `security` lists under `me`.
 - `games/<game>/<game>.server.test.ts` runs the server file as a person does, a child process
   (`spawn(process.execPath, ['--experimental-strip-types', <server file>])`), twice, with SIGTERM

@@ -1,32 +1,35 @@
 ---
 name: going-multiplayer
-description: Use in core, or any clone of it, when a game is played by more than one person over a network - running `<game>.server.ts` on node and opening `client.html`, the port, raising a scene's `seats` for a second player, what a player who finds the game full gets, sending each seat only what it needs (`interest`, `vision` and its fog of war, a `security` block), what a seat may send and what is dropped, prediction against lag, jitter and packet loss, trying a bad network before shipping (the loopback's network shape, the simulator, `?tap=`), chat and parties, and a new way to travel such as WebRTC as a transport addon. Also when someone says multiplayer, online, netcode, server and client, two players, a second seat, play with friends, latency, rubber-banding, "the second tab is blank", or fog of war.
+description: Use in core, or any clone of it, when a game is played by more than one person over a network - running `<game>.server.ts` on node and opening `client.html`, the port, raising a scene's `seats` for a second player, what a player who finds the game full gets, sending each seat only what it needs (`interest`, `vision` and its fog of war, a `security` block), what a seat may send and what is dropped, a press against lag, jitter and packet loss, a scene run ahead on the page (`world.predict`, `client.html` wrapping its link in `predict`, every row drawn from the copy on the frame after the key, the server putting a late press back on its step with `addons/rewind`, a jump eased by `halflife`, `snap` and `below`), the press test `<game>.predict.test.ts`, trying a bad network before shipping (the loopback's network shape, the simulator, `?tap=`), chat and parties, and a new way to travel such as WebRTC as a transport addon. Also when someone says multiplayer, online, netcode, server and client, two players, a second seat, play with friends, latency, rubber-banding, "the second tab is blank", or fog of war.
 ---
 
 # Going multiplayer
 
 A game in core is played by more than one person when its manager runs on node behind a socket and
 each person opens `client.html`. Every game `yarn new-game` writes already has both files (the list
-is the header of `extensions/games/games.route.ts`), so nothing new carries a packet. The work is the
-scene's seats, what each seat is sent, what each seat may send, and proving the game plays on a bad
-network. The engine is frozen: nothing here edits `engine/`. A line that would tell a game to add a
-guard, keep a layout, or never hand an addon a copy, so that the wire or a piece does not break,
-means core is missing a piece: it is built in its home, with its test, and the line is never
+is the header of `extensions/games/games.route.ts`), so nothing new carries a packet. The template
+still writes `client.html` without `predict` and the seat's square as a `body` row its `player` row
+spawns; both are folded before anything else (`starting-a-game`, Fold the body into the player row).
+The work is the scene's seats, what each seat is sent, what each seat may send, the seat's own thing
+drawn on the frame after its key, and proving the game plays on a bad network. The engine is
+frozen: nothing here edits `engine/`. A line that would tell a game to add a guard, keep a layout,
+or never hand an addon a copy, so that the wire or a piece does not break, means core is missing a
+piece: it is built in its home, with its test, and the line is never
 written, here or in a game.
 
 ## When it applies
 
 It applies to a game played over a network: running its server, opening its seats, the port, how many
-seats a scene takes, what each seat is sent, what a seat may send as it reaches the server, prediction
+seats a scene takes, what each seat is sent, what a seat may send as it reaches the server, a press
 against the network, trying a bad network, chat and parties, and a new transport.
 
 It does not cover:
 
 - making the game and its files in the first place: `starting-a-game`.
 - accounts, logging in, and keeping a player's things between visits: `persisting-players`.
-- putting the game where players on other machines reach it, and serving its pages: `shipping-a-game`.
-- binding keys or a pad, the `player` row, where a seat starts and what it plays there:
-  `input-and-seats`.
+- putting the game where players on other machines reach it, and serving its pages: `publishing-a-game`.
+- binding keys or a pad, where a seat starts and what it plays there: `input-and-seats`. What the
+  `player` row is, the thing the seat plays as, and its press test: `designing-a-seat`.
 - a kind's own rules and acts: `designing-a-kind`. A plugin: `building-a-plugin`.
 
 ## The wire, as a game meets it
@@ -61,14 +64,21 @@ tests included, that opens a WebSocket or imports `ws`, other than the socket ad
   `run`s the manager, stepping it by its `engine.dt` as often as the real clock owes a step. Each
   manager step steps every scene whose entry says `suspend: false` and every scene a seat is in. It
   prints nothing while it runs.
-- `client.html`, in the browser: `dial`s `ws://<the host the page came from>:<port>`, makes the `view`
-  on it, and calls `frame()` on every `requestAnimationFrame`. It steps nothing. For the scene its
-  seat is on it loads the browser half of each plugin the scene lists and each row's
-  `<kind>.client.ts`, and the player plugin runs the seat's own presses ahead with the same
-  `<kind>.sim.ts` files the server runs. `tap` wraps the dial: with `?tap=<name>` in the address it
-  records the page, and without it the page is the view, untouched.
-- `index.html`: the manager and the page in one tab, over a loopback. It is one seat on a truth of its
-  own. A second tab of it is a second game, not a second player.
+- `client.html`, in the browser: `dial`s `ws://<the host the page came from>:<port>` and always wraps
+  the link in `predict`, `tap(dial(url), wire => predict(link(wire), file, import.meta.url, mount))`,
+  calling `page.input()` then `await page.frame(now)` on every `requestAnimationFrame` (prime
+  directive, The pages). On a scene that gives `world.predict` the page boots its own copy and runs
+  it ahead (step 7, A scene run ahead); on one that gives none, a title or a menu, every envelope goes
+  to the view as it came and the page steps nothing. For the scene its seat is on it loads the browser
+  half of each plugin the scene lists and each row's `<kind>.client.ts`. `tap` wraps the dial: with
+  `?tap=<name>` in the address it records the page, and without it the page is the predicting page,
+  untouched. A panel, a readout, a second pane or a network shape on the page is `dev.html`'s, never
+  `client.html`'s.
+- `index.html`: the manager and the page in one tab, over a loopback, stepped by the page's clock, with
+  no prediction and no lag: a press lands on the next step in the same tab. It is one seat on a truth
+  of its own. A second tab of it is a second game, not a second player.
+- `dev.html`: the game's own testbed, any readout, any number of seats, any network (`starting-a-game`,
+  The testbed).
 
 ## The work
 
@@ -96,10 +106,11 @@ tests included, that opens a WebSocket or imports `ws`, other than the socket ad
    that does not list `player`, such as a menu, takes a plain seat with no limit, so a game whose
    entry scene is a menu refuses nobody at the door.
 
-   When a connection closes, `addons/player` ends its `player` row and frees its slot. What that row
-   spawned ends itself when no `player` row names it, as the new game's `body.sim.ts` does. A page
-   that comes back is a new seat with a higher seat number, and it may get the same slot, so a rule
-   about who is who reads the slot off the `player` row, never the seat number.
+   When a connection closes, `addons/player` ends its `player` row and frees its slot. The seat's
+   thing goes with it, since the thing is that row (`designing-a-seat`); a row its rules spawned, a
+   shot in flight, runs on by its own rule. A page that comes back is a new seat with a higher seat
+   number, and it may get the same slot, so a rule about who is who reads the slot off the `player`
+   row, never the seat number.
 
 2. **Run the server.** From the repo root:
    `node --experimental-strip-types games/<game>/<game>.server.ts`. It must be the root because on
@@ -120,11 +131,12 @@ tests included, that opens a WebSocket or imports `ws`, other than the socket ad
    Chrome pauses `requestAnimationFrame` in a tab that is not in front, so of two tabs in one window
    only the front one plays, while the server keeps stepping. The editor's server answers only on
    `localhost`, so this puts every player on one machine. Players on other machines are
-   `shipping-a-game`'s.
+   `publishing-a-game`'s.
 
 4. **Decide what each seat is sent.** A seat's packet holds the rows that every piece attached to the
    truth shows that seat, each without the fields a piece hides (`Piece` in `engine/engine.ts`). By
-   default each seat is sent every row except the other seats' `player` rows, and never a child
+   default each seat is sent every row, the other seats' `player` rows without their `mine` (the
+   seat's own is the one that is `mine`, which `possessed(rows)` finds), and never a child
    `scenemanager` row's `out`. Every row a seat is sent is copied to it every step, which is why a
    fixed number never rides on a row (prime directive, question 1). Three pieces send less. Each one
    limits what is sent, never what the rules know, and each is an addon (question 5):
@@ -140,12 +152,15 @@ tests included, that opens a WebSocket or imports `ws`, other than the socket ad
      it holds in the field `slot` names, and a kind listed in `sight` sees that many cells. A row with
      no such field belongs to no team and is sent only to a team that sees its cell.
 
-     On the game `yarn new-game` writes, the body has no slot field, so it belongs to no team. No seat
-     is sent any body, not even its own, and the page's predicted `move` throws `no row <id>` at the
-     body's `w.get`. So: give the `body` prefab a slot field, `"slot": 0`. In `player.sim.ts`, spawn
-     the body with `slot: me.data.seat` beside its `pos`. In the block, `slot` names that field, `at`
-     is `"pos"`, and `sight` is `{ "body": <cells> }`. Listing `body` in `always` instead puts it
-     outside the fog.
+     The seat's thing is its `player` row (`designing-a-seat`), and that row holds its slot in `seat`,
+     which `addons/player` writes. So in the block `slot` is `"seat"`, `at` is the field holding the
+     thing's place, `"pos"` on the folded new game, and `sight` is `{ "player": <cells> }`. `slot`
+     names one field for every kind, so a row the seat's rules spawn that belongs to its team, a shot
+     say, is spawned with `seat: me.data.seat` beside its `pos`. A block whose `slot` names a field the
+     `player` row does not hold leaves every player row on no team and seeing nothing: a seat is sent
+     a player row, its own among them, only where a seer of its team stands, and the new game has no
+     other seer, so no page draws any square. Listing `player` in `always`
+     instead puts every seat's thing outside the fog.
 
      The page draws the fog with the `vision` plugin, listed in the scene's `plugins` before
      `render2d`. Its own `layer`, `unexplored` and `explored` sit in the same block. It draws on
@@ -153,12 +168,13 @@ tests included, that opens a WebSocket or imports `ws`, other than the socket ad
      `layers`, that layer among them. `place` reads `up`, so it is given even where nothing stands
      above the ground. For the new game, whose things stand in canvas pixels, the block is
      `"ground": [[1, 0], [0, 1]]`, `"up": [0, -1]`, `"zoom": 1` and `"look"` the canvas middle, so a
-     world unit is a canvas pixel and the fog's cells sit where the bodies stand. The world lies under
-     anything put straight on the stage, as `body.client.ts` puts its square. A thing the fog should
-     cover is drawn on a layer of the world, at `place(pos)`. From then the body's `pos`, `speed` and
-     `size` are in the world's units, one a canvas pixel under this ground but units all the same: its
-     look draws its size scaled by `render2d.ground()`, and the headers `yarn new-game` wrote, which
-     say pixels, say units (`writing-the-look`, render2d or render3d).
+     world unit is a canvas pixel and the fog's cells sit where the seats' squares stand. The world
+     lies under anything put straight on the stage, as the folded `player.client.ts` puts its square. A
+     thing the fog should cover is drawn on a layer of the world, at `place(pos)`. From then the player
+     row's `pos` and its definition's `speed` and `size` are in the world's units, one a canvas pixel
+     under this ground but units all the same: its look draws its size scaled by
+     `render2d.ground()`, and the headers that say pixels say units (`writing-the-look`, render2d or
+     render3d).
 
      A rule that must act only on what a team sees asks `sees(w.world, slot, row)`. The editor's
      Vision panel shows, for each slot, which rows are sent and which are not
@@ -166,9 +182,11 @@ tests included, that opens a WebSocket or imports `ws`, other than the socket ad
    - Area of interest. A top-level `interest` block, `{ "radius": r, "always": [kinds], "at": field }`,
      is read by `interest(truth, possessed)` (`addons/interest/interest.addon.ts`). A row with a `pos`
      farther than `radius` from the seat's centre, measured on x and y, is not sent. A row that walks
-     out of range is in that seat's next `ended`, and one that walks back in is in its `born`. `at`
-     names the field of the possessed `player` row that holds the centre row's id: `"body"` in the
-     new game. Nothing in core attaches it today, so the block alone sends every seat every row.
+     out of range is in that seat's next `ended`, and one that walks back in is in its `born`. Without
+     `at` the centre is the possessed `player` row itself, which is the seat's thing, so a game whose
+     seat plays as its `player` row leaves `at` out; `at` names a field of the player row holding
+     another row's id, and a seat's thing is never such a row (`designing-a-seat`). Nothing in core
+     attaches it today, so the block alone sends every seat every row.
      `interest` needs the truth and which row each seat possesses, and that lookup is held inside
      `addons/player`, which attaches vision the same way. A game that wants interest therefore builds
      that attach in its home: `addons/player`, beside its `vision` line, from the scene's `interest`
@@ -184,16 +202,15 @@ tests included, that opens a WebSocket or imports `ws`, other than the socket ad
        `addons/vision/vision.addon.ts`'s header does;
      - this skill's lines that say nothing attaches it.
 
-   Under vision and interest, a row with no place (a manager, a loader, a `player` row) and a kind
-   listed in `always` go to every seat. `always` is for what every seat sees wherever it stands, the
+   Under vision and interest, a row with no place (a manager, a loader) and a kind listed in `always`
+   go to every seat. A `player` row that is the seat's thing has a place, so it is in the fog and the
+   radius as any thing is; the headers of `addons/vision/vision.addon.ts` and
+   `addons/interest/interest.addon.ts` that list a player row among the rows with no place were
+   written when it had none, and the code tests the field, not the kind. `always` is for what every seat sees wherever it stands, the
    map's pieces: a kind listed there is outside the fog and outside the radius. The `start` rows have
-   a `pos`, so a seat far from them is not sent them, which nothing in the new game minds.
-
-   What the page runs ahead must be on the page. The player plugin takes the seat to be sent every
-   row a step reads (`plugins/player/player.plugin.ts`). A predicted rule that reads a row the seat
-   was not sent throws `no row <id>` on the page, as the new game's `move` does when its body is not
-   sent. Under interest a seat's centre row is always within its own radius. Under vision a seat is
-   sent its own team's rows wherever they stand, so each row its rules read carries its slot.
+   a `pos`, so a seat far from them is not sent them, which nothing in the new game minds. Under
+   interest a seat's centre row is always within its own radius. Under vision a seat is sent its own
+   team's rows wherever they stand.
 
 5. **Hold what a seat may send.** A page's message names a row, an act and its args. The engine runs
    it only when the row is the one the seat possesses, its `player` row, or the row's kind lists the
@@ -204,7 +221,11 @@ tests included, that opens a WebSocket or imports `ws`, other than the socket ad
    the wire enforce.
 
    A kind reached through the `player` row lists no `open`; `w.call` runs its acts without the check,
-   because the `player` act that called it already passed one. `scenemanager`'s `go` is open, so any
+   because the `player` act that called it already passed one. The other way round, a seat may send
+   any act its own `player` row has. So an act on the `player` row that other kinds use to change it,
+   `hurt`, `award`, `heal`, is one the seat could send itself: it is a plain function of a game
+   plugin that other kinds call, or an act that returns at once when a seat sent it (`seat >= 0`;
+   a hook passes `-1`) (`designing-a-seat`, Acts a seat can send). `scenemanager`'s `go` is open, so any
    seat may send itself to any scene the manager's table names, and the args it sends reach the next
    scene's `player` row as `arrive`. A connection behind `accounts` is seated on the entry scene and
    sent its packets from the first step, but what it sends, other than its log-in, is dropped until it
@@ -212,7 +233,8 @@ tests included, that opens a WebSocket or imports `ws`, other than the socket ad
    is a key of the store, which the server is never sent.
 
    Every arg arrives from outside the program, whatever the act's types say. Each act checks each arg:
-   its type, that a number is finite, its range. The new game's `body.sim.ts` does this in its `move`.
+   its type, that a number is finite, its range. The folded new game's `player.sim.ts` does this in
+   its `move` (`starting-a-game`, Fold the body into the player row).
 
 6. **Make the server drop what it cannot read, before it faces other players.** Today one connection
    can stop the server with one message. Each of these was measured against a served manager:
@@ -224,7 +246,7 @@ tests included, that opens a WebSocket or imports `ws`, other than the socket ad
      act by `kind.acts?.[action]`, which finds what every object inherits.
 
    Each throw leaves a message listener or the step, which stops the process and every seat on it.
-   Before a player who is not you dials the server, and before `shipping-a-game` puts it where one
+   Before a player who is not you dials the server, and before `publishing-a-game` puts it where one
    can, the wire's own pieces drop these. The engine is untouched:
    - the socket addon drops a message its `JSON.parse` cannot read;
    - the scenemanager's `accept` drops an up that is not an object;
@@ -232,8 +254,7 @@ tests included, that opens a WebSocket or imports `ws`, other than the socket ad
      string and `args` is an array of `Arg`s. Where the named row is there, it also drops a `msg`
      whose `action` the row's kind has only by inheritance: `action in acts` but not
      `Object.hasOwn(acts, action)`. An action the kind does not have at all still goes on, because
-     the engine refuses it and acks it. The player plugin's probe, a message whose action is `''`,
-     measures the round trip of whole-steps prediction by that ack.
+     the engine refuses it and acks it.
 
    Each fix has its test beside it: `addons/socket/socket.addon.test.ts` and
    `addons/scenemanager/scenemanager.addon.test.ts`. Each sends what is listed above, then checks that
@@ -254,46 +275,96 @@ tests included, that opens a WebSocket or imports `ws`, other than the socket ad
    (`advance` in `addons/persist/persist.addon.ts`), is the same case and needs nothing more. It is
    never a `try`, a `catch` or a `process.on` in one game's `<game>.server.ts`.
 
-7. **Read prediction against the network.** The player plugin (`plugins/player/player.plugin.ts`, its
-   Prediction and Clock headers) runs the seat's own press on the page before the server has it:
+7. **Read a press against the network.** The player plugin (`plugins/player/player.plugin.ts`) sends
+   the seat's press up the wire at its `player` row. Every scene a seat plays in gives
+   `world.predict`, and `client.html` always wraps its link in `predict` (A scene run ahead, below),
+   so on `client.html` what a page draws is:
 
-   - A press whose rule writes only the row it names, or a row whose act it calls, is drawn at the
-     press. One whose rule spawns, ends a row, rolls the die, writes `world`, writes another row, or
-     calls a plugin's row (as `go` does) is not run ahead, and waits a round trip for the packet.
-   - Every other seat's rows are drawn as the packets bring them, the down leg late.
-   - A sound or an effect is a ledger row whose kind is named in `world.player.ledgers`. Without that,
-     a predicted press would play it once at the press and again when the packet comes
-     (`input-and-seats`, Prediction and ledgers).
-   - A scene whose rules keep state between steps, such as a physics world, sets `world.player.steps`.
-     The page then runs whole steps over its own rows, and corrects and runs again when a packet
-     differs.
-   - The page's step is a clock of its own, placed by the packets of the last `world.player.window`
-     seconds (2 when the scene gives none), so a late packet, or two on one frame, moves nothing drawn.
-   - The steps the page runs ahead, its lead, are measured by acks, so before its first ack the page
-     runs nothing ahead. A first press's act runs at once: the new game's `move` sets the body's
-     `move` field, and the body is drawn a step on. But each packet puts it back where the server has
-     it, so it is drawn moving on only once the ack comes. Played on the simulator with 50 ms each
-     way, the first press's body went 4 px on and back until the ack, then on; a press made after
-     that ack was drawn a frame after it went down, 47 ms before the server's step took it.
+   - Every row from the page's copy, which took the press on the step it was about to run: the seat's
+     own `player` row, and every row the press makes or moves, a shot, a thrown thing, a crate knocked
+     over, is on screen the frame after the key, at any lag. Another seat's row runs on in the copy
+     from its last press, carried by the copy's rules; when that seat's press reaches the copy late,
+     what it moved jumps, and the jump is eased (`addons/predict`, Easing a jump).
+   - A sound raised `from` the seat's `player` row rides on that row's `voiced` list, so the jump, the
+     shot and the hurt of the seat's own thing are heard on the frame after the key; every other sound
+     and effect is raised on a ledger row, whose entries stay longer than a step, so a page that takes
+     two packets in one frame still plays or draws it once (`plugins/audio/audio.sim.ts`;
+     `input-and-seats`, Presses and ledgers).
 
-   What a bad network does, as the player plugin's tests play it: a lost press is drawn but never
-   applied, and stays drawn until a later press's ack covers it; a duplicated press runs twice on the
-   server; reordered presses are applied in the other order; jitter moves the page's step around; a
-   server slower than the page costs a held frame for each step it falls behind, never a jump. The
-   socket is TCP, so it loses, duplicates and reorders nothing. On a socket these come only from a
-   network the loopback is told to have, or from a transport that does not keep TCP's promises.
+   On a scene that gives no `world.predict`, a title or a menu, the page draws the last packet's rows,
+   its own press among them, when the packet carrying what the server did with it arrives: the up leg,
+   the server's step that takes it, and the down leg. That is a round trip of lag on the seat's own
+   thing, so no scene a seat plays in is left so.
 
-8. **Try a bad network before shipping.** The game is played on bad networks on node, with no time
-   passing (`addons/simulator/simulator.addon.ts`):
+   What a bad network does to a press: on a scene run ahead, the page keeps each message and sends it
+   again every frame until a packet's ack covers it, and the server takes each once, in the order of
+   its number, holding one that came early (`connection` in `addons/scenemanager`), so a lost,
+   duplicated or reordered press is taken once and on its step. On a scene that is not run ahead, a
+   lost press is never applied, a duplicated one runs twice, and presses reordered across steps are
+   applied in the other order. The socket is TCP, so it loses, duplicates and reorders nothing: these
+   come only from a network the loopback is told to have, or from a transport that does not keep
+   TCP's promises. Jitter bunches the packets, which on a scene run ahead changes nothing drawn: the
+   page draws its copy, and a packet is only held against it.
+
+   **A scene run ahead.** A child scene whose `world.predict` is `{ "epsilon": e, "cutoff": c,
+   "halflife": h, "snap": s, "below": b }` is run ahead on the page (`addons/predict`) and
+   run by `rewind` on the server (`addons/rewind`); `predicts` throws on any other shape, naming it.
+   `client.html` wraps its link in `predict(link(wire), file, import.meta.url, mount)`, and its loop
+   calls `page.input()` then `await page.frame(now)`. Without both, the scene's block and the page's
+   `predict`, nothing is predicted, whatever row the thing is on.
+
+   - The page asks for the whole truth (`want`) once the scene's files are in, and the server sends a
+     snapshot with what each row's kind holds beside the rows (`Memory`: box2d's and box3d's whole
+     world, by their `hold` and `take`). The page boots its own copy from it and steps it on its own
+     clock, a step every `engine.dt`. A press is stamped with the step the copy is about to run,
+     answered there, and drawn from the copy on the next frame, at any lag.
+   - What the view is handed after each step of the copy: every row the seat may see, as the copy has
+     it. It draws between the last two steps it was handed, as `index.html`'s
+     view does (`engine/browser.ts`, Drawing between steps).
+   - The server owns the clock and never waits for a page. It keeps the truth as it stood before each
+     of its last `cutoff` steps. A press stamped for a step it has already run makes it load the save
+     from before that step and take the press there, running nothing again: it plays on from there a
+     step for each step of its clock, so it stands behind its clock by as many steps as it went back,
+     never more than `cutoff`. A press stamped further back than that is answered on the next step.
+   - Every message and every seat that comes or goes is written in the scene's journal and sent to
+     every page beside its packets. A page puts each into its copy on its step, going back there and
+     running every step again within the same frame, so the copy never stands behind. Its own press,
+     when the server answered it on another step, it moves there (`move`); it asks for the whole truth
+     again only when its copy no longer keeps the step it took it on.
+   - When the copy jumps, going back for another seat's late press or loading the server's truth, the
+     page compares every row as it drew it at its last drawn step with the copy's row at that same
+     step after the jump, and hands the view the copy's rows plus each difference, an offset that
+     halves every `halflife` ms, dropped once under `below`, and not eased at all past `snap`
+     (`addons/predict`, Easing a jump). A number the jump did not move is drawn exactly where the copy
+     has it. Distances are in the rows' units.
+   - Each packet is held against the rows the copy had at its step. Within `epsilon` of each number
+     is a drift, a number a browser and node rounded differently (a rule computes with `plugins/math`,
+     the same bits on both, so `Math.sin` and the rest are not where one comes from: `designing-a-kind`,
+     Maths in a rule); past it is a
+     correction. A drift is left alone; a correction has the page take the server's truth again. `page.stats` counts both, with
+     `checked`, `taken`, `back`, `missed` and `loads`, and keeps the first and the last packet that
+     differed (`first`, `differed`) and the last that drifted (`drifted`, with `by`, the most one
+     number stood apart): each with its step and every row that differed, the copy's data beside the
+     packet's.
+
+8. **Try a bad network before shipping.** The press test (How it is proven) is the proof that the
+   seat's own thing answers its key on every network. Beyond it, the game is played on bad networks on
+   node, with no time passing (`addons/simulator/simulator.addon.ts`):
 
    - `simulate(run)` boots the manager scene `run.file` with `run.sim`, loading its scenes from
      `run.base`. It steps the server with the loop every server runs, on a clock of its own, and opens
-     each page of `run.pages` as `view(link(loopback(accept(manager), time, net)))`. Each page has its
-     own `up` and `down` legs, display and presses, and every frame, step, packet and message is
-     written down as a record. A leg is the loopback's `Leg`: `delay`, `jitter`, `tail`, `loss`,
-     `reorder`, `dup` and `burst`, every roll from one `seed`, so a run is the same bytes every time.
-     `histogram`, `corrections`, `leads`, `late`, `packets`, `standoff` and `summary` read facts off
-     the records for a test to state. Its pages load in node with no canvas, and no `mount` is needed.
+     each page of `run.pages` as `view(link(loopback(accept(manager), time, net)))`, or, with
+     `predict: true` on the page, as `predict(...)` on the same link, as `client.html` makes it: a page
+     standing for a player is `predict: true`. Each page has its own `up` and `down` legs, display and
+     presses, and every frame, step, packet and message is written down as a record. A leg is the
+     loopback's `Leg`: `delay`, `jitter`, `tail`, `loss`, `reorder`, `dup` and `burst`, every roll from
+     one `seed`, so a run is the same bytes every time. `histogram`, `packets`, `standoff` and
+     `summary` read facts off the records for a test to state: how many steps the packet a page drew
+     moved each frame, how many envelopes each frame took, and how the camera kept to the page's own
+     row. `watch.own` is a list of fields walked from the seat's `player` row, each naming the id of
+     the next row (`frameOf` in the simulator); the empty list, `own: []`, is the `player` row itself,
+     which is the seat's thing (`?own=` in a `tap` address). Its pages load in node with no canvas, and
+     no `mount` is needed.
    - From the command line:
      `node --experimental-strip-types addons/simulator/simulator.addon.ts run <config.json> [out.jsonl]`.
      A config is a run as JSON, with `game`, the path of the manager scene file from the root, in
@@ -353,7 +424,8 @@ may open a WebSocket. Node 22 has no `RTCPeerConnection`, and `ws` is the only n
 
 A channel that drops or reorders is already handled by the scenemanager's diffs. The page's `link`
 drops an envelope whose base never arrived, and a second copy of one, and the server diffs each later
-envelope against the newest one the page said it got. A lost press is a press lost, as in step 7. What
+envelope against the newest one the page said it got. A predicting page sends a lost press again
+until an ack covers it, as in step 7. What
 it hands `accept` arrives from outside the program, so it drops what it cannot read, as step 6 has the
 socket do. The
 addon's test sits beside it, `addons/<name>/<name>.addon.test.ts`, on a manager scene it writes itself,
@@ -368,10 +440,19 @@ is told once that its server has gone.
   `start` per slot. Telling a refused player is built in core's page template (step 1).
 - A simulation given more pages than the entry scene has seats throws `no seat free`: the loopback
   refuses nobody.
-- `world.vision` added to the new game, and no seat sees even its own body, and the page throws
-  `no row <id>` on the first `move`: the body has no slot field (step 4).
-- The fog drawn off the bodies: `world.render2d`'s world is not the canvas's pixels, or the things it
+- `world.vision` added to the new game, and no seat sees even its own square: the block's `slot`
+  names a field the `player` row does not hold; it holds its slot in `seat` (step 4).
+- The fog drawn off the squares: `world.render2d`'s world is not the canvas's pixels, or the things it
   should cover are drawn straight on the stage (step 4).
+- The key moves the seat's thing a round trip late in `client.html`, and on a LAN too: the scene
+  gives no `world.predict`, or `client.html` does not wrap the link in `predict`, so the page draws
+  the packets. Every scene a seat plays in gives the block, and the page wraps (step 7).
+- The seat's own jump or shot heard late: the sound was raised with only `at`, or `from` another
+  row, so it went on the ledger and comes with the packets. It is raised `from` the seat's `player`
+  row (step 7).
+- A seat's HUD or camera shows another seat's thing: it found its row with
+  `rows.find(r => r.kind === 'player')`, whichever came first. It is `possessed(rows)`.
+- A rule-only act on the `player` row, `award` say, that a seat sends itself (step 5).
 - One connection stops the server with one bad message, or one rule's throw stops it for every seat
   (step 6).
 - A rule's throw caught around the whole manager step in `run`: one scene's throw skips every later
@@ -392,8 +473,10 @@ is told once that its server has gone.
   the level stays as it was left.
 - An `interest` block written into the scene, and every seat is still sent every row: nothing attaches
   it (step 4).
-- A line added to `<game>.server.ts` or `client.html` to attach a piece, filter rows or show a readout.
-  A page mounts things and nothing else, and `index.html` and the simulator never run that line.
+- A line added to `<game>.server.ts` or `client.html` to attach a piece, filter rows or show a readout,
+  or a network panel, two panes or a key table written into `client.html`. A page mounts things and
+  nothing else, and `index.html` and the simulator never run that line; a testbed of seats and
+  networks is `dev.html`.
 - A test or a tool that opens a WebSocket of its own fails the socket addon's guard. Use
   `link(dial(url))`.
 - An act that trusts its args. Every arg came off the network (step 5).
@@ -413,108 +496,158 @@ is told once that its server has gone.
   `ws://localhost:<port>` that `serve` handed back, one after another. It steps the truth by hand between short waits rather than calling `run`, so every step is
   the test's own. It reads what each page was sent off the envelopes that page hears, and what the
   truth holds off the scene's rows (`scene(manager(truth), '<scene>')`). It checks:
-  - each page is sent its own `player` row and no other, and the other seat's public row;
+  - each page is sent every seat's `player` row, its own the only one that is `mine`, and none of a
+    field the scene's `security` block keeps from it;
   - one page past the last seat is refused, and its `gone` is called;
   - a seat that closes leaves its slot and its rows;
   - for each piece the scene uses, a seat is sent its own rows; a row moved out of reach is in that
     page's `ended`, then absent while the truth still holds it, and in its `born` when it comes back.
-- The press check. This is the one list of it, for every game whose seat drives a body, on one seat
-  or many: `tuning-feel` and `proving-a-game` point here. It sits beside the rule of the body the
-  seat drives, in `<kind>.sim.test.ts` (`tuning-feel`, step 3), and a scene of more than one seat
-  also gets it in `<game>.server.test.ts`, beside the server test above, with a page per seat. A
-  simulation test calls `simulate` with the game's manager scene, sim and folder, and puts pages, no
-  more than the seats, on legs of their own, with a `watch` of the bodies and the page's `own`,
-  without which no rows are recorded. For each page, every fact of the list is required, each stated
-  off the records:
-  1. A press made once the page has its lead, after its first ack, is drawn moving within two frames
-     of the press, and before the server's step takes it.
-  2. A first press is not: before its first ack the page runs no step ahead, so the first press is
-     drawn a step on at most and put back where the server has it on each packet. Under
-     `world.player.steps` the page probes as it joins and has its ack at once, so no press comes
-     before it.
-  3. The frame-by-step comparison: from the frame of the first ack on, every frame draws the page's
-     own body where the step record of the step that frame drew has it, the step whose
-     `scenes[<scene>]` is the frame's `step`. It is what catches a snap: `corrections` counts only
-     whole steps' reruns and reads 0 on the default however the page snaps. A page that fails it is
-     drawing a snap, and how its press is run ahead is then chosen as `tuning-feel` says (step 2).
-  4. A body that comes to rest ends on the server's rows: the last frame's rows equal the last
-     step's. A body that never comes to rest, a kart on its circuit, is compared as fact 3 compares
-     it, at the step each frame drew, since its last frame and the last step are of different steps.
-  5. Each page's `corrections` and `histogram` say what the mechanism makes true of them: no
-     correction without `world.player.steps`, and on a display at the step rate each frame from the
-     join moving one step, a step more where the page's lead grew and one fewer where it fell.
-
-  A press handed to a page as a `key` is the `KeyboardEvent.code` that `keyCode` from
-  `plugins/player/player.plugin.ts` gives the key the game binds, never a mapping of the test's own.
-  `simulate` makes its pages in node, so it is a `.test.ts`. A test that attaches a game view through
-  the editor's session is a `.view.test.tsx`. On the game `yarn new-game` writes, its body moving
-  along x for the right key, every assertion in this block, facts 1 (before the server's step), 2, 4
-  and 5, held on ten seeds:
-
-  ```ts
-  // The key the game binds to move right: the generated player.client.ts binds the arrows in its own
-  // table; a game that keeps its keys on the player definition (keys per slot) reads them there.
-  const right = 'ArrowRight'
-  const scene = file.prefabs.scenemanager.entry
-  const leg = { delay: 50, jitter: 10 }
-  const first = 500, second = 1500 // the second well past a round trip
-  const records = await simulate({
-    file: structuredClone(file) as Scene, sim, base: here, seed: 1, ms: 3000,
-    pages: [{ display: { hz: 1 / DT }, up: leg, down: leg, presses: [first, second].flatMap(at =>
-      [{ at, key: keyCode(right) }, { at: at + 200, key: keyCode(right), up: true }]) }],
-    watch: { kinds: ['body'], fields: ['pos'], own: 'body' },
-  })
-  const frames = records.filter((r): r is FrameRecord => r.type === 'frame' && r.page === 0)
-  const steps = records.filter((r): r is StepRecord => r.type === 'step')
-  const sent = records.filter((r): r is MessageRecord => r.type === 'message' && r.page === 0)
-  const x = (f: FrameRecord) => (f.rows[f.own!].pos as number[])[0]
-  // When the page first drew its own body moved after `t`, and when the server took the press of `t`.
-  const drawn = (t: number) => frames.find((f, i) => f.t > t && i > 0 && x(f) !== x(frames[i - 1]))!.t
-  const taken = (t: number) => {
-    const seq = sent.find(m => m.sent >= t)!.seq
-    return steps.find(s => s.applied.some(a => a.page === 0 && a.seq === seq))!.t
-  }
-  const acked = frames.find(f => f.ack > 0)!.t
-  expect(acked).toBeLessThan(second)
-  // Before the first ack the first press is drawn a step on at most.
-  const was = x(frames.filter(f => f.t < first).at(-1)!)
-  for (const f of frames.filter(f => f.t > first && f.t < acked)) expect(x(f) - was).toBeLessThanOrEqual(defs.body.speed * DT)
-  // After it, a press is drawn moving before the server's step takes it.
-  expect(drawn(second)).toBeLessThan(taken(second))
-  expect(frames.at(-1)!.rows).toEqual(steps.at(-1)!.rows![scene])
-  // Without `world.player.steps` the page reruns no whole step, so it counts no correction.
-  expect(corrections(records, 0).count).toBe(0)
-  // On a display at the step rate each frame from the join moves one step, a step more where the
-  // page's lead grew and one fewer where it fell.
-  const drew = frames.filter(f => f.step !== null)
-  const moved: Record<number, number> = {}
-  for (let i = drew.findIndex(f => f.ack > 0) + 1; i < drew.length; i++) {
-    const by = 1 + drew[i].lead - drew[i - 1].lead
-    moved[by] = (moved[by] ?? 0) + 1
-  }
-  expect(histogram(records, 0).counts).toEqual(moved)
-  ```
-
-  Beside them, in the same test, fact 1's two frames and fact 3, the comparison that finds a snap:
-
-  ```ts
-  // Fact 1: a press after the ack is drawn moving within two frames of it.
-  expect(drawn(second) - second).toBeLessThanOrEqual(2 * DT * 1000)
-  // Fact 3: from the first ack on, each frame draws its own body where the server had it at the
-  // step the frame drew. A frame of a step the run ended before has no step record to compare with.
-  for (const f of frames.filter(f => f.t >= acked && f.step !== null)) {
-    const s = steps.find(s => s.scenes[scene] === f.step)
-    if (s) expect(f.rows[f.own!]).toEqual(s.rows![scene][f.own!])
-  }
-  ```
-
-  A page fact 3 fails is drawing a snap, and its game chooses how a press is run ahead
-  (`tuning-feel`, step 2) before the check is called met. The key, the speed, the step rate and the
-  scene's name are read off the files; the times are the test's own. A scene with
-  `world.player.steps` states its corrections from what the page could not run: another seat's
-  press, or one of its own the server took late (`late`). A scene of several seats states every fact
-  for every page, each page's own body by its own `own`.
 - Run with `yarn vitest run games/<game>/<game>.server.test.ts`.
+- The press test, `games/<game>/<game>.predict.test.ts`: what proves the seat's own thing is
+  predicted (`designing-a-seat`, The proof). This is the one list of it; `input-and-seats`,
+  `tuning-feel`, `proving-a-game` and `auditing-a-game` point here. Every game whose seat controls
+  anything has it. A test that never checks what a key moves on screen passes on a page that draws a
+  press late. The test:
+  - boots the game's manager, `load`s it, and steps it with `run(truth, time)` on a clock the test
+    moves, as node's timers fall due, `performance.now` spied to that clock;
+  - opens a predicting page per seat of the scene, up to two,
+    `predict(link(loopback(accept(manager(truth)), time, net)), file, here, mount)`, as `client.html`
+    makes them, each on a `Net` of its own;
+  - frames every page at 60 a second, `page.input()` then `await page.frame(now)`, with the seat's
+    press sent before the frame at the seat's own row, `possessed(wire.rows)`, once that row stands
+    and `page.stats.predicting` is true; a second seat presses too, so the copy goes back for its
+    presses while the first is measured;
+  - runs once for each wire: none, a home connection's, and the bad ones (`bad wifi`, `mobile`,
+    `awful`), each way.
+
+  For the pressing page, every fact is required:
+  1. On every frame, the seat's own `player` row the page draws, `possessed(page.client.plugins.wire.rows)`,
+     has taken every press sent up to the frame before, and none sent after the frame: a press is on
+     screen by the frame after the key, on every wire.
+  2. The thing moves: what the press drives (its place, its yaw) changes from frame to frame while
+     the presses say it should.
+  3. `page.stats.corrections` is 0: the copy never differed from the server past `epsilon`.
+
+  Each press differs from the one before, so a row drawn late shows: an act that adds up, a turn
+  of the mouse, is counted (the row drawn equals the start plus every press sent by the frame before,
+  and at most the start plus every press sent by this frame); an act that sets a field, the way the
+  keys point, sends a value no press of the last few hundred frames sent, so the field drawn is the
+  value of this frame's press or the last frame's and never an older one. The test sends the act at
+  the row as a key would (`wire.send(me.id, act, ...args)`), since what it measures is the page, not
+  the binding; `player.client.test.ts` proves the keys (`input-and-seats`). On the folded new game
+  (`starting-a-game`, Fold the body into the player row), whose `move` sets the way its square
+  runs:
+
+  ```ts
+  // <game> run ahead: the game's server on a clock the test moves, and a predicting page
+  // (`addons/predict`) for each seat of <scene> on loopbacks, framing at 60 a second. The seat's square
+  // is its `player` row, which its page draws from its copy, so a way its keys send is drawn no later
+  // than the frame after the one it was sent on, over a clean wire, a home one and the bad ones.
+  import { afterAll, beforeAll, expect, test, vi } from 'vitest'
+  import { boot, seeded, type Scene } from '#engine/engine.ts'
+  import type { Client } from '#engine/browser.ts'
+  import { accept, link, load, manager, run } from '#addons/scenemanager/scenemanager.addon.ts'
+  import { loopback, type Net, type Time } from '#addons/loopback/loopback.addon.ts'
+  import { predict } from '#addons/predict/predict.addon.ts'
+  import { possessed } from '#addons/player/player.addon.ts'
+  import { sim } from './<game>.sim.ts'
+  import file from './<game>.scene.json' with { type: 'json' }
+  import room from './<scene>.scene.json' with { type: 'json' }
+
+  beforeAll(() => {
+    vi.stubGlobal('addEventListener', () => {})
+    vi.stubGlobal('removeEventListener', () => {})
+  })
+  afterAll(() => vi.restoreAllMocks())
+
+  const here = new URL('./', import.meta.url).href
+  const { width, height } = room.prefabs.engine
+  // The canvas a page would give its client.
+  const mount = (me: Client) => { if (me.plugins.render2d) me.plugins.render2d.canvas = { style: {}, width, height, addEventListener() {}, removeEventListener() {}, remove() {} } }
+
+  // A clock the test moves, as node's `setTimeout` falls due.
+  function clock() {
+    let now = 0
+    let queue: { at: number; i: number; f: () => void }[] = []
+    let i = 0
+    const time: Time = { now: () => now, after: (ms, f) => { queue.push({ at: now + Math.max(1, ms), i: i++, f }) } }
+    const to = (t: number) => {
+      for (;;) {
+        const due = queue.filter(q => q.at <= t).sort((a, b) => a.at - b.at || a.i - b.i)[0]
+        if (!due) break
+        queue = queue.filter(q => q !== due)
+        now = due.at
+        due.f()
+      }
+      now = t
+    }
+    return { time, to, get now() { return now } }
+  }
+
+  // The wires each way: none, a home connection's, and bad ones, which lose, bunch, reorder and
+  // send twice.
+  const wires = {
+    clean: { delay: 0, jitter: 0 },
+    home: { delay: 30, jitter: 10 },
+    'bad wifi': { delay: 40, jitter: 40, tail: true, loss: 0.01, burst: 0.2 },
+    mobile: { delay: 90, jitter: 80, tail: true, loss: 0.03, burst: 0.3, reorder: 0.02 },
+    awful: { delay: 150, jitter: 150, tail: true, loss: 0.08, burst: 0.4, reorder: 0.05, dup: 0.02 },
+  }
+
+  // The k-th way sent: along x, under a unit long, and none the same as the 96 before it, so a way
+  // drawn late is never this frame's or the last frame's.
+  const way = (k: number) => [((k % 97) + 1) / 100, 0]
+
+  test.each(Object.entries(wires))('a seat\'s way over %s is drawn by the frame after it was sent', async (_name, leg) => {
+    const truth = boot(structuredClone(file) as Scene, sim)
+    await load(truth, here)
+    const c = clock()
+    vi.spyOn(performance, 'now').mockImplementation(() => c.now)
+    const stop = run(truth, c.time)
+    const open = (net: Net) => predict(link(loopback(accept(manager(truth)), c.time, net)), file as Scene, here, mount)
+    const pages = Array.from({ length: Math.min(2, room.seats) }, (_, i) => open({ up: leg, down: leg, seed: i + 1 }))
+    const die = seeded(5)
+    // The way drawn before the first press, the way each frame sent, and the way and place drawn after.
+    let still: number[] | undefined
+    const sent: number[][] = [], drawn: number[][] = [], at: number[][] = []
+    for (let f = 0; f < 60 * 6; f++) {
+      c.to(c.now + 1000 / 60)
+      for (const [i, p] of pages.entries()) {
+        const wire = p.client?.plugins.wire
+        const me = possessed(wire?.rows ?? [])
+        const pressing = i === 0 && !!wire && !!me?.data.placed && p.stats.predicting && f >= 60 * 2
+        if (pressing) {
+          still ??= me!.data.move
+          sent.push(way(sent.length))
+          wire!.send(me!.id, 'move', ...sent.at(-1)!)
+        }
+        if (i > 0 && wire && me?.data.placed && p.stats.predicting && die() < 0.1) wire.send(me.id, 'move', die() * 2 - 1, die() * 2 - 1)
+        p.input()
+        await p.frame(c.now)
+        if (!pressing) continue
+        const row = possessed(p.client!.plugins.wire.rows)!
+        drawn.push(row.data.move)
+        at.push(row.data.pos)
+      }
+    }
+    expect(pages[0].stats.corrections).toBe(0)
+    expect(sent.length).toBeGreaterThan(200)
+    // Each frame's drawn way is the one sent on that frame or the one before: every press up to the
+    // frame before has been taken.
+    for (const [k, move] of drawn.entries()) expect([sent[k], k > 0 ? sent[k - 1] : still], `frame ${k}`).toContainEqual(move)
+    // And the square it draws runs: its place changes from frame to frame.
+    expect(at.slice(1).filter((p, k) => p[0] !== at[k][0]).length).toBeGreaterThan(sent.length * 0.9)
+    for (const p of pages) p.close()
+    stop.stop()
+  }, 600_000)
+  ```
+
+  The act, its args and the field it sets are the game's; the wires, the frames and the presses are
+  the test's own. A game whose look draws on render3d gives `render3d.canvas` in `mount`, and one
+  whose look decodes art in node stands in for `PIXI.Assets.load` (`proving-a-game`, A page in a
+  test). Run it with `yarn vitest run games/<game>/<game>.predict.test.ts`, then play the page:
+  `client.html` in Chrome against `<game>.server.ts`, a key pressed, the thing moving on the next
+  frame.
 - Step 6's fixes are proven in the addons' own tests: the server sent each bad message keeps
   stepping and keeps serving its other seats, and a manager with one scene that throws every step
   keeps the seat on its other scene playing.
@@ -522,8 +655,9 @@ is told once that its server has gone.
   `addons/socket/socket.addon.test.ts`, `addons/scenemanager/scenemanager.addon.test.ts` and
   `plugins/scenemanager/scenemanager.plugin.test.ts`. For what is sent:
   `addons/player/player.addon.test.ts`, `addons/interest/interest.addon.test.ts`,
-  `addons/vision/vision.addon.test.ts` and `plugins/vision/vision.plugin.test.ts`. For prediction:
+  `addons/vision/vision.addon.test.ts` and `plugins/vision/vision.plugin.test.ts`. For a press:
   `plugins/player/player.plugin.test.ts`. For the network: `addons/loopback/loopback.addon.test.ts`
   and `addons/simulator/simulator.addon.test.ts`.
-- Played: the server running and `client.html` in two windows, each player moving and seeing the other
-  move. For vision, the Vision panel. For a real session, a `?tap=` recording read in the Runs panel.
+- Played: the server running and `client.html` in two windows, each player's thing moving on the frame
+  after its key and each seeing the other move. For vision, the Vision panel. For a real session, a
+  `?tap=` recording read in the Runs panel.

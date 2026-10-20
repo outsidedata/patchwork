@@ -21,25 +21,31 @@
 //   `width` and `height`, which size the page's canvases. Its `sim` names every kind it makes rows
 //   of, a kind whose prefab only the manager's file gives included. A child's `prefabs` and its
 //   `world` are the manager's with its own over them (`child`), so a plugin's fixed numbers,
-//   `world.<plugin>`, that every child uses are written once, in the manager's `world`.
+//   `world.<plugin>`, that every child uses are written once, in the manager's `world`. A child
+//   that names a partial as `extends` has the partial's world, prefabs and actors under its own
+//   (`extended`), and the manager's under those.
 // - A scene is a tiled environment and actors. The tiled environment is everything static — the
 //   art, the collision — one Tiled map (`.tmj`), the `tilemap` entry of the scene's loader
 //   catalogue, `world.loader.assets`, that its `world.tilemap`'s `file` names, which the tilemap
-//   plugin draws and its rules ask; nothing in it makes a row. The actors are everything that has a row: the scene
-//   file's `actors` entries, then those of the file its `actorsFile` names, a list beside the map,
+//   plugin draws and its rules ask; nothing in it makes a row. The actors are everything that has a row: its
+//   partial's `actors` entries when it extends one, the scene file's own, then those of the file
+//   its `actorsFile` names, a list beside the map,
 //   `<level>.actors.json`, when it names one. A level drawn by hand is its map and the actors
 //   written in its scene file. A level a generator makes (`plugins/mapgen`) is the two files it
 //   writes, `<level>.tmj` and `<level>.actors.json`, which the scene loads as it loads a level
 //   drawn by hand; nothing makes a level while the game runs.
 // - For each kind a `sim` names that is not a plugin's, `<kind>.sim.ts`, exporting its rule under
-//   the kind's name, which the page's player finds by that name. Two kinds with one rule are two
-//   one-line files handing out the one rule under each name.
+//   the kind's name, which the child's `<scene>.sim.ts` imports into its `sim`, where the engine
+//   finds a row's rule by its kind. Two kinds with one rule are two one-line files handing out the
+//   one rule under each name.
 // - `index.html`: `boot` and `load` the manager, then `view(link(loopback(accept(manager(truth)))),
 //   file, import.meta.url, mount)`, where `mount` makes a canvas the size of the child's `engine`
 //   prefab for the game's renderer and one for `ui`, for whichever of them the scene names, and
 //   mounts each; the page's CSS puts every canvas in one grid cell, so the UI's lies over the
-//   game's. Then a fixed-step loop on `requestAnimationFrame` that steps the manager by `engine.dt`
-//   and calls the view's `frame()`. It is one seat on a truth of its own: a second tab is a second
+//   game's. Then a fixed-step loop on `requestAnimationFrame` that calls the view's `input()`, steps
+//   the manager by `engine.dt`, and calls the view's `frame(owed / dt)`, what it still owes over a
+//   step's seconds: so what the page reads once a frame reaches the steps the loop runs that frame,
+//   and the page draws between the last two steps (`engine/browser.ts`). It is one seat on a truth of its own: a second tab is a second
 //   game.
 // - `client.html`: the same `view` on `link(dial('ws://<host>:<port>'))`, the same loop, and no
 //   stepping.
@@ -91,24 +97,36 @@
 // whose `mount` gives the renderer and `ui` a canvas stand-in with `addEventListener`,
 // `removeEventListener`, `style` and `remove`. Two links are two seats, and the view's `client` is
 // the one client it holds.
-import { boot, type Arg, type Msg, type Packet, type Row, type Scene, type Sim, type Truth } from '#engine/engine.ts'
+import { boot, type Arg, type Msg, type Packet, type Row, type Scene, type Sim, type Snapshot, type Truth } from '#engine/engine.ts'
 import { client, type Client } from '#engine/browser.ts'
-import { free, join, leave } from '#addons/player/player.addon.ts'
+import { free, join, leave, possessed } from '#addons/player/player.addon.ts'
+import { predicts, rewind, type Rewind, type Written } from '#addons/rewind/rewind.addon.ts'
 import type { Accept, Time, Wire } from '#addons/loopback/loopback.addon.ts'
 
 export type Entry = { file: string; suspend: boolean; enter?: { kind: string; act: string } }
 // Work a kind finishes before its scene's first step: `prepare`, handed each of its rows and the
 // scene's `world`, such as the loader fetching the files its catalogue in `world` names, which a
-// rule reads on whatever step it likes. `load` awaits it for every
-// row of every truth it boots and of the manager's own, and `view` for every row of a visit's
-// first packet before it makes that visit's client, so the page's prediction, which runs the
-// seat's own rules, finds the same files the server's rules do.
+// rule reads on whatever step it likes. `load` awaits it for every row of every truth it boots and
+// of the manager's own, and `view` for every row of a visit's first packet before it makes that
+// visit's client, so the page's actors and plugins find the files the loader fetched from their
+// first frame.
 export type Prepare = { prepare?(me: Row, world: Record<string, any>): Promise<void> }
-// `seat` is the seat's number on that scene when the page sent it, as the `Down` it was on said.
-export type Up = { scene: string; seat: number; msg: Msg }
+// `seat` is the seat's number on that scene when the page sent it, as the `Down` it was on said. A
+// page that runs the scene ahead (`addons/predict`) also sends `want`, asking for the whole truth.
+export type Up = { scene: string; seat: number; msg: Msg } | { scene: string; seat: number; want: true }
 // `seat` is the seat's number on that scene's truth. It changes every time the seat enters a scene,
 // that scene's own name included, so a page can tell a seat that came back from one that stayed.
-export type Down = { scene: string; seat: number; packet: Packet }
+// `snap`, sent to a page that runs the scene ahead and asked for it, is the whole truth as it stood
+// before the oldest step the server keeps (`earliest` in `addons/rewind`), and `held` beside it what
+// each row's kind held then beside the rows, by row id (`Memory`). `log`, on a scene run ahead, is the
+// scene's journal (`addons/rewind`): every message every seat's steps took, each stamped with the step
+// it was answered on, from the first entry the page has not said it has, to `end`, the place the next
+// will take; with `snap`, every entry the journal holds, from which the page takes those `snap` does
+// not hold. `clock` is the server's clock as it made the packet (`clock` in `addons/rewind`), real time
+// in steps, which the truth's step stands behind by as many steps as it went back: the page holds its
+// copy to it.
+export type Log = { entries: Written[]; end: number; clock: number }
+export type Down = { scene: string; seat: number; packet: Packet; snap?: Snapshot; held?: Record<number, unknown>; log?: Log }
 // One row's fields that differ from the base: each `set` a path into `data` and the value there
 // now, each `unset` a path to a field gone. Plain objects are walked into; an array or a scalar
 // that differs is sent whole. A field whose value is `undefined` counts as absent, as JSON has it.
@@ -117,7 +135,7 @@ export type Delta = { add: Row[]; change: Change[]; drop: number[] }
 // A `Down` as it crosses the wire. `k` numbers the envelopes of one seat's connection, across every
 // visit. `base` is the `k` whose rows the delta is against, or null when it is against no rows at
 // all. `keep` is the lowest `k` any later envelope may name as its base.
-export type Diff = { scene: string; seat: number; k: number; n: number; ack: number; base: number | null; keep: number } & Delta
+export type Diff = { scene: string; seat: number; k: number; n: number; ack: number; base: number | null; keep: number; snap?: Snapshot; held?: Record<number, unknown>; log?: Log } & Delta
 // The page's word that it rebuilt envelope `got`, so the server may diff against it.
 export type Got = { got: number }
 // One seat's envelopes, and the functions that carry them. A page holds one of these for as long
@@ -137,6 +155,9 @@ const inside = new WeakMap<Truth, number>()
 
 const busy = (child: Truth) => inside.get(child) ?? 0
 const shift = (child: Truth, by: number) => inside.set(child, busy(child) + by)
+// The rewind of each child whose `world.predict` runs it ahead (`addons/rewind`).
+const rewinds = new WeakMap<Truth, Rewind>()
+export const rewindOf = (child: Truth) => rewinds.get(child)
 
 // Mods. A plugin `a` supports a plugin `p` with a mod, `<a>.<p>.ts`, which hands on what `a` knows.
 // A scene gives `p` a function of a mod by naming it in `world.<p>.mods`, `{ <function>: '<a>' }`:
@@ -153,17 +174,23 @@ const shift = (child: Truth, by: number) => inside.set(child, busy(child) + by)
 // `plugins/<p>/<a>.<p>.ts`, since a top-level plugin names no game's. The game's folder is the
 // scene's `world.scenemanager.home`, which `child` writes, so the scene never says where a mod is.
 //
+// An entry may name several plugins, `{ <function>: ['<a>', '<b>'] }`, each giving `p` the same
+// function, for a `p` that takes the function from every one of them: box3d's `props`, the fixed
+// things each of several plugins stands on the land. A single name is a list of one.
+//
 // `prepare` loads every mod a scene's `world` names before any kind's `prepare`, so on the server
 // and on the page a mod is there on the first step, and a mod that does not export the function it
 // is named for throws there. `mod(world, p, name)` hands back the function, or undefined when the
-// scene names none.
+// scene names none, and throws when the entry names more than one plugin, since it hands back one;
+// `modsOf(world, p, name)` hands back the function of every plugin the entry names, in its order,
+// none when the scene names none.
 //
 // `listed(scene)` is the order a scene's plugins tick in on the page: its `plugins`, with the game's
 // own in place of `shipped`, in their list's order (`plugins/shipped`). A mod a browser half asks
 // hands on what plugin `a`'s browser half holds, so `a` must be one of the page's plugins:
-// `provided(scene, p, name)` throws unless the plugin the scene names for `p`'s mod `name` is listed,
-// and does nothing when the scene names none, asked by every `p` that hands its mod `plugins`.
-// `ahead(scene, p, name)` throws as `provided` does, and unless that plugin ticks before `p`: asked
+// `provided(scene, p, name)` throws unless every plugin the scene names for `p`'s mod `name` is
+// listed, and does nothing when the scene names none, asked by every `p` that hands its mod `plugins`.
+// `ahead(scene, p, name)` throws as `provided` does, and unless each of them ticks before `p`: asked
 // instead by a `p` that reads what that plugin makes earlier in the same frame, in the same phase
 // (its `afterTick` what the other placed in its own, or its `tick` what the other made in its own),
 // so a scene listing them the other way is told rather than drawn a frame behind.
@@ -176,41 +203,59 @@ function modUrl(world: Record<string, any>, a: string, p: string) {
   return new URL(`plugins/${ours.includes(a) ? a : p}/${a}.${p}.ts`, home).href
 }
 
+// The plugins a mods entry names, in its order: none, one, or a list's.
+const names = (entry: string | string[] | undefined): string[] => (entry === undefined ? [] : typeof entry === 'string' ? [entry] : entry)
+
 async function loadMods(world: Record<string, any>) {
   for (const [p, fixed] of Object.entries(world)) {
-    for (const [name, a] of Object.entries((fixed?.mods ?? {}) as Record<string, string>)) {
-      const url = modUrl(world, a, p)
-      if (!mods.has(url)) mods.set(url, await import(/* @vite-ignore */ url))
-      if (typeof mods.get(url)![name] !== 'function') throw new Error(`${url} does not export ${name}`)
+    for (const [name, entry] of Object.entries((fixed?.mods ?? {}) as Record<string, string | string[]>)) {
+      for (const a of names(entry)) {
+        const url = modUrl(world, a, p)
+        if (!mods.has(url)) mods.set(url, await import(/* @vite-ignore */ url))
+        if (typeof mods.get(url)![name] !== 'function') throw new Error(`${url} does not export ${name}`)
+      }
     }
   }
 }
 
-export function mod<F extends (...args: any[]) => any>(world: Record<string, any>, p: string, name: string): F | undefined {
-  const a: string | undefined = world[p]?.mods?.[name]
-  if (!a) return undefined
+// The function `name` of the mod `a` gives `p`.
+function found<F>(world: Record<string, any>, p: string, name: string, a: string): F {
   const m = mods.get(modUrl(world, a, p))
   if (!m) throw new Error(`the ${a} mod of ${p} is not loaded: prepare loads it`)
   return m[name] as F
+}
+
+export function mod<F extends (...args: any[]) => any>(world: Record<string, any>, p: string, name: string): F | undefined {
+  const all = names(world[p]?.mods?.[name])
+  if (all.length > 1) throw new Error(`${p}'s ${name} names ${all.join(', ')}, and ${p} takes it from one plugin: name one`)
+  return all.length ? found<F>(world, p, name, all[0]) : undefined
+}
+
+export function modsOf<F extends (...args: any[]) => any>(world: Record<string, any>, p: string, name: string): F[] {
+  return names(world[p]?.mods?.[name]).map(a => found<F>(world, p, name, a))
 }
 
 export const listed = (scene: Scene): string[] =>
   (scene.plugins ?? []).flatMap(n => (n === 'shipped' ? (scene.world?.shipped?.plugins ?? []) as string[] : [n]))
 
 export function provided(scene: Scene, p: string, name: string) {
-  const a: string | undefined = scene.world?.[p]?.mods?.[name]
-  if (a !== undefined && !listed(scene).includes(a)) throw new Error(`${p}'s ${name} is ${a}'s, which this scene does not list`)
+  for (const a of names(scene.world?.[p]?.mods?.[name])) {
+    if (!listed(scene).includes(a)) throw new Error(`${p}'s ${name} is ${a}'s, which this scene does not list`)
+  }
 }
 
 export function ahead(scene: Scene, p: string, name: string) {
   provided(scene, p, name)
-  const a: string | undefined = scene.world?.[p]?.mods?.[name]
-  if (a === undefined) return
   const order = listed(scene)
-  if (order.indexOf(a) > order.indexOf(p)) throw new Error(`${p} is listed before ${a}, whose ${name} it reads that frame`)
+  for (const a of names(scene.world?.[p]?.mods?.[name])) {
+    if (order.indexOf(a) > order.indexOf(p)) throw new Error(`${p} is listed before ${a}, whose ${name} it reads that frame`)
+  }
 }
 
-const prepare = async (sim: Sim, rows: Row[], world: Record<string, any>) => {
+// Every mod a scene's `world` names loaded, and every row's kind's `prepare` awaited: what `load`
+// does for each truth it boots, `view` for each visit's first packet, and a page that runs a scene
+// ahead for the truth it boots (`addons/predict`).
+export const prepare = async (sim: Sim, rows: Row[], world: Record<string, any>) => {
   await loadMods(world)
   await Promise.all(rows.map(r => (sim[r.kind] as Prepare | undefined)?.prepare?.(r, world)))
 }
@@ -285,6 +330,27 @@ async function halves(name: string, e: Entry, base: string): Promise<{ scene: Sc
   return { scene: mod.scene as Scene, sim: mod.sim as Sim }
 }
 
+// A scene names a partial as `extends`. world and prefabs deep-merge, the scene's values win;
+// actors are combined. A partial extends nothing.
+function merge(under: Record<string, any>, over: Record<string, any>): Record<string, any> {
+  const out = { ...under }
+  for (const [k, v] of Object.entries(over)) out[k] = plain(v) && plain(under[k]) ? merge(under[k], v) : v
+  return out
+}
+async function extended(scene: Scene, at: URL): Promise<Scene> {
+  if (!scene.extends) return scene
+  const url = new URL(scene.extends as string, at)
+  const text = url.protocol === 'file:' ? await (await import('node:fs/promises')).readFile(url, 'utf8') : await (await fetch(url)).text()
+  const partial = JSON.parse(text) as Scene
+  if (partial.extends) throw new Error(`${scene.extends} extends ${partial.extends}: a partial extends nothing`)
+  return {
+    ...scene,
+    world: merge(partial.world ?? {}, scene.world ?? {}),
+    prefabs: merge(partial.prefabs ?? {}, scene.prefabs ?? {}),
+    actors: [...(partial.actors ?? []), ...(scene.actors ?? [])],
+  }
+}
+
 // A child's prefabs are the manager scene's prefabs with the child's own over them. A name the
 // child's file gives a prefab is the child's; a name only the manager's file gives is the
 // manager's. So a prefab every child uses is written once, in the manager's file, and an actor or a
@@ -292,7 +358,7 @@ async function halves(name: string, e: Entry, base: string): Promise<{ scene: Sc
 // plugin's fixed numbers, `world.<plugin>`, every child uses are written once in the manager's
 // file, and a child that gives the key has its own. The child's own `scenemanager` prefab is given `names`,
 // the names of the manager's table, so its row's `go` can refuse a scene the manager has not got.
-// A child's actors are its file's `actors`, then the entries of the file its `actorsFile` names,
+// A child's actors are its file's `actors` (after its partial's, `extended`), then the entries of the file its `actorsFile` names,
 // when it names one (`actorsOf`), copied whole: the engine writes an entry's fields over its prefab
 // as they are, so a row booted from the list itself would hold the entry's own arrays, and a rule
 // moving the row's `pos` in place would move the entry, and every row booted from it after. The
@@ -300,9 +366,11 @@ async function halves(name: string, e: Entry, base: string): Promise<{ scene: Sc
 // again what the scene placed, as a level that starts over spawns its cast again from its entries,
 // and no row has to keep a copy of it. Beside it, `world.scenemanager.home` is the game's folder,
 // `base`, where a mod of one of the game's own plugins is found (`modUrl`). The truth and the page's
-// client of a child read this same scene.
-async function child(top: Scene, name: string, e: Entry, base: string): Promise<{ scene: Scene; sim: Sim }> {
-  const { scene, sim } = await halves(name, e, base)
+// client of a child read this same scene, and so does a truth a page runs ahead (`addons/predict`).
+export async function child(top: Scene, name: string, e: Entry, base: string): Promise<{ scene: Scene; sim: Sim }> {
+  const halved = await halves(name, e, base)
+  const sim = halved.sim
+  const scene = await extended(halved.scene, new URL(e.file, base))
   const prefabs = { ...top.prefabs, ...scene.prefabs }
   if (scene.prefabs.scenemanager) prefabs.scenemanager = { ...scene.prefabs.scenemanager, names: Object.keys(top.prefabs.scenemanager.scenes) }
   const more = typeof scene.actorsFile === 'string' ? await actorsOf(new URL(e.file, base), scene.actorsFile) : []
@@ -340,13 +408,9 @@ export async function load(truth: Truth, base: string): Promise<Map<string, Trut
     const { scene, sim } = await child(truth.scene, name, e, base)
     const made = boot(scene, sim)
     await prepare(sim, made.rows, made.world)
-    made.attach({
-      show: () => true,
-      hide: (_seat, r) => (r.kind === 'scenemanager' ? ['out'] : []),
-      accept: () => true,
-      advance: () => true,
-      spawn: () => {},
-    })
+    door(made)
+    const ahead = predicts(made.world)
+    if (ahead) rewinds.set(made, rewind(made, ahead.cutoff))
     m.set(name, made)
   }
   if (!m.has(row.data.entry)) throw new Error(`no loaded scene ${row.data.entry}`)
@@ -355,16 +419,51 @@ export async function load(truth: Truth, base: string): Promise<Map<string, Trut
   truth.onStep(() => {
     for (const [name, e] of entries(row)) {
       const child = scene(row, name)
-      if (!e.suspend || busy(child) > 0) child.step(row.data.dt)
+      if (!e.suspend || busy(child) > 0) advance(child, row.data.dt)
     }
   })
   return m
 }
 
+// What every child's truth sends: its `scenemanager` row without `out` (below). A truth a page runs
+// ahead of its server is given it too (`addons/predict`).
+export function door(child: Truth) {
+  child.attach({
+    show: () => true,
+    hide: (_seat, r) => (r.kind === 'scenemanager' ? ['out'] : []),
+    accept: () => true,
+    advance: () => true,
+    spawn: () => {},
+  })
+}
+
+// One step of a child: through its rewind when its scene is run ahead, which takes every late press
+// first (`addons/rewind`).
+const advance = (child: Truth, dt: number) => {
+  const r = rewinds.get(child)
+  if (r) r.step(dt)
+  else child.step(dt)
+}
+
 // A child whose scene names the player package gets its seat from that package, which spawns the
-// row the seat possesses and shows it to no other seat. A child that does not — a menu — takes a
+// row the seat possesses, sent to every seat and marked `mine` for its own. A child that does not — a menu — takes a
 // plain seat, which may still send the acts a kind lists as open.
 const own = (child: Truth) => child.scene.plugins!.includes('player')
+
+// A seat coming to a truth or going from it, as data: what a scene run ahead writes in its journal,
+// so the steps it runs again, and every page's copy of it, make the same change on the same step
+// (`change` and `schedule` in `addons/rewind`). `seat` makes it and hands back the seat's number.
+export type SeatOp = { join: true } | { leave: number }
+export function seat(truth: Truth, op: SeatOp): number {
+  if ('join' in op) return own(truth) ? join(truth) : truth.open()
+  own(truth) ? leave(truth, op.leave) : truth.close(op.leave)
+  return op.leave
+}
+// A seat's change made to a child, through its rewind when its scene is run ahead.
+const seatOn = (child: Truth, op: SeatOp) => {
+  const r = rewinds.get(child)
+  return r ? r.change(op, () => seat(child, op)) : seat(child, op)
+}
 
 // One connection: one seat on one child. It enters the entry scene when it is made, and each step
 // of the manager it reads its seat's slot of the current child's `scenemanager` row. A name there
@@ -380,7 +479,7 @@ export function connection(row: Row, send: (down: Down) => void) {
   const table = new Map(entries(row))
   const enter = (to: string): number => {
     const child = scene(row, to)
-    const seat = own(child) ? join(child) : child.open()
+    const seat = seatOn(child, { join: true })
     shift(child, 1)
     // The entry may name a kind and an act on it: the seat that just entered is told to that act
     // at the start of the child's next step, before `before`, the way `arrive` is. The act is one
@@ -395,38 +494,73 @@ export function connection(row: Row, send: (down: Down) => void) {
   }
   const exit = (from: string, seat: number) => {
     const child = scene(row, from)
-    own(child) ? leave(child, seat) : child.close(seat)
+    seatOn(child, { leave: seat })
     shift(child, -1)
     // A `suspend: true` child nobody is left in is not stepped again, so without this step no row
     // in it would ever run with the leaver's rows gone — whatever that scene does when a seat
     // leaves would happen only if somebody else happened to be standing in it.
-    if (busy(child) === 0 && table.get(from)!.suspend) child.step(row.data.dt)
+    if (busy(child) === 0 && table.get(from)!.suspend) advance(child, row.data.dt)
   }
 
   let name: string = row.data.entry
   let seat = enter(name)
   let gone = false
+  // On a scene run ahead: whether the next packet carries the whole truth, the page having asked;
+  // the number of the next message to take, since a page sends each again until a packet's ack covers
+  // it, and the client numbers a visit's messages 1, 2, 3 and on; and those that came before it, a
+  // transport that reorders having let a later one pass an earlier, held until the earlier comes. The
+  // engine's ack is the highest number it answered, so a message taken out of order would ack the
+  // ones before it unanswered, and the page would stop sending them.
+  let want = false
+  let expect = 1
+  let early = new Map<number, Msg>()
+  // The first journal entry the page has not said it has. One the journal has let go of, a page
+  // that heard nothing for twice the cutoff, is not sent: the page is sent the whole truth instead.
+  let confirmed = 0
+  const fresh = (child: Truth) => { confirmed = rewinds.get(child)?.end ?? 0 }
+  // The packet of a step, with the journal from what the page has, and the truth saved beside it
+  // when the page asked. None while a scene run ahead has gone back to before the seat joined: the
+  // seat comes again as the truth passes the step it joined on (`addons/rewind`), and until then it
+  // has no rows to be sent.
+  const stood = (child: Truth): Down | undefined => {
+    if (seat >= child.seats) return undefined
+    const packet = child.packet(seat)
+    const r = rewinds.get(child)
+    if (!r) return { scene: name, seat, packet }
+    if (confirmed < r.base) want = true
+    if (!want) return { scene: name, seat, packet, log: { entries: r.journal(confirmed), end: r.end, clock: r.clock } }
+    want = false
+    confirmed = r.end
+    const { snap, memory } = r.earliest()
+    return { scene: name, seat, packet, snap, held: memory, log: { entries: r.journal(r.base), end: r.end, clock: r.clock } }
+  }
+  fresh(scene(row, name))
 
   owner(row).onStep(() => {
     if (gone) return
     const child = scene(row, name)
     const ctrl = child.rows.find(r => r.kind === 'scenemanager')
     const next = ctrl?.data.out?.[seat] as { scene: string; args: any[] } | undefined
-    if (!next) { send({ scene: name, seat, packet: child.packet(seat) }); return }
+    const say = () => { const down = stood(child); if (down) send(down) }
+    if (!next) return say()
     delete ctrl!.data.out[seat]
     if (!scenes(row).has(next.scene)) throw new Error(`no loaded scene ${next.scene}`)
     const full = scene(row, next.scene)
-    if (next.scene !== name && own(full) && !free(full)) { send({ scene: name, seat, packet: child.packet(seat) }); return }
+    if (next.scene !== name && own(full) && !free(full)) return say()
     exit(name, seat)
     name = next.scene
     seat = enter(name)
+    want = false
+    expect = 1
+    early = new Map()
+    fresh(scene(row, name))
     const to = scene(row, name)
     const packet = to.packet(seat)
     // The seat possesses that row, so `answer()` runs the game's `arrive` act at the start of the
     // new child's next step, before `before`. A child whose `player` kind has no `arrive` act
     // refuses the message the way it refuses any unknown act.
     if (next.args.length > 0 && own(to)) {
-      const mine = packet.rows.find(r => r.kind === 'player')
+      const mine = possessed(packet.rows)
       if (!mine) throw new Error(`no player row on seat ${seat} of ${name}`)
       to.inbox(seat, { seq: 0, n: to.n, id: mine.id, action: 'arrive', args: next.args })
     }
@@ -437,9 +571,32 @@ export function connection(row: Row, send: (down: Down) => void) {
     // A message sent on a visit that is over, sent before the page heard the seat had moved, is
     // dropped, as the engine drops one a seat may not send: nothing on the scene it names is that
     // seat's any more, and a visit to the same scene after it is a seat of another number.
+    //
+    // On a scene run ahead (`addons/rewind`), a message is the page's press stamped with the step it
+    // made it on, sent again every frame until a packet's ack covers it, so one lost on the way is
+    // not lost: each is taken once, in the order of its number, and handed to the scene's rewind,
+    // which holds it for its step or puts it back on it. A `want` has the next packet carry the whole
+    // truth. Both come from outside the program: a message whose number or step is no whole number
+    // is dropped.
     take(up: Up) {
       if (up.scene !== name || up.seat !== seat) return
-      scene(row, name).inbox(seat, up.msg)
+      const child = scene(row, name)
+      const r = rewinds.get(child)
+      if ('want' in up) { if (r && up.want === true) want = true; return }
+      if (!r) return child.inbox(seat, up.msg)
+      const m = up.msg
+      if (!Number.isSafeInteger(m?.seq) || !Number.isSafeInteger(m.n) || m.seq < expect) return
+      early.set(m.seq, m)
+      for (let next = early.get(expect); next; next = early.get(expect)) {
+        early.delete(expect)
+        expect++
+        r.take(seat, next)
+      }
+    },
+    // The page has every journal entry of the visit `scene`/`seat` before `end`: a packet carrying the
+    // journal to there reached it (`accept`).
+    has(visit: { scene: string; seat: number }, end: number) {
+      if (visit.scene === name && visit.seat === seat) confirmed = Math.max(confirmed, end)
     },
     close() {
       if (gone) return
@@ -498,13 +655,14 @@ export function link(wire: Wire<Up | Got, Diff>): Link {
     end.send({ got: d.k })
     // An envelope older than one already handed on is handed on as it is today, the step going
     // back, but tells of no birth or end: the newer one already did.
-    if (d.k < newest) { fan({ scene: d.scene, seat: d.seat, packet: { n: d.n, ack: d.ack, rows: structuredClone(rows), born: [], ended: [] } }); return }
+    const snap = { ...(d.snap ? { snap: d.snap, held: d.held } : {}), ...(d.log ? { log: d.log } : {}) }
+    if (d.k < newest) { fan({ scene: d.scene, seat: d.seat, packet: { n: d.n, ack: d.ack, rows: structuredClone(rows), born: [], ended: [] }, ...snap }); return }
     newest = d.k
     const now = new Map(rows.map(r => [r.id, r.kind]))
     const born = rows.filter(r => shown.get(r.id) !== r.kind).map(r => r.id)
     const ended = [...shown].filter(([id, kind]) => now.get(id) !== kind).map(([id]) => id)
     shown = now
-    fan({ scene: d.scene, seat: d.seat, packet: { n: d.n, ack: d.ack, rows: structuredClone(rows), born, ended } })
+    fan({ scene: d.scene, seat: d.seat, packet: { n: d.n, ack: d.ack, rows: structuredClone(rows), born, ended }, ...snap })
   })
   return { ...end, hear, store: {} }
 }
@@ -534,7 +692,13 @@ export function view(wire: Link, file: Scene, base: string, mount: (me: Client, 
   return {
     get name() { return live?.scene },
     get client() { return live?.me },
-    async frame() {
+    // Called by a loop that steps the truth in the page's own frames before its steps, so what the
+    // page reads once a frame goes up before them (`engine/browser.ts`, Input before the steps).
+    input() { live?.me.input() },
+    // `between`, from a loop that steps the truth in the page's own frames, is how far its clock is
+    // past the step it took, in steps, which the client draws a step behind (`engine/browser.ts`,
+    // Drawing between steps).
+    async frame(between?: number) {
       if (down.length) {
         const last = down[down.length - 1]
         let from = down.length - 1
@@ -554,7 +718,7 @@ export function view(wire: Link, file: Scene, base: string, mount: (me: Client, 
         }
         for (const d of visit) live.me.plugins.scenemanager.hand(d.packet)
       }
-      await live?.me.frame()
+      await live?.me.frame(between)
     },
     close() { live?.me.close(); live = undefined },
   }
@@ -592,6 +756,9 @@ export function run(truth: Truth, time: Time = { now: () => performance.now(), a
 export const accept = (row: Row): Accept<Up | Got, Diff> => send => {
   const backlog: number = row.data.backlog ?? 32
   const sent = new Map<number, Row[]>()
+  // The visit and journal end each envelope carried, so a page's word that it got one says it has
+  // the journal to there (`Log`).
+  const logged = new Map<number, { visit: { scene: string; seat: number }; end: number }>()
   let visit: { scene: string; seat: number } | undefined
   let k = 0
   let got = 0
@@ -601,13 +768,21 @@ export const accept = (row: Row): Accept<Up | Got, Diff> => send => {
     const base = sent.get(got)
     sent.set(k, down.packet.rows)
     sent.delete(k - backlog)
+    if (down.log) logged.set(k, { visit, end: down.log.end })
+    logged.delete(k - backlog)
     const { n, ack, rows } = down.packet
-    send({ scene: down.scene, seat: down.seat, k, n, ack, base: base ? got : null, keep: k - backlog + 1, ...delta(base ?? [], rows) })
+    send({
+      scene: down.scene, seat: down.seat, k, n, ack, base: base ? got : null, keep: k - backlog + 1, ...delta(base ?? [], rows),
+      ...(down.snap ? { snap: down.snap, held: down.held } : {}), ...(down.log ? { log: down.log } : {}),
+    })
   })
   return {
     take(up) {
       if (!('got' in up)) return seat.take(up)
-      if (Number.isSafeInteger(up.got) && up.got <= k) got = Math.max(got, up.got)
+      if (!Number.isSafeInteger(up.got) || up.got > k) return
+      got = Math.max(got, up.got)
+      const l = logged.get(up.got)
+      if (l) seat.has(l.visit, l.end)
     },
     close: () => seat.close(),
   }

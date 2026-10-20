@@ -52,11 +52,79 @@ test('a row ended during a step runs nothing more, in that pass or the ones afte
   expect(t.rows.map(r => r.kind)).toEqual(['a'])
 })
 
-test('a row that ends itself runs nothing more that step', () => {
-  const ran: string[] = []
-  const t = bootWith({ a: { before: (me, _dt, w) => { ran.push('a.before'); w.end(me) }, tick: () => { ran.push('a.tick') }, after: () => { ran.push('a.after') } }, b: { after: () => { ran.push('b.after') } } })
-  t.step(1 / 30)
-  expect(ran).toEqual(['a.before', 'b.after'])
+// A truth saved between steps and loaded into another booted from the same scene steps on as the
+// first does: the same rows, the same rolls of the die, the same ids for what it spawns, and the
+// messages its seats held for later answered on their steps, across JSON as a socket carries it.
+test('a truth loaded from another\'s save steps on exactly as that one does', () => {
+  const sim: Sim = {
+    a: {
+      tick: (me, _dt, w) => { me.data.x = (me.data.x ?? 0) + w.die(); if (w.die() < 0.3) w.spawn('kid', { at: me.data.x }) },
+      acts: { push: (me, _w, _seat, by) => { me.data.x += by } },
+    },
+    b: {},
+    kid: { tick: (me, _dt, w) => { if (++me.data.age > 3) w.end(me) } },
+  }
+  const scene = { world: { seed: 5 }, prefabs: { a: {}, b: {}, kid: { age: 0 } }, actors: [{ is: 'a' }, { is: 'b' }] }
+  const one = boot(structuredClone(scene), sim)
+  one.open(1)
+  for (let i = 0; i < 20; i++) one.step(1 / 30)
+  one.inbox(0, { seq: 1, n: 24, id: 1, action: 'push', args: [10] })
+  const two = boot(structuredClone(scene), sim)
+  two.load(JSON.parse(JSON.stringify(one.save())))
+  expect(two.n).toBe(20)
+  for (let i = 0; i < 20; i++) {
+    one.step(1 / 30)
+    two.step(1 / 30)
+    expect(two.rows).toEqual(one.rows)
+  }
+  expect(one.rows.find(r => r.kind === 'kid')).toBeDefined()
+  expect(two.packet(0)).toEqual(one.packet(0))
+})
+
+// Ids. What a seat's message spawns, through the act it asks for and anything that act calls, takes
+// that seat's own next id; what a hook spawns, or a spawn from outside a step, takes the truth's. So
+// two seats' presses taken in either order, or one of them a step earlier, give every row the same id,
+// and a truth loaded from a save goes on handing out the ids the saved one would.
+test('a row a seat\'s message spawns takes that seat\'s own id, whatever another seat spawned, in any order', () => {
+  const sim: Sim = {
+    a: {
+      tick: (me, _dt, w) => { if (++me.data.t % 3 === 0) w.spawn('kid') },
+      // `a.fire` spawns through a call to another act, `b.fire` straight off.
+      acts: { fire: (me, w) => { w.call(me, 'shoot', 0) }, shoot: (_me, w) => { w.spawn('kid') } },
+      open: ['fire'],
+    },
+    b: { acts: { fire: (_me, w) => { w.spawn('kid') } }, open: ['fire'] },
+    kid: {},
+  }
+  const scene = { prefabs: { a: { t: 0 }, b: {}, kid: {} }, actors: [{ is: 'a' }, { is: 'b' }] }
+  // Seat 0 fires `a` on step 2; seat 1 fires `b` on step `at`.
+  const run = (at: number, first: 0 | 1) => {
+    const t = boot(structuredClone(scene), sim)
+    t.open()
+    t.open()
+    const press = [() => t.inbox(0, { seq: 1, n: 2, id: 1, action: 'fire', args: [] }), () => t.inbox(1, { seq: 1, n: at, id: 2, action: 'fire', args: [] })]
+    press[first]()
+    press[1 - first]()
+    for (let i = 0; i < 8; i++) t.step(1 / 30)
+    return t
+  }
+  const ids = (t: ReturnType<typeof run>) => t.rows.filter(r => r.kind === 'kid').map(r => r.id).sort((x, y) => x - y)
+  const seat = (i: number, k: number) => 2 ** 40 + i * 2 ** 32 + k
+  // The hook's kids take the truth's ids from 3, after the two actors; each seat's its own.
+  const want = [3, 4, seat(0, 1), seat(1, 1)]
+  expect(ids(run(2, 0))).toEqual(want)
+  expect(ids(run(2, 1))).toEqual(want)
+  // Seat 1's press a step earlier, as a late press put back on its step: no row's id moves.
+  expect(ids(run(1, 0))).toEqual(want)
+  // A spawn from outside a step takes the truth's next id.
+  const t = run(2, 0)
+  expect(t.spawn('kid').id).toBe(5)
+  // A truth loaded from a save goes on with every seat's count where the saved one had it.
+  const two = boot(structuredClone(scene), sim)
+  two.load(JSON.parse(JSON.stringify(t.save())))
+  two.inbox(0, { seq: 2, n: two.n, id: 1, action: 'fire', args: [] })
+  two.step(1 / 30)
+  expect(ids(two)).toContain(seat(0, 2))
 })
 
 test('a row spawned by an act answered as the step begins, or between steps, runs that step', () => {

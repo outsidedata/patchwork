@@ -11,7 +11,7 @@
 import { afterAll, afterEach, expect, test } from 'vitest'
 import * as THREE from 'three'
 import type * as PIXI from 'pixi.js'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -410,19 +410,17 @@ test('a scene that shows no bars, veil or line needs no ui, and one that shows t
   expect(() => without.frame(sent(t))).toThrow('the cutscene shows bars, a veil or a line on ui\'s panels, and the scene lists no ui')
 })
 
-// ---------------------------------------------------------------- the order, eye and the source
+// ---------------------------------------------------------------- the order and eye
 
-test('its tick throws when it is listed before render3d, after chasecamera3d, before player or after ui', () => {
+test('its tick throws when it is listed before render3d, after chasecamera3d or after ui', () => {
   const t = boots()
   t.step(DT)
   const run = (order: string[]) => () => page(order).frame(sent(t))
   expect(run(['cutscene', 'render3d'])).toThrow('the cutscene is listed before render3d')
   expect(run(['render3d', 'chasecamera3d', 'cutscene'])).toThrow('the cutscene is listed after chasecamera3d')
-  expect(run(['render3d', 'cutscene', 'player'])).toThrow('the cutscene is listed before player')
   expect(run(['render3d', 'ui', 'cutscene'])).toThrow('the cutscene is listed after ui')
   expect(run(['cutscene'])).toThrow('the cutscene places render3d\'s camera, and the scene lists no render3d')
   expect(run(['render3d', 'cutscene', 'chasecamera3d', 'ui'])).not.toThrow()
-  expect(run(['player', 'render3d', 'cutscene', 'ui'])).not.toThrow()
 })
 
 test('eye() is where render3d\'s camera stands and its world −z, and throws before the first tick', () => {
@@ -433,13 +431,4 @@ test('eye() is where render3d\'s camera stands and its world −z, and throws be
   frame(sent(t))
   close(plugins.cutscene.eye().pos, camera().position.toArray())
   close(plugins.cutscene.eye().dir, new THREE.Vector3(0, 0, -1).applyQuaternion(camera().quaternion).toArray())
-})
-
-// Nothing in the file eases, rolls a die or keeps a clock of the page's: the pose is the rows'.
-test('the source holds no exp, random or clock of the page\'s', () => {
-  for (const file of ['./cutscene.plugin.ts', './cutscene.sim.ts']) {
-    const code = readFileSync(new URL(file, import.meta.url), 'utf8')
-    for (const banned of ['Math.exp', 'Math.random', 'performance.now', 'Date.now', 'requestAnimationFrame'])
-      expect(code.includes(banned), `${file} ${banned}`).toBe(false)
-  }
 })

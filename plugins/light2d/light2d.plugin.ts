@@ -92,7 +92,10 @@ export function light2d() {
   let next: Table['ambient'] | undefined
   let falloff: any
   let checked = false
-  const pool: any[] = []
+  // Each lit row's sprite, by row id, kept while it stays lit: render2d draws a thing between where
+  // the last two steps put it and knows it by its sprite, so a sprite handed from one light to another
+  // would be drawn part way between the two.
+  let sprites = new Map<number, any>()
   let lit: Lit[] = []
 
   // The falloff picture: white, its opacity the light's brightness at each pixel, premultiplied.
@@ -180,8 +183,10 @@ export function light2d() {
       // the ground `radius` from it.
       const k = (r: number) => r / (table.falloff.size / 2)
       for (const l of lit) l.sprite.removeFromParent()
-      lit = chosen.map((l, i) => {
-        const sprite = pool[i] ?? (pool[i] = new PIXI.Sprite({ texture: falloff, anchor: 0.5, blendMode: 'add' }))
+      const kept = new Map<number, any>()
+      lit = chosen.map(l => {
+        const sprite = sprites.get(l.id) ?? new PIXI.Sprite({ texture: falloff, anchor: 0.5, blendMode: 'add' })
+        kept.set(l.id, sprite)
         const [x, y] = place(l.pos), s = k(l.radius)
         sprite.setFromMatrix(new PIXI.Matrix(gx[0] * s, gx[1] * s, gy[0] * s, gy[1] * s, x, y))
         sprite.tint = l.colour
@@ -189,10 +194,12 @@ export function light2d() {
         dark.addChild(sprite)
         return { id: l.id, pos: l.pos, radius: l.radius, colour: l.colour, intensity: l.intensity, sprite }
       })
+      for (const [id, s] of sprites) if (!kept.has(id)) s.destroy()
+      sprites = kept
     },
     close() {
-      for (const s of pool) s.destroy()
-      pool.length = 0
+      for (const s of sprites.values()) s.destroy()
+      sprites = new Map()
       lit = []
       if (!dark) return
       filter.destroy()

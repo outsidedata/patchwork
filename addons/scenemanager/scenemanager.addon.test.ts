@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { boot, seeded, type Row, type Scene, type Truth } from '#engine/engine.ts'
-import { accept, actorsOf, ahead, delta, type Diff, link, listed, load, manager, mod, patch, provided, run, scene, view } from './scenemanager.addon.ts'
+import { accept, actorsOf, ahead, delta, type Diff, link, listed, load, manager, mod, modsOf, patch, provided, run, scene, view } from './scenemanager.addon.ts'
 import { ground } from '#plugins/terrain3d/terrain3d.box3d.ts'
 import { loopback } from '#addons/loopback/loopback.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
@@ -195,6 +195,22 @@ test('listed is the order the page ticks plugins in, the game\'s own in shipped\
   expect(() => provided(at(['shipped'], { tone: 'terrain3d' }), 'anvil', 'tone')).toThrow('anvil\'s tone is terrain3d\'s, which this scene does not list')
 })
 
+test('an entry naming several plugins loads every one, modsOf hands back each one\'s function in its order, mod refuses it, and provided and ahead hold every one', async () => {
+  const many = forgeDir({ ...FORGE, hitscan3d: { mods: { solids: ['bellows', 'anvil'] } } })
+  mkdirSync(join(new URL(many).pathname, 'plugins', 'anvil'), { recursive: true })
+  writeFileSync(join(new URL(many).pathname, 'plugins', 'anvil', 'anvil.hitscan3d.ts'), `export const solids = () => 'anvil/anvil.hitscan3d'`)
+  const child = (await load(boot(structuredClone(forgeTop), { scenemanager }), many)).get('forge')!
+  expect(modsOf<() => string>(child.world, 'hitscan3d', 'solids').map(f => f())).toEqual(['bellows/bellows.hitscan3d', 'anvil/anvil.hitscan3d'])
+  // A single name is a list of one, and an entry the scene does not give is none.
+  expect(modsOf<() => string>(child.world, 'anvil', 'heat').map(f => f())).toEqual(['bellows/bellows.anvil'])
+  expect(modsOf(child.world, 'anvil', 'none')).toEqual([])
+  expect(() => mod(child.world, 'hitscan3d', 'solids')).toThrow('hitscan3d\'s solids names bellows, anvil, and hitscan3d takes it from one plugin: name one')
+  const at = (plugins: string[]): Scene => ({ plugins, world: { shipped: { plugins: ['bellows', 'anvil'] }, hitscan3d: { mods: { solids: ['bellows', 'terrain3d'] } } }, prefabs: {}, actors: [] })
+  expect(() => provided(at(['shipped', 'hitscan3d']), 'hitscan3d', 'solids')).toThrow('hitscan3d\'s solids is terrain3d\'s, which this scene does not list')
+  expect(() => ahead(at(['shipped', 'hitscan3d', 'terrain3d']), 'hitscan3d', 'solids')).toThrow('hitscan3d is listed before terrain3d, whose solids it reads that frame')
+  expect(() => ahead(at(['shipped', 'terrain3d', 'hitscan3d']), 'hitscan3d', 'solids')).not.toThrow()
+})
+
 test('a mod of the game\'s that does not export its function throws naming its file, and a world with no home cannot find one', async () => {
   const bad = forgeDir({ anvil: { mods: { cool: 'bellows' } } })
   await expect(load(boot(structuredClone(forgeTop), { scenemanager }), bad)).rejects.toThrow(`${bad}plugins/bellows/bellows.anvil.ts does not export cool`)
@@ -272,6 +288,44 @@ test('a child\'s world.scenemanager.actors is its actors entries, its file\'s an
 test('an actorsFile that is not a .actors.json, or not a list, is refused', async () => {
   await expect(vaultOf('vault-a.json', [])()).rejects.toThrow('the scene names vault-a.json as its actorsFile, not a .actors.json')
   await expect(vaultOf('vault-b.actors.json', { is: 'coin' })()).rejects.toThrow('vault-b.actors.json is not a list of actors entries')
+})
+
+// A level that extends a partial, as levels that share a land write their plugins' numbers, prefabs
+// and the actors they all have once: the partial's world and prefabs under the level's, key by key,
+// and the partial's actors before the level's.
+test('a scene that extends a partial takes its world and prefabs under its own, key by key, and its actors first', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'scenemanager-partial-'))
+  try {
+    const partial = {
+      world: { seed: 7, physics: { gravity: [0, -9.8, 0], substeps: 4 }, level: 'none' },
+      prefabs: { engine: { dt: DT }, scenemanager: { out: {} }, crop: { kind: 'wheat', grow: 3 } },
+      actors: [{ is: 'scenemanager' }, { is: 'crop', at: [0, 0] }],
+    }
+    const level = {
+      extends: 'land.partial_scene.json',
+      plugins: ['scenemanager'],
+      world: { physics: { substeps: 8 }, level: 'sowing' },
+      prefabs: { crop: { grow: 5 } },
+      actors: [{ is: 'crop', at: [4, 2], kind: 'barley' }],
+    }
+    writeFileSync(join(d, 'land.partial_scene.json'), JSON.stringify(partial))
+    writeFileSync(join(d, 'sowing.scene.json'), JSON.stringify(level))
+    writeFileSync(join(d, 'sowing.sim.ts'), `
+import { scenemanager } from ${JSON.stringify(new URL('../../plugins/scenemanager/scenemanager.sim.ts', import.meta.url).pathname)}
+import file from './sowing.scene.json' with { type: 'json' }
+export const sim = { scenemanager, crop: {} }
+export const scene = file
+`)
+    const manager: Scene = { ...structuredClone(top), prefabs: { ...structuredClone(top.prefabs), scenemanager: { scenes: { sowing: { file: 'sowing.scene.json', suspend: false } }, dt: DT, entry: 'sowing', port: 0 } } }
+    const sowing = (await load(boot(manager, { scenemanager }), pathToFileURL(d + '/').href)).get('sowing')!
+    expect(sowing.world).toMatchObject({ seed: 7, physics: { gravity: [0, -9.8, 0], substeps: 8 }, level: 'sowing' })
+    expect(sowing.rows.filter(r => r.kind === 'crop').map(r => r.data)).toEqual([
+      { kind: 'wheat', grow: 5, at: [0, 0] },
+      { kind: 'barley', grow: 5, at: [4, 2] },
+    ])
+  } finally {
+    rmSync(d, { recursive: true })
+  }
 })
 
 // The addon carries no envelopes itself: the transport is the wire `link` is handed. So it calls

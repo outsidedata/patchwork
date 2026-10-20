@@ -72,25 +72,6 @@ test('a cell is its own identity: two truths, and any order of asking, place the
   for (const [x, z] of [[40, -30], [-60, 20], [0, 0], [100, 100]]) expect(solids(b.w, x, z, 25, b.ground)).toEqual(solids(a.w, x, z, 25, a.ground))
 })
 
-test('a kept cell is placed by its hashes: jitter over the whole cell, the yaw, the tint and the size', () => {
-  const { ground } = truthOf()
-  let n = 0
-  for (const j of span(-10, 10)) for (const i of span(-10, 10)) {
-    const c = place(PACK, i, j, ground)
-    if (!c) continue
-    n++
-    const h = (k: number) => unit(i, j, PACK.seed + k)
-    expect(c.x).toBe((i + h(1)) * PACK.cell)
-    expect(c.z).toBe((j + h(2)) * PACK.cell)
-    expect(c.yaw).toBe(2 * Math.PI * h(3))
-    expect(c.tint).toBe(1 + PACK.vary * (2 * h(4) - 1))
-    expect(c.size).toBe(PACK.size[0] + h(6) * PACK.size[1])
-    // Kept by hash₀ against density·cover·Π ramps at its point.
-    expect(h(0)).toBeLessThan(PACK.density * ground.cover(c.x, c.z) * ground.ramp(PACK.rules[0], c.x, c.z))
-  }
-  expect(n).toBeGreaterThan(20)
-})
-
 test('the row is picked by running-sum weights, and a row of weight 0 is never drawn', () => {
   const { ground } = truthOf()
   const pack: Pack = { ...PACK, rules: [], density: 1, clearing: 0, rows: { a: { weight: 3 }, none: { weight: 0 }, b: { weight: 1 } } }

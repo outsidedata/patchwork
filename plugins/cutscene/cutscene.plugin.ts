@@ -20,10 +20,9 @@
 // makes the camera from its prefab and would put it back there over a shot placed before it; so a
 // seat that arrives during a shot draws the shot from its first frame. It is listed before
 // chasecamera3d, whose tick comes after it and places the camera on the frame this lets it go, so no
-// frame is left drawn from the shot's last pose; after `player` when the scene lists one, whose tick
-// swaps the rows it predicts into the frame's, so a shot follows the member as it is drawn; and before
-// `ui`, whose `afterTick` draws what this shows in its own. Listed otherwise, its tick throws, and it
-// throws when it has a shot to place and the scene lists no render3d, or gives it no camera.
+// frame is left drawn from the shot's last pose; and before `ui`, whose `afterTick` draws what this
+// shows in its own. Listed otherwise, its tick throws, and it throws when it has a shot to place and
+// the scene lists no render3d, or gives it no camera.
 //
 // The panels, drawn in its `afterTick` through `ui.show` while the scene runs and not before it
 // starts or once it is done:
@@ -42,6 +41,12 @@
 // frame, so it finds the ground as the frame before left it wherever the mod's plugin is listed, and
 // asks no order of it; a scene that names a `land` whose plugin it does not list throws (`provided`).
 //
+// Preparing. While the scene runs, the row's `prepare` (a `prepare` cue's ground point) is handed to
+// the land the `land` mod gives, `prepare(x, z)`, once for each point, so the land is made ready where
+// the next cut lands (terrain3d's Prepared places). When the scene stops running, done or skipped, the
+// land's place is let go, `unprepare()`, if it is still the one this asked for. A land without
+// `prepare` makes nothing ready, and the cue does nothing on the page.
+//
 // `eye()` is `{ pos, dir }`: where render3d's camera stands and its world −z. It throws before the
 // first tick. `close` gives the claim back, as `done` would.
 import type * as THREE from 'three'
@@ -50,23 +55,50 @@ import type { Plugins } from '#engine/browser.ts'
 import { mod, provided } from '#addons/scenemanager/scenemanager.addon.ts'
 import { level, pose, shaken, type Height, type Numbers } from './cutscene.sim.ts'
 
-// The `land` mod: the ground as this page has it, or undefined while there is none yet.
-export type Land = (plugins: Plugins) => { height(x: number, z: number): number } | undefined
+// The `land` mod: the ground as this page has it, or undefined while there is none yet; with
+// `prepare`, `prepared` and `unprepare` when the land can be made ready ahead of a cut (Preparing).
+export type Land = (plugins: Plugins) => {
+  height(x: number, z: number): number
+  prepare?(x: number, z: number): void; prepared?(): number[] | undefined; unprepare?(): void
+} | undefined
+
+// The ground the scene's `land` mod gives this page, or undefined with none named or none yet.
+function landOf(plugins: Plugins) {
+  const land = mod<Land>(plugins.wire.scene.world!, 'cutscene', 'land')
+  if (!land) return undefined
+  provided(plugins.wire.scene, 'cutscene', 'land')
+  return land(plugins)
+}
 
 export function heightOf(plugins: Plugins): Height | undefined {
-  const land = mod<Land>(plugins.wire.scene.world!, 'cutscene', 'land')
-  if (!land) return () => 0
-  provided(plugins.wire.scene, 'cutscene', 'land')
-  const ground = land(plugins)
+  if (!mod<Land>(plugins.wire.scene.world!, 'cutscene', 'land')) return () => 0
+  const ground = landOf(plugins)
   return ground && ((x, z) => ground.height(x, z))
 }
 
-const BEFORE = ['render3d', 'player']
+const same = (a: number[] | undefined, b: number[] | undefined) => !!a && !!b && a[0] === b[0] && a[1] === b[1]
+
+const BEFORE = ['render3d']
 const AFTER = ['chasecamera3d', 'ui']
 
 export function cutscene() {
   let render3d: Plugins['render3d'] | undefined
   let taken: number | undefined // the fov the camera had when this took it; undefined while it holds none
+  let asked: number[] | undefined // the point the land was last asked to prepare (Preparing)
+
+  // The row's `prepare` handed to the land once, and the land's place let go when the scene stops.
+  const prepare = (plugins: Plugins, d: any) => {
+    if (d?.running && d.prepare && !same(d.prepare, asked)) {
+      const ground = landOf(plugins)
+      if (!ground) return
+      ground.prepare?.(d.prepare[0], d.prepare[1])
+      asked = d.prepare
+    } else if (!d?.running && asked) {
+      const ground = landOf(plugins)
+      if (same(ground?.prepared?.(), asked)) ground!.unprepare?.()
+      asked = undefined
+    }
+  }
 
   const letGo = () => {
     if (taken === undefined) return
@@ -94,6 +126,7 @@ export function cutscene() {
       for (const p of AFTER) if (order.includes(p) && order.indexOf(p) < at) throw new Error(`the cutscene is listed after ${p}`)
       render3d = plugins.render3d
       const d = plugins.wire.rows.find(r => r.kind === 'cutscene')?.data
+      prepare(plugins, d)
       if (!d?.running || !d.shot) return letGo()
       if (!render3d) throw new Error('the cutscene places render3d\'s camera, and the scene lists no render3d')
       const camera = render3d.camera as THREE.PerspectiveCamera | undefined

@@ -3,7 +3,7 @@
 // skeleton under a Z-up armature, and clips whose first key sits a frame in. The mixer at the row's
 // clip, the crossfade, the upper layer's share, pinning (a one-shot at bind, a loop at bind plus its
 // sway, a turn's yaw taken off), mirrored tracks, mesh roles per stance, a limp row, getting up,
-// `pose`, `model`, `socket`, the clips' checks, `close`, a rig of other roles on a row of other
+// `pose`, `model`, the clips' checks, `close`, a rig of other roles on a row of other
 // fields, the aim (its sign, its shares, and no turn piled on the frame before's) and props (hung
 // scale-free at their bone, following it standing and limp, going with the row).
 import { afterEach, beforeAll, expect, test, vi } from 'vitest'
@@ -504,19 +504,6 @@ test('pose draws the row\'s model in one clip alone at t, from the rest, the sam
   walked.frame()
   near(bone(a, 'Hips').position, v(0, 0, -95 - 5 * Math.sin(Math.PI * 0.4)))
   expect(() => walked.me.pose(9, 'dash', 0)).toThrow('anim has no model for row 9')
-})
-
-test('socket is the first object under the model whose name ends with the suffix, placed for the frame', () => {
-  const p = page({ rows: [{ clip: 'strike', clipT: 0.5, pos: [10, 0, 0] }] })
-  p.frame()
-  const hand = p.me.socket(2, 'RightHand')!
-  expect(hand.name).toBe('mixamorigRightHand')
-  expect(p.me.socket(2, 'Nothing')).toBeUndefined()
-  expect(p.me.socket(9, 'RightHand')).toBeUndefined()
-  const world = hand.getWorldPosition(new THREE.Vector3())
-  const fresh = new THREE.Vector3().setFromMatrixPosition(hand.matrixWorld)
-  near(fresh, world, 9)
-  expect(world.x).toBeGreaterThan(9)
 })
 
 test('the clips are checked against the rig: a length more than a frame from the table throws, a missing animation throws, an unlisted one is ignored', () => {

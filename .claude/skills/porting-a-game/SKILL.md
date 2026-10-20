@@ -1,6 +1,6 @@
 ---
 name: porting-a-game
-description: Use in core, or any clone of it, when bringing a game that exists elsewhere into core - porting, converting or remaking a plain canvas, JavaScript or HTML5 game, a game in another engine (Unity, Godot, Phaser, GameMaker), or a design on paper. It is the map from the old game's parts to core's homes and the order of work - its game loop and update function into kinds' `before`/`tick`/`after`, its globals into rows, definitions, `world` or the store, its constants into the scene file and `assets/<game>.json`, per-frame numbers into per-second ones, its key handlers into `player.client.ts`, its draw function into `<kind>.client.ts` and the `ui` plugin, its images and sounds into the loader catalogue and the audio ledger, its screens into scenes or screens the game puts up, its reset into spawning the cast again, its `Math.random` into `w.die()` with a seed. Also how the port is proven to play the same - tests beside each kind, a replay, the old game run headless in step with it, both played in Chrome.
+description: Use in core, or any clone of it, when bringing a game that exists elsewhere into core - porting, converting or remaking a plain canvas, JavaScript or HTML5 game, a game in another engine (Unity, Godot, Phaser, GameMaker), or a design on paper. It is the map from the old game's parts to core's homes and the order of work - its game loop and update function into kinds' `before`/`tick`/`after`, its globals into rows, definitions, `world` or the store, the thing its player controls (a paddle, a ship, a hero) and its score and lives into the seat's `player` row, its constants into the scene file and `assets/<game>.json`, per-frame numbers into per-second ones, its key handlers into `player.client.ts`, its draw function into `<kind>.client.ts` and the `ui` plugin, its images and sounds into the loader catalogue and the `audio` plugin (the seat's own sounds on its `player` row, the rest on the ledger), its screens into scenes or screens the game puts up, its reset into spawning the cast again, its `Math.random` into `w.die()` with a seed. Also how the port is proven to play the same - tests beside each kind, a replay, the old game run headless in step with it, both played in Chrome.
 ---
 
 # Porting a game
@@ -24,7 +24,7 @@ the same. What applies instead:
 
 - A game from nothing, or what each file `yarn new-game` writes is for: `starting-a-game`.
 - One kind's rule, look and numbers past what the map here says: `designing-a-kind`.
-- Keys, the mouse, a pad, rebinding, seats and prediction: `input-and-seats`.
+- Keys, the mouse, a pad, rebinding, seats and presses: `input-and-seats`.
 - A level's map, its walls and where things stand: `building-a-level`.
 - Images, sheets, models and fonts: `bringing-in-art`, and `making-game-assets` to make new ones.
 - How it looks, render2d or render3d, light and sky: `writing-the-look`.
@@ -83,19 +83,25 @@ carry over as they are. The step rate itself is `tuning-feel`'s: three `dt`s cha
 
 The old update becomes the rules of kinds: each statement goes in the `before`, `tick` or `after` of
 the kind whose state it changes. Each noun of the old state is a kind (`designing-a-kind`): the
-paddle, the ball, a brick, the round, the game-over screen. The whole update ported into one kind, a
-`game` row with every field on it, puts every system on one kind; each system is a kind of its own.
+paddle (the seat's `player` row, below), the ball, a brick, the game-over screen. The whole update
+ported into one kind, a `game` row with every field on it, puts every system on one kind; each system
+is a kind of its own.
 A kind is never named after the game (`<game>.sim.ts` is the manager's), a scene (`<scene>.sim.ts` is
 that scene's sim) or a plugin (the page loads a file named after a plugin as that plugin row's look).
-So the old game's `player` object becomes the seat's thing under a name of its own, the `paddle`:
-`player` is a plugin and the kind of the seat's own row, and `grid`, `stats`, `store` and `ui`, among
-the names in `plugins/`, are taken the same way.
+The thing the person plays, the old game's `player` object, its paddle, ship or hero, is the seat's
+`player` row (`designing-a-seat`): its rule is `player.sim.ts`, its look `player.client.ts`, its
+fixed numbers the `player` definition, and everything of it that changes, its place and the score and
+lives of the one who plays it, fields of the `player` prefab. It is never a kind of its own that the
+`player` row spawns. Every other noun takes a
+name of its own: `grid`, `stats`, `store` and `ui`, among the names in `plugins/`, are taken, so an
+old `ui` or `grid` object is ported under another.
 
 Keep the old order. A step runs every row's `before`, then every `tick`, then every `after`
 (`engine/engine.ts`), each pass over the rows in the order they stand: the scene's `actors`, then its
-`actorsFile`'s, then the rows spawned, oldest first. The seat's own thing is spawned by its `player`
-row, so it stands after every row the scene placed. The old Breakout moved the paddle and then moved
-the ball against where the paddle now was. Ported with the paddle in `tick` and the ball also in
+`actorsFile`'s, then the rows spawned, oldest first. The seat's own thing is its `player` row, spawned
+when the seat joins, so it stands after every row the scene placed. The old Breakout moved the paddle
+and then moved the ball against where the paddle now was. Ported with the paddle (the `player` row)
+in `tick` and the ball also in
 `tick`, the ball met the paddle where the last step had left it: the old game and the port ran the
 same for 306 frames, and at frame 307 the ball left the paddle at another angle. With the ball in
 `after` they ran the same through every life, a game over, a play again and a second game. What the
@@ -119,13 +125,18 @@ from outside the program.
 Each piece of the old state goes in one of these:
 
 - What changes while it plays is a field of a row. The old `x`, `y`, `dx`, `dy` are the ball's
-  `pos` and `vel`. `paddleX` is the paddle's `pos`. `bricks[i].alive` is no field at all: each brick
-  is a row, and a brick knocked out is `w.end`. `score` and `lives` are the fields of the kind they
-  belong to, a `round`, and the old `state` string is the game-over screen's own row, an `ending`
-  with `ended` (Screens, below); never fields of the `player` row, which is the seat's handle and
-  holds none of the game's state.
+  `pos` and `vel`. `paddleX` is the `player` row's `pos`. `bricks[i].alive` is no field at all: each
+  brick is a row, and a brick knocked out is `w.end`. `score` and `lives` are the seat's own, so they
+  are fields of its `player` row beside its `pos`, which a page running the scene ahead draws on the
+  frame after the press; a value only its own seat may read is listed in the scene's `security`
+  block (`designing-a-seat`). What the seats share and no seat owns, a wave count or a round's clock,
+  is a kind of its own with one `actors` entry. The old `state` string is the game-over screen's own
+  row, an `ending` with `ended` (Screens, below).
   Its starting value is the prefab's, `prefabs.<kind>` in the scene file, which holds what changes
   and nothing else.
+- What only this page feels and no other seat needs, the old game's screen shake, a flash on a hit, a
+  camera that eases after the paddle, is local: the look keeps it in its module and works it out from
+  the `player` row's fields as they change. It is never a row and never sent.
 - What never changes is a kind's definition, in `assets/<game>.json`, read with `def(w, me.kind)`
   in a rule and `def(plugins.wire, row.kind)` in a look (`plugins/loader/loader.sim.ts`), or a field
   of the scene's `world`: the scene's own (its `seed`) or a plugin's (`world.ui`).
@@ -159,12 +170,12 @@ Each old constant goes in one place, by the prime directive's first question:
   whose fixed numbers differ from another's is another kind, two kinds with one rule handed out from
   a game's own plugin (`designing-a-kind`). Then every rule that named the one kind names each of
   them, through a list of the kinds on a definition and never in code: the kinds the ball breaks,
-  the kinds the round counts down to a win, the kinds that start over. The old Breakout's bricks are
+  the kinds a win counts down, the kinds that start over. The old Breakout's bricks are
   one colour and one worth, so its port has one `brick` kind, named as it is below.
 
 Convert the anchor as each number moves. A canvas rectangle is drawn from its top-left corner; a
-row's `pos` in the game `yarn new-game` writes is the thing's middle, as its `body.client.ts` draws
-it. The old `paddleX` is the paddle's `pos[0]` less half its width, and a brick at `BRICK_LEFT + c *
+row's `pos` in the game `yarn new-game` writes is the thing's middle, as its look draws it. The old
+`paddleX` is the `player` row's `pos[0]` less half its width, and a brick at `BRICK_LEFT + c *
 (BRICK_W + BRICK_GAP)` stands at that plus half `BRICK_W`.
 
 ### Input
@@ -172,9 +183,12 @@ it. The old `paddleX` is the paddle's `pos[0]` less half its width, and a brick 
 The old `keydown` and `keyup` listeners become the table `player.client.ts` hands the player plugin
 in its `setup` (`plugins/player/player.plugin.ts`): `bind` on keys, as `yarn new-game` writes it, or
 `control` on named actions when the person wants the player to rebind keys (`input-and-seats`). Left
-and right arrows are an `axis`, `send: v => ['move', v]`. Each message names an act on the seat's
-`player` row, which hands it on with `w.call` to what the seat plays; the act there checks its
-arguments (`move` takes -1, 0 or 1 and nothing else). A key the old game read in one state only, Enter
+and right arrows are an `axis`, `send: v => ['move', v]`, bound only for the row that is `mine`,
+since the look runs for every seat's `player` row. Each message names an act on the seat's `player`
+row, which is the paddle and moves itself; the act checks its arguments (`move` takes -1, 0 or 1 and
+nothing else). An act another kind uses to change the `player` row, a brick's worth added to its
+`score` or a life taken by `lose`, does nothing when a seat sent it (`seat >= 0`), or a seat sends
+itself points (`designing-a-seat`, Acts a seat can send). A key the old game read in one state only, Enter
 on its game-over screen, is no key of the table: it presses the focused button of the screen the
 game puts up (below), and the button calls `plugins.player.again()`, which sends `again` at the
 seat's `player` row as any call of a name the player plugin has no function of its own for does.
@@ -183,7 +197,8 @@ seat's `player` row as any call of a name the player plugin has no function of i
 
 The old draw function cleared the canvas and drew everything every frame. A kind's look,
 `<kind>.client.ts`, makes its drawing once in `setup`, holds it in a variable at the top of its file
-(the page imports the file once per row, `<kind>.client.ts?row=<id>`, `engine/browser.ts`), moves it
+(the page imports the file once per row of each client, `<kind>.client.ts?row=<id>&client=<c>`,
+`engine/browser.ts`), moves it
 in `tick` from the row, and takes it off in `remove`. Its sizes and colours are its definition's;
 `fillRect(x, y, w, h)` with a colour constant becomes a `Graphics` rect of the definition's `size`
 and `colour` centred on `pos`. Which renderer, and anything about light, sky or background, is
@@ -193,16 +208,19 @@ Text over the game, the score and lives, and every overlay go on the `ui` plugin
 (`plugins/ui/ui.plugin.ts`, `building-the-hud`): shown with `ui.show` in the look's `tick` every
 frame, never in `setup`, on a panel `world.ui` places, in a style `world.ui.styles` names, at a place
 and with an anchor from the definition. `textAlign = 'right'` is an anchor of `[1, 0]` on the
-definition; a label (`'Score: '`) is a word of the definition.
+definition; a label (`'Score: '`) is a word of the definition. The seat's own score and lives are
+shown by `player.client.ts` for the row that is `mine`, off that row's fields, so each page shows its
+own seat's and shows it on the frame after the press.
 
 ### Files and sounds
 
 Every image, sheet, font and level the old game loaded with `new Image()`, `fetch` or an engine's
 loader is an entry of the scene's catalogue, `world.loader.assets`, drawn through `plugins.loader` or
 a plugin's table (`bringing-in-art`). Every sound it played with `new Audio()` or an engine's audio
-call is a cue the rule raises on the `audio` ledger, `sound(w, cue, at, from)` from
-`plugins/audio/audio.sim.ts`, its kind named in `world.player.ledgers` (`sound`). No look plays a
-sound or fetches a file.
+call is a cue the rule raises with `sound(w, cue, at, from)` from `plugins/audio/audio.sim.ts`
+(`sound`). A sound of the seat's thing, the paddle's knock, is raised `from` its `player` row, rides
+that row's `voiced` list and is heard on the frame after the key; a sound of any other row, a brick
+breaking, goes on the `audio` ledger. No look plays a sound or fetches a file.
 
 ### Screens, and starting over
 
@@ -211,11 +229,12 @@ A screen of the old game that is a place of its own, a title, a menu, the next l
 score, a pause, is a screen the game puts up: a kind of its own with one `actors` entry, whose look
 draws it on a `ui` modal while its row says so and takes it down the frame the row says otherwise
 (`building-the-hud`), as the `pause` kind there is. The port's is `ending`: its prefab
-`{ "ended": "" }`, its act `end(how)`, which the round calls with `'lost'` on the last life and
-`'won'` on the last brick, and `ending.client.ts`, which shows the definition's words for `ended` and
-a button while `ended` is set. Every rule that must stop honours it, as the paddle's and the ball's return while
-`w.find('ending').data.ended`, which is what the old `if (state !== 'play') return` was. The round's
-own look draws the score and the lives on the HUD and nothing else. A game-over scene of its own
+`{ "ended": "" }`, its act `end(how)`, which the `player` row's `lose` calls with `'lost'` on the last
+life and the brick's `hit` with `'won'` on the last brick, and `ending.client.ts`, which shows the
+definition's words for `ended` and a button while `ended` is set. Every rule that must stop honours
+it, as the `player` row's and the ball's return while `w.find('ending').data.ended`, which is what the
+old `if (state !== 'play') return` was. `player.client.ts` draws the score and the lives on the HUD
+for the row that is `mine`. A game-over scene of its own
 lists no `player`, as a menu lists none, and the args of `go` reach a scene only as `arrive` on its
 `player` row, which such a scene drops (`connection` in `addons/scenemanager/scenemanager.addon.ts`).
 Showing the score there needs its `enter` act handed the `go` args, which core lacks and which is
@@ -230,11 +249,13 @@ its `is` (`child` in `addons/scenemanager/scenemanager.addon.ts`), and `w.spawn`
 is handed over the prefab (`engine/engine.ts`), so the act spawns the entry's `is` with a copy of the
 rest of it, `for (const { is, ...entry } of w.world.scenemanager.actors) if (cast.includes(is))
 w.spawn(is, structuredClone(entry))`; handed the whole entry, every row it made carried an `is` field.
-So the bricks stand where the scene put them and the score, the lives and the screen are their
-prefabs'. The kinds that start over are a list on the definition of the kind whose act it is
-(`"cast": ["brick", "ball", "round", "ending"]` on `ending`'s). The seat's own thing is the `player`
-row's: its `again` calls the screen's, ends the paddle and clears its id, and its `before` spawns a new
-one on its start.
+So the bricks stand where the scene put them and the screen is its prefab's. The kinds that start
+over are a list on the definition of the kind whose act it is (`"cast": ["brick", "ball", "ending"]`
+on `ending`'s). The seat's thing is its `player` row, which is never ended for a new game: the seat
+keeps its row and its id, so a page running the scene ahead goes on predicting it
+(`designing-a-seat`). Its `again`, which does nothing until the screen's `ended` is set, calls the
+screen's and writes its own `score`, `lives` and `stood` back to the prefab's, and its `before` stands
+it on its start again.
 
 ### Randomness
 
@@ -246,6 +267,11 @@ numbers in the same order, which is what lets the two be run side by side (How i
 `Math.random` left in a rule rolls numbers no replay gets back: the recorder rebuilt the port's first
 step with another serve the moment one was planted. One roll per thing per step that must not move the
 scene's die is `seeded` over the row's id and a step counter on the row (`designing-a-kind`).
+
+Every `Math.sin`, `cos`, `atan2`, `hypot`, `exp`, `pow`, `**` and the rest of `Math`'s functions that
+engines round differently becomes the same call on `plugins/math`, `math.sin(a)` and `math.pow(a, b)`,
+in the rules; three's vectors, quaternions and matrices may stay, and nothing else of three's
+(`designing-a-kind`, Maths in a rule). The looks keep `Math`.
 
 A seed is fixed in the scene file, so every run deals the same rolls: the port served the same
 angles on every load, in `index.html` and against its server alike, where the old game served
@@ -268,9 +294,12 @@ Breakout was the one game ported for this skill. An engine's object, node or spr
 and each instance a row. Its per-frame update is `tick`, a late update that runs after every update is
 `after`, a fixed-step update is the step. Its prefab is split: the fields that change are core's
 prefab, the fields that never change are the kind's definition. A scene is a scene. A singleton
-manager is split by what it holds, one kind with one `actors` entry per system (the score, the lives,
-the wave), never one row holding them all. A data asset of fixed numbers for one type of thing, a
-stats sheet, is that kind's definition; only a big table, a level or a cast, is a data file of its
+manager is split by what it holds: what it kept of the one who plays, their score, lives and ammo, are
+fields of the seat's `player` row, which is the thing they play, and what every seat shares is one
+kind with one `actors` entry per system (the wave, the round's clock), never one row holding them all.
+A player controller that drives a separate pawn or character is one `player` row: the controller's
+input acts and the pawn's fields are the same row (`designing-a-seat`). A data asset of fixed numbers
+for one type of thing, a stats sheet, is that kind's definition; only a big table, a level or a cast, is a data file of its
 own in `assets/`, a catalogue entry. Instantiate and destroy are `w.spawn` and `w.end`; a message,
 signal or event sent to another object is a call of one of its acts with `w.call`. A coroutine or
 timer is a field counted down on the row. A static or global variable is never ported as one. A
@@ -293,32 +322,43 @@ play again.
    `games/<name>/main.scene.json`'s `prefabs.engine` (480 by 320 here) and place slot 0's `start`
    where the old game put the player's thing, converted to its middle (`[240, 301]`).
 3. The kinds. Name each from the old state, none after the game, a scene or a plugin. The seat's
-   thing takes the place of the generated `body`: delete `body.sim.ts` and `body.client.ts`, write
-   `paddle.sim.ts` keeping the body's `before`, which ends the row once no `player` row names it (how
-   a seat that leaves, or a game that starts over, takes its paddle away), give `prefabs.paddle` the
-   fields that change (`{ "pos": [0, 0], "move": 0 }`), change `player.sim.ts` to spawn a `paddle` on
-   its start and keep its id (`prefabs.player`: `{ "seat": 0, "paddle": 0 }`), and list every kind in
-   `main.sim.ts`'s `sim`. An `actors` entry of a kind the sim leaves out throws `no code for kind
-   <kind>` at boot; a spawned row of one, as the paddle is, throws a TypeError at its first step; a
-   kind with no prefab throws `no prefab for <kind>`. The generated `<name>.sim.test.ts` checks the
-   body, and changes with it.
+   thing is the `player` row, so the generated `body` is folded into it: its fields go onto the
+   `player` prefab with the paddle's own (`prefabs.player`: `{ "seat": 0, "stood": false, "pos": [0,
+   0], "move": 0, "score": 0, "lives": 3 }`), its rule into `player.sim.ts`, whose `before` stands the
+   row once on its slot's `start` and marks it `stood` in place of spawning a row, its look into
+   `player.client.ts`, which draws the paddle for every row and binds keys for the row that is
+   `mine`, and its definition into the `player` definition; `body.sim.ts`, `body.client.ts`, the
+   `body` prefab and definition and `body` in `main.sim.ts`'s `sim` are deleted. A seat that leaves
+   takes its paddle with it, since its `player` row ends. List every kind in `main.sim.ts`'s `sim`. An
+   `actors` entry of a kind the sim leaves out throws `no code for kind <kind>` at boot; a spawned
+   row of one throws a TypeError at its first step; a kind with no prefab throws `no prefab for
+   <kind>`. The generated `<name>.sim.test.ts` checks the body, and changes with it to the `player`
+   row.
 4. The numbers. Every definition in `assets/<name>.json`, per-frame rates turned per second; the
    prefabs; `world.seed`; the level's entries in `assets/main.actors.json`, named by the scene's
-   top-level `"actorsFile"`; the global kinds' entries (`{ "is": "ball" }`, `{ "is": "round" }`,
-   `{ "is": "ending" }`) in the scene's `actors`.
-5. The rules, kind by kind, from the old update in its order across the passes: `paddle.sim.ts`
-   (`tick`, held inside its `bounds`), `ball.sim.ts` (`after`: serve, walls, paddle, bricks, lost),
-   the game's own `plugins/touch/touch.sim.ts` (where the ball meets a paddle or a brick),
-   `brick.sim.ts` (`hit`: end, hand the round its worth), `round.sim.ts` (`score`, `lose`),
-   `ending.sim.ts` (`end`, `again`). The old `if (state !== 'play') return` is each rule's own check
-   of the screen's row. A header comment in each file says what its fields mean and what it does.
-6. Input: `player.client.ts` (`bind`, an `axis`), the `player` row's acts (`move`, `again`).
-7. Looks: `paddle.client.ts`, `ball.client.ts`, `brick.client.ts` on render2d's stage;
-   `round.client.ts`, the score and the lives on the HUD; the panels, keys and styles in `world.ui`,
-   `ui` in the scene's `plugins`.
+   top-level `"actorsFile"`; the global kinds' entries (`{ "is": "ball" }`, `{ "is": "ending" }`) in
+   the scene's `actors`; `world.predict`, so `client.html` runs the scene ahead (`going-multiplayer`,
+   A scene run ahead).
+5. The rules, kind by kind, from the old update in its order across the passes: `player.sim.ts`
+   (`tick`, held inside its `bounds`; `score(worth)` and `lose()`, which do nothing when a seat sent
+   them, `lose` ending the game lost on the last life), `ball.sim.ts` (`after`: serve, walls, the
+   `player` rows, keeping in `by` the id of the one it last came off, bricks, lost, which calls `lose`
+   on every `player` row, the one under `seats: 1`),
+   the game's own `plugins/touch/touch.sim.ts` (where the ball meets a `player` row or a brick),
+   `brick.sim.ts` (`hit(by)`: end, hand the `player` row `by` names its worth through `score`, and on
+   the last of the kinds a win counts down end the game won), `ending.sim.ts` (`end`, `again`). The
+   old `if (state !== 'play') return` is each rule's own check of the screen's row. A header comment
+   in each file says what its fields mean and what it does.
+6. Input: `player.client.ts` (`bind`, an `axis`, for the row that is `mine`), the `player` row's acts
+   (`move`, `again`).
+7. Looks: `player.client.ts` (the paddle, for every row; the score and the lives on the HUD, for the
+   row that is `mine`), `ball.client.ts`, `brick.client.ts` on render2d's stage; the panels, keys and
+   styles in `world.ui`, `ui` in the scene's `plugins`.
 8. Screens and starting over: `ending.client.ts` showing the modal while `ended` is set, its button
-   shown first and so focused, pressed by Enter, `again` spawning the cast again (above).
-9. Files and sounds into the catalogue and the ledger (the old Breakout had neither).
+   shown first and so focused, pressed by Enter, `again` spawning the cast again and the `player` row
+   standing again on its start (above).
+9. Files and sounds into the catalogue, a sound of the paddle raised `from` its `player` row and every
+   other on the ledger (the old Breakout had neither).
 10. Anything the old game does that no plugin does: built in its home first, general, set from the
     scene file, tested and used by every game it belongs in, never worked around in the port
     (`building-a-plugin`).
@@ -334,11 +374,15 @@ play again.
 - A per-frame number left per frame: a speed of 4 is 4 pixels a second under `dt`.
 - A top-left corner taken for the middle: everything stands half a size off and the collisions with
   it.
-- The whole update ported into one kind, or score and lives put on the `player` row or the paddle.
-  Each system is its own kind, and the `player` row is the seat's handle, not a store of the game's
-  state.
-- The old game's `player`, `ui` or `store` object ported under its own name. Those are plugins, and
-  `player` the seat's row too: the seat's thing takes a name of its own.
+- The whole update ported into one kind, a `game` row with every field on it. Each system is its own
+  kind.
+- The seat's thing ported as a kind of its own, a `paddle`, `ship` or `hero` the `player` row spawns
+  and forwards its acts to, or its score and lives put on a `round` or a `tally` row. The thing and
+  all its own state are the `player` row (`designing-a-seat`).
+- The old game's `ui`, `grid` or `store` object ported under its own name. Those are plugins: it takes
+  a name of its own. The old `player` object is the `player` row.
+- A rule-only act on the `player` row, `score` or `lose`, that a seat may send at its own row. It does
+  nothing when a seat sent it.
 - A rule reading another kind's numbers off that kind's definition to test a touch. The test is a
   function of a game's own plugin, handed both rows.
 - The game-over screen drawn by the look of the kind that ends the game. A screen is a kind of its
@@ -348,8 +392,7 @@ play again.
 - The old reset ported as a reload or a fresh boot. A scene is never booted again; the act spawns the
   cast again from `w.world.scenemanager.actors`, each entry's `is` taken off before the rest is
   handed to `w.spawn`.
-- `Math.random` kept in a rule. The replay fails at the first roll, and a rule the page runs ahead
-  draws numbers the server never rolled.
+- `Math.random` kept in a rule. The replay fails at the first roll.
 - A fixed seed taken for the old game's chance: every run deals the same rolls.
 - Old code copied as it is because it works: a global at the top of a file, a number in a draw call,
   a listener added to a page. Each is read for what it does and built in its home.
@@ -358,31 +401,39 @@ play again.
 
 Each test sits beside the file it tests, is a `.test.ts` run in node, boots the game's manager as its
 page does, and reads every number it checks off the scene file, the actors file and the definitions
-(`proving-a-game`). Run each with `yarn vitest run games/<name>/<file>`. What the port's tests were:
+(`proving-a-game`). Run each with `yarn vitest run games/<name>/<file>`. The port's tests, the
+paddle being the `player` row:
 
 - `<kind>.sim.test.ts` beside each rule. A seat joins with `connection(manager(truth), …)` and is
-  steered by `seat.take` of `move` at its `player` row, as its keys would. `paddle.sim.test.ts`: speed,
-  the bounds, a bad way refused, still once the game is over, gone when its seat leaves.
-  `ball.sim.test.ts`: the serve at the angle `seeded(world.seed)`'s first roll gives, the walls, the
-  angle off the paddle, a brick, a life lost and the serve with the next roll, still once over.
-  `brick.sim.test.ts`: every brick where its entry stands it, `hit` refused from a seat, the first
-  brick reached. `round.sim.test.ts`: a life a ball lost, the game ended lost on the last life and won
-  on the last brick with every brick's worth, a seat refused the round's acts. `ending.sim.test.ts`:
-  `again` ignored while playing and, once over, every brick's row the data of its entry with no `is`,
-  the round and the screen their prefabs, the paddle on its start and the ball served with the next
-  roll; a seat refused the screen's acts. It failed with the whole entry handed to `w.spawn`.
+  steered by `seat.take` of `move` at its `player` row, as its keys would. `player.sim.test.ts`:
+  standing on its start, speed, the bounds, a bad way refused, still once the game is over, gone when
+  its seat leaves; a life a ball lost, the game ended lost on the last life; `score` and `lose` sent by
+  the seat at its own row refused and changing nothing; `again` ignored while playing and, once over,
+  the row on its start again with the prefab's score and lives and the same id. `ball.sim.test.ts`: the
+  serve at the angle `seeded(world.seed)`'s first roll gives, the walls, the angle off the paddle, a
+  brick, a life lost and the serve with the next roll, still once over. `brick.sim.test.ts`: every
+  brick where its entry stands it, `hit` refused from a seat, the first brick reached and its worth on
+  the `player` row's `score`, the game ended won on the last brick with every brick's worth.
+  `ending.sim.test.ts`: `again` ignored while playing and, once over, every brick's row the data of its
+  entry with no `is`, the screen its prefab and the ball served with the next roll; a seat refused the
+  screen's acts. It failed with the whole entry handed to `w.spawn`.
+- `<name>.predict.test.ts` (`designing-a-seat`, The proof): two pages run ahead on the game's server
+  over loopbacks, one on a clean wire and one on each of the network panel's bad ones; an arrow sent
+  every frame, and on every frame the page's own `player` row
+  (`possessed(page.client.plugins.wire.rows)`) has taken every press sent up to the frame before.
 - `plugins/touch/touch.sim.test.ts` beside the game's own plugin: the manager booted with the game's
   folder as base, `new URL('../../', import.meta.url).href`, and a page on it, each function asked
   with the page's wire and the rows the seat was sent, at the edges where its answer turns. Its
   functions take a rule's `W` or a page's `Wire`, as `def` does (`plugins/loader/loader.sim.ts`), so
   the test asks them with the wire rather than a stand-in for the engine's world.
-- `<name>.sim.test.ts`, the generated one, changed to the seat's new thing.
+- `<name>.sim.test.ts`, the generated one, changed from the `body` to the `player` row.
 - `main.sim.test.ts` beside `main.sim.ts`: the game under the recorder
   (`addons/recorder/recorder.addon.ts`), a page on its seat playing a thousand steps through the
   player plugin, then steps rebuilt with `seek`, each holding the rows it held when played. It failed
   at step 1 with a `Math.random` planted in the serve.
-- `player.client.test.ts`, `<kind>.client.test.ts` for each look, `round.client.test.ts` for the
-  HUD and `ending.client.test.ts` for the game-over screen, on a page made as `index.html` makes it,
+- `player.client.test.ts` for the paddle on every seat's page and the HUD on its own seat's alone,
+  `<kind>.client.test.ts` for each other look and `ending.client.test.ts` for the game-over screen,
+  on a page made as `index.html` makes it,
   `view(link(loopback(accept(manager(truth)))), file, here, mount)`, with the page's listeners kept by
   `vi.stubGlobal` and keys handed to them with `keyCode` from the player plugin, capture listeners
   first; the UI handed a canvas stand-in in `mount` so it listens. They check one drawing per row of
@@ -398,8 +449,6 @@ What those tests met:
   step, since that is where the ball met it.
 - A test's steering that keeps the paddle under the ball returns it straight up and never reaches
   a side wall. It aims a quarter of the paddle off its middle.
-- On the page, a press runs ahead: the frame of the key, the drawn paddle holds `move` 1 and the
-  server's 0. Its drawn `pos` moves only as the page's clock steps, so the test reads `move`.
 - An arrow held through the game-over screen plays the paddle again on the keyboard's next repeat
   once the modal is gone, as the old game's held arrow kept its paddle moving: with no modal up the UI
   takes no key (`pressKey` in `plugins/ui/ui.plugin.ts`), and the player plugin holds a key on every
@@ -420,7 +469,7 @@ back a canvas whose context does nothing and keeps the key listeners; `requestAn
 the loop to be called once a frame; and `Math` is `Math` with `random` stood in by
 `seeded(world.seed)`. It boots the port with `boot`, `load` and `connection` and steers both from one
 pilot each frame: key events to the old listeners, `move` to the port's seat. The port's first step
-spawns the paddle and serves, which the old game did before its first frame, so the port's step k + 1
+stands the `player` row on its start and serves, which the old game did before its first frame, so the port's step k + 1
 is the old frame k. Every frame it compares the paddle's middle, the ball, the score, the lives, the
 state and the bricks left, and prints the first frame they differ. The Breakout ran 4640 frames
 through two wins, and 1372 through game over, play again and a second game over, every position
@@ -434,7 +483,8 @@ readout of the rows, and add a key of its own that turns on a pilot dispatching 
 their `code` on `window`, which the player plugin and the UI hear as a person's keys; nothing else
 reads it. good-webviews' `eval` does not wait on a promise: start a measurement in one call and read
 it in the next, as the old game's frame rate was counted. Then `<name>.server.ts` on node and a tab of
-`client.html`, which plays the same game against the server. Stop every server you started.
+`client.html`, which wraps its link in `predict` (the prime directive's The pages) and plays the same
+game against the server: the paddle moves on the frame after the arrow. Stop every server you started.
 
 ## Questions never asked
 
@@ -443,8 +493,10 @@ it in the next, as the old game's frame rate was counted. Then `<name>.server.ts
 - Can the old globals stay module-level variables? No: rows, definitions, `world` or the store.
 - Can the old per-frame speeds stay as they are? No: per second, multiplied by `dt`.
 - Can the old reset reboot the scene? No: an act spawns the cast again from its entries.
-- Can the old game's `player` object stay a kind named `player`? No: `player` is the plugin and the
-  seat's row; the seat's thing takes a name of its own.
+- Can the old game's `player` object, the paddle or the hero, be a kind of its own the `player` row
+  spawns? No: it is the `player` row, with its score and lives on it.
+- Can the score and lives go on a `round` row so the `player` row stays small? No: the seat's own
+  state is its `player` row's, which is the one row drawn on the frame after the key.
 - Can the ball read the paddle's size off the paddle's definition? No: the touch test is a game's own
   plugin, handed both rows.
 - Can `Math.random` stay because the old game used it? No: `w.die()` and a `world.seed`.

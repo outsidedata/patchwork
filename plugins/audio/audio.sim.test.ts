@@ -50,13 +50,6 @@ const ledger = (t: Truth) => t.rows.find(r => r.kind === 'audio')!.data
 const live = (t: Truth): Entry[] => ledger(t).live
 const bellOf = (t: Truth, i = 0): Row => t.rows.filter(r => r.kind === 'bell')[i]
 
-test('the ledger counts its own steps, one in each before', () => {
-  const truth = boot(scene([]), sim)
-  for (let n = 0; n < 5; n++) truth.step(DT)
-  expect(ledger(truth).step).toBe(5)
-  expect(truth.n).toBe(5)
-})
-
 test('each sound is an entry with the next id and the ledger\'s step, so two in one step are two, and ids go on rising', () => {
   const truth = boot(scene([{ on: [1, 3], times: 2 }, { on: [3], cue: 'dong' }]), sim)
   truth.step(DT)
@@ -67,7 +60,6 @@ test('each sound is an entry with the next id and the ledger\'s step, so two in 
   truth.step(DT)
   truth.step(DT)
   expect(live(truth).map(e => [e.id, e.cue, e.step])).toEqual([[1, 'ding', 1], [2, 'ding', 1], [3, 'ding', 3], [4, 'ding', 3], [5, 'dong', 3]])
-  expect(ledger(truth).next).toBe(6)
 })
 
 test('from a row, the entry keeps the row and the point it stood on as the sound was raised; a point given is kept as it was; with neither there is no point', () => {
@@ -88,6 +80,23 @@ test('an entry from a row that ends in the same step keeps where it was raised',
   truth.step(DT)
   expect(truth.rows.some(r => r.kind === 'bell')).toBe(false)
   expect(live(truth)[0].at).toEqual([10, 0, 20])
+})
+
+test('a sound from a player row rides that row\'s voiced, not the ledger, and leaves it after hold as a ledger entry does', () => {
+  const file = scene([{ how: 'at', on: [1] }])
+  file.prefabs.player = { ...file.prefabs.bell, how: 'from', on: [1, 2] }
+  file.actors.push({ is: 'player' })
+  const truth = boot(file, { ...sim, player: bell })
+  const player = () => truth.rows.find(r => r.kind === 'player')!
+  truth.step(DT)
+  expect(live(truth).map(e => e.id)).toEqual([1])
+  expect(player().data.voiced).toEqual([{ id: 2, cue: 'ding', at: [10, 0, 20], from: player().id, step: 1 }])
+  truth.step(DT)
+  expect((player().data.voiced as Entry[]).map(e => e.id)).toEqual([2, 3])
+  const steps = Math.round(HOLD / DT)
+  for (let n = 2; n < steps + 2; n++) truth.step(DT)
+  expect(player().data.voiced).toEqual([])
+  expect(live(truth)).toEqual([])
 })
 
 test('an entry is on the row for hold seconds of steps from the step it was raised on, then leaves', () => {

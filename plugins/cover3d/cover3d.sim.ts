@@ -16,6 +16,7 @@
 // under `tall` over the ground meets the solid first; the ground between is not asked. `at` and
 // `threat` are [x, z].
 import type { W } from '#engine/engine.ts'
+import * as math from '#plugins/math/math.sim.ts'
 import { mod } from '#addons/scenemanager/scenemanager.addon.ts'
 
 export type Solid = { x: number; z: number; radius: number; tall?: number }
@@ -32,12 +33,12 @@ export function spots(w: W, at: number[], threat: number[], opts: { reach: numbe
   const out: Spot[] = []
   for (const s of solidsOf(w)(w, at[0], at[1], opts.reach)) {
     const tall = s.tall ?? Infinity
-    if (tall < opts.low || Math.hypot(s.x - at[0], s.z - at[1]) > opts.reach) continue
-    const dx = s.x - threat[0], dz = s.z - threat[1], l = Math.hypot(dx, dz)
+    if (tall < opts.low || math.hypot(s.x - at[0], s.z - at[1]) > opts.reach) continue
+    const dx = s.x - threat[0], dz = s.z - threat[1], l = math.hypot(dx, dz)
     if (l === 0) continue
     const off = s.radius + opts.radius
     const p = [s.x + (dx / l) * off, s.z + (dz / l) * off]
-    out.push({ at: p, tall, far: Math.hypot(p[0] - at[0], p[1] - at[1]) })
+    out.push({ at: p, tall, far: math.hypot(p[0] - at[0], p[1] - at[1]) })
   }
   return out.sort((a, b) => a.far - b.far)
 }

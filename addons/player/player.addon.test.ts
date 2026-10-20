@@ -1,5 +1,6 @@
-// The player addon: a seat per slot the scene declares, a `player` row per seat that only that
-// seat is sent, a slot a `player` row sits in taken, and the scene file's `security` block.
+// The player addon: a seat per slot the scene declares, a `player` row per seat that every seat is
+// sent and only its own sees as `mine`, a slot a `player` row sits in taken, and the scene file's
+// `security` block.
 //
 // The security tests boot a scene written here. Each seat's `player` row spawns one `token`, and
 // each token spawns one `shot`, so a shot's owner is carried down two spawns. A `player` act calls
@@ -16,7 +17,7 @@
 import { expect, test } from 'vitest'
 import { boot, type Scene, type Sim } from '#engine/engine.ts'
 import { sees } from '#addons/vision/vision.addon.ts'
-import { free, join, leave, own, playtest, type Think } from './player.addon.ts'
+import { free, join, leave, own, playtest, possessed, type Think } from './player.addon.ts'
 
 const scene = (): Scene => ({
   world: {},
@@ -138,6 +139,16 @@ test('a group with a /, a player prefab with no masks list, and a player row who
   expect(() => truth.packet(seats[0])).toThrow(`player row ${player(1).id} has no masks list`)
 })
 
+test('every seat is sent every player row, and only its own carries mine', () => {
+  const { seats, player, sent } = start()
+  for (const [slot, seat] of seats.entries()) {
+    const players = sent(seat, 'player')
+    expect(players.map(r => r.data.seat).sort()).toEqual([0, 1, 2, 3])
+    expect(players.filter(r => 'mine' in r.data).map(r => r.id)).toEqual([player(slot).id])
+    expect(possessed(players)?.id).toBe(player(slot).id)
+  }
+})
+
 test('a slot is free while fewer seats than the scene declares are taken, and join throws once none is', () => {
   const truth = boot(scene(), sim)
   const seats: number[] = []
@@ -153,13 +164,13 @@ test('a slot is free while fewer seats than the scene declares are taken, and jo
 
 // Two playtesters on the addon: seats the server drives itself, no browser, no client files. Each
 // reads the rows its seat is sent and climbs its own `player` row to the top, one press a step, and
-// then presses nothing. Each is sent only its own `player` row, so each climbs only its own.
+// then presses nothing. Each is sent both `player` rows and climbs the one that is `mine`.
 test('two playtesters on the addon each play their own seat off the rows it is sent', () => {
   const ladder: Scene = { world: {}, seats: 2, prefabs: { engine: { dt: 1 / 60 }, player: { seat: 0, rung: 0, top: 10 } }, actors: [] }
   const climb: Think = rows => {
-    const mine = rows.filter(r => r.kind === 'player')
-    expect(mine.length).toBe(1)
-    if (mine[0].data.rung < mine[0].data.top) return ['climb']
+    expect(rows.filter(r => r.kind === 'player').length).toBe(2)
+    const me = possessed(rows)!
+    if (me.data.rung < me.data.top) return ['climb']
   }
   const truth = boot(ladder, { player: { acts: { climb(me) { me.data.rung++ } } } })
   const pipes = [0, 1].map(() => playtest(truth, climb))
@@ -210,19 +221,20 @@ const war = (file = field()) => {
 
 test('a scene whose world has a vision block sends each seat what its slot\'s side sees, and one without sends every seat every row', () => {
   const { truth, seats, mine, sent } = war()
-  expect(sent(seats[0])).toEqual(['building0', 'player0', 'start0', 'start1', 'unit0'])
-  expect(sent(seats[1])).toEqual(['building1', 'player1', 'start0', 'start1', 'unit1'])
+  // A player row has no place, so vision sends every seat both.
+  expect(sent(seats[0])).toEqual(['building0', 'player0', 'player1', 'start0', 'start1', 'unit0'])
+  expect(sent(seats[1])).toEqual(['building1', 'player0', 'player1', 'start0', 'start1', 'unit1'])
   // Slot 1's unit walks to (3, 2), two cells from slot 0's unit at (1, 2): slot 0's side sees it.
   mine('unit', 1).data.pos = [35, 25]
   truth.step(1 / 60)
-  expect(sent(seats[0])).toEqual(['building0', 'player0', 'start0', 'start1', 'unit0', 'unit1'])
+  expect(sent(seats[0])).toEqual(['building0', 'player0', 'player1', 'start0', 'start1', 'unit0', 'unit1'])
   // The side is the slot's, not the seat's number: slot 0 left and taken again by a later seat,
   // a higher number, is sent slot 0's side and what it sees.
   leave(truth, seats[0])
   const again = join(truth)
   expect(again).not.toBe(seats[0])
   truth.step(1 / 60)
-  expect(sent(again).filter(r => r !== 'building0')).toEqual(['player0', 'start0', 'start1', 'unit0', 'unit1'])
+  expect(sent(again).filter(r => r !== 'building0')).toEqual(['player0', 'player1', 'start0', 'start1', 'unit0', 'unit1'])
   expect(sent(again).includes('building1')).toBe(false)
 
   const plain = field()
@@ -274,7 +286,8 @@ test('a slot a player row sits in is taken, though no seat holds it, and that ro
   expect(mine.data.seat).toBe(1)
   expect(mine.data).toMatchObject({ owner: mine.id, masks: [`me/${mine.id}`] })
   truth.step(1 / 60)
-  // each is its own: the seat is sent its row and not the fielded one
-  expect(truth.packet(seat).rows.filter(r => r.kind === 'player').map(r => r.id)).toEqual([mine.id])
+  // each is its own: the seat is sent both, and only its own is mine
+  expect(truth.packet(seat).rows.filter(r => r.kind === 'player').map(r => r.id).sort()).toEqual([fielded.id, mine.id].sort())
+  expect(possessed(truth.packet(seat).rows)?.id).toBe(mine.id)
   expect(truth.packet(seat).rows.find(r => r.id === fielded.data.token)?.data).not.toHaveProperty('secret')
 })

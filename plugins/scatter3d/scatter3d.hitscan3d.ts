@@ -9,6 +9,7 @@
 // the scene's packs, each length's solids gathered round its middle, so a long line asks only the
 // cells it crosses.
 import type { W } from '#engine/engine.ts'
+import * as math from '#plugins/math/math.sim.ts'
 import { placed, solids as over, type Scatter } from './scatter3d.sim.ts'
 
 export function solids(w: W, from: number[], dir: number[], far: number) {
@@ -18,13 +19,13 @@ export function solids(w: W, from: number[], dir: number[], far: number) {
   const x0 = from[0], z0 = from[2], dx = dir[0] * far, dz = dir[2] * far, ll = dx * dx + dz * dz
   const off = (x: number, z: number) => {
     const s = ll > 0 ? Math.min(1, Math.max(0, ((x - x0) * dx + (z - z0) * dz) / ll)) : 0
-    return Math.hypot(x - x0 - dx * s, z - z0 - dz * s)
+    return math.hypot(x - x0 - dx * s, z - z0 - dz * s)
   }
   const out: { x: number; z: number; radius: number; base: number; tall?: number }[] = []
   const seen = new Set<string>()
   for (let a = 0; a < far; a += cell) {
     const b = Math.min(a + cell, far), m = (a + b) / 2
-    const reach = Math.hypot(dir[0], dir[2]) * (b - a) / 2
+    const reach = math.hypot(dir[0], dir[2]) * (b - a) / 2
     for (const s of over(w, x0 + dir[0] * m, z0 + dir[2] * m, reach, ground)) {
       const key = `${s.x} ${s.z}`
       if (seen.has(key)) continue

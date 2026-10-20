@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { boot, type Scene, type W } from '#engine/engine.ts'
-import { load, mod } from '#addons/scenemanager/scenemanager.addon.ts'
+import { load } from '#addons/scenemanager/scenemanager.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 import { shoot } from '#plugins/hitscan3d/hitscan3d.sim.ts'
 import type { Numbers } from './walker.sim.ts'
@@ -59,11 +59,6 @@ async function booted() {
   return { child, w: (globalThis as { walkerHitscan3d?: W }).walkerHitscan3d! }
 }
 const byId = <T extends { id: number }>(list: T[]) => [...list].sort((a, b) => a.id - b.id)
-
-test('the scene\'s one key gives hitscan3d walker\'s bodies, loaded before the first step', async () => {
-  const { child } = await booted()
-  expect(mod(child.world, 'hitscan3d', 'bodies')).toBe(bodies)
-})
 
 test('bodies are every row of a kind world.walker.kinds lists, at its pos, its feet, with its kind\'s radius and height', async () => {
   const { w } = await booted()

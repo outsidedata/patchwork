@@ -12,8 +12,10 @@
 //   shadows     `soft`, `hard` or `none`.
 //   background  a colour the scene is cleared to. Through the composer it is tone mapped with the
 //               rest of the frame; drawn straight, three clears to it as given.
-//   ao          { radius, thickness, falloff, scale, intensity, samples }: three's GTAOPass, run
-//               through an EffectComposer.
+//   ao          { on, radius, thickness, falloff, scale, intensity, samples }: three's GTAOPass, run
+//               through an EffectComposer, while `on` is true; off when it is false or left out, so a
+//               scene keeps its AO's settings with the AO off. An `ao` that is off is as no `ao`
+//               everywhere below.
 //   bloom       { strength, radius, threshold }: three's UnrealBloomPass, run through the
 //               EffectComposer after the AO, on the frame's light before it is tone mapped, so a
 //               surface or a particle brighter than `threshold` spills `strength` of its light
@@ -42,12 +44,33 @@
 // nothing, behind it, nearer than `near` or past `far`. It is measured along the camera's own axis,
 // so it holds under either depth projection.
 //
+// `drew(f)` hands `f`, every frame, where the camera and each mesh stand in the world as they are
+// drawn, placed between the steps, only what is drawn at all: `{ camera, rows, meshes }`, an object tagged with the row it draws
+// (`userData.row`, which box3d sets on what it follows) under `rows` by the row's id, and every other
+// mesh under `meshes` by its three.js id. It runs
+// whether or not a canvas is mounted, so a page on node, the simulator's, is measured where a page
+// in a browser draws; it hands back a function that stops it.
+//
+// `drifted(f)` hands `f` each object of the scene, the overlay or the camera the moment it stops being
+// drawn between the steps because it moved on a frame that took no step (Between steps): its place,
+// turn or scale differs in any bit, on such a frame, from where it stood on the frame of the newest
+// step. `f` gets `{ object, path, step, was, now }`: the object, its names from the scene down
+// (`name` or `type`, joined with ` > `), the step it drifted in, and its numbers on the step's frame
+// and now (position, quaternion, scale). Each object is handed over once per step it drifts in, and
+// an object raising `userData.teleport` is not, since it asked to be drawn where it is set. It is how
+// a testbed finds what judders: a look that recomputes its object every frame with a different
+// rounding falls out of the blend with no error. Nothing is checked while no `f` listens; it hands
+// back a function that stops it.
+//
 // Materials. `splice(key, splice)` registers a shader splice for every dressed material, once per
 // key. `dress(material, { surface })` hands a material every splice and its own `surface` through
 // one `onBeforeCompile`. A splice and a surface have one shape, `{ uniforms?, vertex?: { chunk:
 // glsl }, fragment?: { chunk: glsl } }`: each glsl goes right after `#include <chunk>` in that
 // shader (`common` for declarations), and a chunk the shader does not include throws when the
-// program is compiled. The surface goes in first, then the splices in the order they were
+// program is compiled. A chunk named `?chunk` is one some shaders lack: its glsl goes after
+// `#include <chunk>` where the shader includes it and nowhere else, as code for the light goes only
+// into the shaders that light (`lights_fragment_begin` is in Lambert, Phong, standard, physical and
+// toon, never in basic). The surface goes in first, then the splices in the order they were
 // registered, so a splice lands on the surface's own look. The `uniforms` objects are handed to every
 // program as they are, so the plugin that owns a splice writes `value` once a frame and every
 // dressed material follows. Every dressed program has `vDressWorld`, the fragment's world position
@@ -67,6 +90,20 @@
 // once the renderer is made makes the composer again. A pass handed over is render3d's from then on:
 // it is disposed when render3d closes.
 //
+// `finish(key, pass)` draws every frame through a pass after the tone mapping, once per key, in the
+// order they were handed over: it reads the frame's colours as the screen shows them, in sRGB from 0
+// to 1, which is where a look made of the screen's own colours, a palette or a dither, has to work.
+// The last one enabled draws to the canvas. It is handed no depth, is sized to the drawing buffer as
+// an effect is, makes the composer again as an effect does, and is disposed when render3d closes.
+// A finish pass alone makes a composer of three's own half-float targets.
+//
+// `ratio(r, look)` draws `r` pixels per canvas pixel from then on, whatever the screen's own ratio
+// and the prefab's, the renderer, the composer and every pass of it sized again at once; with a
+// `look` of `blocks` the page shows each drawn pixel as a hard square (the canvas's CSS
+// `image-rendering: pixelated`), so 0.25 on a 1280×720 canvas draws 320×180 and shows each pixel 4
+// canvas pixels square, and with `smooth`, or none, the browser's own smoothing. `ratio()` goes back
+// to the prefab's, smoothed. Set before the renderer is made, it is what the renderer is made with.
+//
 // The overlay. `overlay` is `{ scene, camera }`, a second scene drawn over the first each frame
 // with the depth cleared between them, so whatever is in it is drawn over the world and meets
 // nothing of it: a cockpit, a held tool, anything that stands a hand's width from the eye. Its camera
@@ -78,6 +115,23 @@
 // reach it, and before the bloom and the tone mapping, which do, so it is lit, bloomed and graded as
 // the world is; drawn straight, it is drawn right after the world. Its lights light it alone, and the
 // world's light it alone, so what it holds is lit by lights it holds.
+//
+// Between steps. Each frame, just before it draws, every object of the scene and of the overlay, and
+// the camera, is put between where the last two steps left it, as far as the frame's wire says
+// (`steps`, `engine/browser.ts`, Drawing between steps): its position in a straight line, its turn the
+// short way round, its scale; and once the frame is drawn each is put back where it was set. An
+// InstancedMesh's copies are drawn where they are set. A frame whose tick was not run, as a test that
+// draws render3d alone runs it, draws everything where it is set.
+//
+// A teleport. An object whose `userData.teleport` is true on a frame is drawn where it is set on that
+// frame and on every other frame of the step the client is on, never between: a look that puts its
+// object somewhere new rather than along its way (a door that takes the player elsewhere, a respawn, a
+// car put back on the road, the camera that goes with any of them) raises the flag on the frame it
+// moves the object and lowers it on a later frame, and from the next step the object is drawn between
+// steps again, from where it was put. Left up, the object is never drawn between: a light moved from
+// lamp to lamp. Unflagged, an object put 40 metres on is drawn sliding the 40 metres for a step. The
+// flag is the object's own: a child moved with its parent needs none, and a child moved itself needs
+// its own.
 //
 // The camera has one driver at a time. Whoever places it claims it: `claim(owner)` is true when
 // `owner` now holds it and false while another does, `release(owner)` lets go of the owner's own
@@ -99,7 +153,7 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { Pass } from 'three/addons/postprocessing/Pass.js'
-import type { Plugins } from '#engine/browser.ts'
+import { steps, type Plugins } from '#engine/browser.ts'
 
 type V3 = [number, number, number]
 export type Prefab = {
@@ -109,7 +163,7 @@ export type Prefab = {
   exposure?: number
   shadows?: 'soft' | 'hard' | 'none'
   background?: THREE.ColorRepresentation
-  ao?: { radius: number; thickness: number; falloff: number; scale: number; intensity: number; samples: number }
+  ao?: { on?: boolean; radius: number; thickness: number; falloff: number; scale: number; intensity: number; samples: number }
   bloom?: { strength: number; radius: number; threshold: number }
 }
 type Stage = 'vertex' | 'fragment'
@@ -214,12 +268,17 @@ class OverlayPass extends Pass {
   }
 }
 
-// Each part's glsl right after the chunk it names, the parts in the order given.
+// Each part's glsl right after the chunk it names, the parts in the order given; a `?chunk` only
+// where the shader includes it.
 const insert = (src: string, stage: Stage, parts: [string, Splice][]) => {
   const at = new Map<string, string[]>()
   for (const [key, part] of parts) {
-    for (const [chunk, glsl] of Object.entries(part[stage] ?? {})) {
-      if (!src.includes(`#include <${chunk}>`)) throw new Error(`render3d: ${key} goes after #include <${chunk}>, which this ${stage} shader does not include`)
+    for (const [name, glsl] of Object.entries(part[stage] ?? {})) {
+      const optional = name.startsWith('?'), chunk = optional ? name.slice(1) : name
+      if (!src.includes(`#include <${chunk}>`)) {
+        if (optional) continue
+        throw new Error(`render3d: ${key} goes after #include <${chunk}>, which this ${stage} shader does not include`)
+      }
       at.set(chunk, [...(at.get(chunk) ?? []), glsl])
     }
   }
@@ -227,11 +286,20 @@ const insert = (src: string, stage: Stage, parts: [string, Splice][]) => {
   return src
 }
 
+// Where a frame drew things (`drew`): the camera; each object tagged with the row it draws,
+// `userData.row`, by that row's id; and every other mesh by its three.js id.
+type Drawn = { camera: number[]; rows: Record<number, number[]>; meshes: Record<number, number[]> }
+// An object that stopped being drawn between the steps (`drifted`).
+export type Drift = { object: THREE.Object3D; path: string; step: number; was: number[]; now: number[] }
+
 export function render3d() {
   const scene = new THREE.Scene()
   const overlay = { scene: new THREE.Scene(), camera: new THREE.PerspectiveCamera() }
   const splices = new Map<string, Splice>()
   const effects = new Map<string, Effect>()
+  const finishes = new Map<string, Pass>()
+  // What `ratio` last asked for, or undefined for the prefab's.
+  let drawn: { r: number; look: 'smooth' | 'blocks' } | undefined
   const dressed = new Set<THREE.Material>()
   let prefab: Prefab | undefined
   let size: [number, number] = [0, 0]
@@ -239,14 +307,54 @@ export function render3d() {
   let renderer: THREE.WebGLRenderer | undefined
   let post: { composer: EffectComposer; gtao?: DepthAO; own: Pass[] } | undefined
   let holder: unknown
+  // Whoever `drew` hands each frame's drawn places to.
+  const watchers = new Set<(drawn: Drawn) => void>()
+  // Whoever `drifted` hands each drifting object to, every object's place on the frame of the newest
+  // step, the step that was, and the objects already handed over in it.
+  const drifts = new Set<(d: Drift) => void>()
+  let noted = new Map<THREE.Object3D, number[]>()
+  let notedAt = -1
+  let told = new Set<THREE.Object3D>()
+  const pathOf = (o: THREE.Object3D) => {
+    const names: string[] = []
+    for (let p: THREE.Object3D | null = o; p && p !== scene && p !== overlay.scene; p = p.parent) names.unshift(p.name || p.type)
+    return names.join(' > ')
+  }
+  const sameAs = (a: number[], b: number[]) => a.length === b.length && a.every((x, i) => x === b[i])
+  // The wire as this frame's tick found it, which says the step drawn and how far past it the page is.
+  let wire: Plugins['wire'] | undefined
+  // Every object's and the camera's position, turn and scale after the last two steps (Between steps).
+  const read = (o: THREE.Object3D) => [...o.position.toArray(), ...o.quaternion.toArray(), ...o.scale.toArray()]
+  const write = (o: THREE.Object3D, p: number[]) => { o.position.fromArray(p, 0); o.quaternion.fromArray(p, 3); o.scale.fromArray(p, 7) }
+  // Each object last seen with `userData.teleport` up, and the step it was seen on (Between steps).
+  const teleported = new Map<THREE.Object3D, number>()
+  const between = steps<THREE.Object3D>(
+    read,
+    write,
+    (a, b, f) => {
+      const out = a.map((x, i) => x + (b[i] - x) * f)
+      THREE.Quaternion.slerpFlat(out, 3, a, 3, b, 3, f)
+      return out
+    },
+    (o, on) => { if (on !== undefined) o.visible = on; return o.visible },
+  )
+
+  // The prefab's AO while it is on, undefined while it is off or left out.
+  const aoOf = (p: Prefab) => (p.ao?.on ? p.ao : undefined)
+
+  // The pixels drawn per canvas pixel: what `ratio` asked for, else the prefab's capped at the screen's,
+  // else one.
+  const ratioOf = (p: Prefab) => drawn?.r ?? (p.pixelRatio !== undefined ? Math.min(devicePixelRatio, p.pixelRatio) : 1)
+  // How the page shows the canvas's pixels.
+  const show = () => { if (mounted) mounted.style.imageRendering = drawn?.look === 'blocks' ? 'pixelated' : '' }
 
   // The renderer, once there is both a canvas and a prefab: reversed depth is fixed when it is made.
   const make = () => {
     if (renderer || !mounted || !prefab) return
     const p = prefab
     const [width, height] = size
-    const r = new THREE.WebGLRenderer({ canvas: mounted, reversedDepthBuffer: !!p.ao })
-    if (p.pixelRatio !== undefined) r.setPixelRatio(Math.min(devicePixelRatio, p.pixelRatio))
+    const r = new THREE.WebGLRenderer({ canvas: mounted, reversedDepthBuffer: !!aoOf(p) })
+    r.setPixelRatio(ratioOf(p))
     r.setSize(width, height)
     if (p.tone !== undefined) r.toneMapping = TONES[p.tone]
     if (p.exposure !== undefined) r.toneMappingExposure = p.exposure
@@ -259,30 +367,31 @@ export function render3d() {
     compose()
   }
 
-  // The composer, made again whenever an effect joins: the scene, the AO, every effect in the order
-  // they joined, the overlay, the bloom and the tone mapping. Its own passes are let go of when it is
-  // made again; an effect's pass stays, for the next one.
+  // The composer, made again whenever an effect or a finish pass joins: the scene, the AO, every effect
+  // in the order they joined, the overlay, the bloom, the tone mapping and every finish pass in the
+  // order they joined. Its own passes are let go of when it is made again; an effect's and a finish
+  // pass's stay, for the next one.
   const compose = () => {
-    const p = prefab!, r = renderer!
+    const p = prefab!, r = renderer!, ao = aoOf(p)
     const [width, height] = size
     if (post) {
       for (const pass of post.own) pass.dispose()
       post.composer.dispose()
       post = undefined
     }
-    if (!p.ao && !p.bloom && !effects.size) return
+    if (!ao && !p.bloom && !effects.size && !finishes.size) return
     // With AO or an effect the scene is drawn into a target carrying the depth they read; without,
     // the composer's own half-float targets.
-    const composer = p.ao || effects.size
+    const composer = ao || effects.size
       ? new EffectComposer(r, new THREE.WebGLRenderTarget(width, height, { type: THREE.HalfFloatType, depthTexture: new THREE.DepthTexture(width, height, THREE.FloatType) }))
       : new EffectComposer(r)
     composer.setSize(width, height)
     const own: Pass[] = [new RenderPass(scene, me.camera!)]
     composer.addPass(own[0])
     let gtao: DepthAO | undefined
-    if (p.ao) {
+    if (ao) {
       gtao = new DepthAO(scene, me.camera!, width * r.getPixelRatio(), height * r.getPixelRatio())
-      const { radius, thickness, falloff, scale, intensity, samples } = p.ao
+      const { radius, thickness, falloff, scale, intensity, samples } = ao
       gtao.updateGtaoMaterial({ radius, thickness, distanceFallOff: falloff, scale, samples })
       gtao.blendIntensity = intensity
       composer.addPass(gtao)
@@ -299,6 +408,10 @@ export function render3d() {
     }
     after.push(new OutputPass())
     for (const pass of after) composer.addPass(pass)
+    for (const finish of finishes.values()) {
+      finish.setSize(width * r.getPixelRatio(), height * r.getPixelRatio())
+      composer.addPass(finish)
+    }
     post = { composer, gtao, own: [...own, ...after] }
   }
 
@@ -316,9 +429,11 @@ export function render3d() {
       canvas.style.display = 'none'
       me.canvas = canvas
       mounted = canvas
+      show()
       make()
     },
     tick(plugins: Plugins) {
+      wire = plugins.wire
       if (prefab) return
       const p = plugins.wire.scene.prefabs.render3d as Prefab | undefined
       if (!p) return
@@ -355,6 +470,21 @@ export function render3d() {
       effects.set(key, effect)
       if (renderer) compose()
     },
+    finish(key: string, pass: Pass) {
+      if (finishes.has(key)) throw new Error(`render3d already has the finish pass ${key}`)
+      finishes.set(key, pass)
+      if (renderer) compose()
+    },
+    ratio(r?: number, look: 'smooth' | 'blocks' = 'smooth') {
+      if (r !== undefined && !(r > 0)) throw new Error(`render3d ratio ${r} is not above 0`)
+      drawn = r === undefined ? undefined : { r, look }
+      show()
+      if (!renderer || !prefab) return
+      const to = ratioOf(prefab)
+      renderer.setPixelRatio(to)
+      renderer.setSize(size[0], size[1])
+      post?.composer.setPixelRatio(to)
+    },
     dress<M extends THREE.Material>(material: M, { surface }: { surface?: Splice } = {}): M {
       const own = text(surface)
       material.onBeforeCompile = shader => {
@@ -379,27 +509,88 @@ export function render3d() {
     },
     release(owner: unknown) { if (holder === owner) holder = undefined },
     claimed() { return holder },
+    // `drew(f)`: `f` is handed, every frame, where each mesh of the scene and the camera stand as they
+    // are drawn, between the steps, in the world, by the object's three.js id; whether or not there is
+    // a canvas to draw on, so a page on node is measured as a page in a browser is drawn. It hands back
+    // a function that stops it.
+    // `drifted(f)`: `f` is handed each object the moment it stops being drawn between the steps, once
+    // per step it drifts in (the header's `drifted`). It hands back a function that stops it.
+    drifted(f: (d: Drift) => void) {
+      drifts.add(f)
+      if (drifts.size === 1) notedAt = -1
+      return () => { drifts.delete(f) }
+    },
+    drew(f: (drawn: Drawn) => void) {
+      watchers.add(f)
+      return () => { watchers.delete(f) }
+    },
     afterTick() {
-      if (!me.canvas) return
-      me.canvas.style.display = ''
-      if (!renderer || !me.camera) return
-      if (overlay.scene.children.length) follow(overlay.camera, me.camera)
-      if (!post) {
-        renderer.render(scene, me.camera)
-        if (!overlay.scene.children.length) return
-        const was = renderer.autoClear
-        renderer.autoClear = false
-        renderer.clearDepth()
-        renderer.render(overlay.scene, overlay.camera)
-        renderer.autoClear = was
-        return
+      if (me.canvas) me.canvas.style.display = ''
+      if (!me.camera || (!renderer && !watchers.size)) return
+      const camera = me.camera
+      if (wire) {
+        const things: THREE.Object3D[] = [camera]
+        scene.traverse(o => { if (o !== camera) things.push(o) })
+        overlay.scene.traverse(o => { things.push(o) })
+        const n = wire.n
+        for (const o of things) if (o.userData.teleport === true) teleported.set(o, n)
+        for (const [o, at] of teleported) if (at !== n) teleported.delete(o)
+        const put = [...teleported.keys()].map(o => [o, read(o)] as const)
+        if (drifts.size) {
+          if (n !== notedAt) {
+            noted = new Map(things.map(o => [o, read(o)]))
+            notedAt = n
+            told = new Set()
+          } else {
+            for (const o of things) {
+              const was = noted.get(o)
+              if (!was || told.has(o) || teleported.has(o)) continue
+              const now = read(o)
+              if (sameAs(was, now)) continue
+              told.add(o)
+              for (const f of drifts) f({ object: o, path: pathOf(o), step: n, was, now })
+            }
+          }
+        }
+        between.place(things, wire)
+        for (const [o, p] of put) write(o, p)
       }
-      // The scene pass draws into the composer's read target, and the AO and every effect read that
-      // target's depth.
-      const depth = post.composer.readBuffer.depthTexture
-      post.gtao?.setGBuffer(depth!)
-      for (const effect of effects.values()) effect.depth = depth
-      post.composer.render()
+      try {
+        if (watchers.size) {
+          scene.updateMatrixWorld()
+          camera.updateMatrixWorld()
+          const at = new THREE.Vector3()
+          const meshes: Record<number, number[]> = {}
+          const rows: Record<number, number[]> = {}
+          scene.traverseVisible(o => {
+            const row = o.userData.row
+            if (typeof row === 'number') rows[row] = o.getWorldPosition(at).toArray()
+            else if ((o as THREE.Mesh).isMesh) meshes[o.id] = o.getWorldPosition(at).toArray()
+          })
+          const drawn = { camera: camera.getWorldPosition(at).toArray(), rows, meshes }
+          for (const f of watchers) f(drawn)
+        }
+        if (!renderer) return
+        if (overlay.scene.children.length) follow(overlay.camera, camera)
+        if (!post) {
+          renderer.render(scene, camera)
+          if (!overlay.scene.children.length) return
+          const was = renderer.autoClear
+          renderer.autoClear = false
+          renderer.clearDepth()
+          renderer.render(overlay.scene, overlay.camera)
+          renderer.autoClear = was
+          return
+        }
+        // The scene pass draws into the composer's read target, and the AO and every effect read that
+        // target's depth.
+        const depth = post.composer.readBuffer.depthTexture
+        post.gtao?.setGBuffer(depth!)
+        for (const effect of effects.values()) effect.depth = depth
+        post.composer.render()
+      } finally {
+        between.restore()
+      }
     },
     // The renderer lets go of everything it put on the GPU and of the WebGL context itself, and the
     // canvas leaves the page. `dispose` alone keeps the context until the canvas is collected.
@@ -411,6 +602,8 @@ export function render3d() {
       }
       for (const effect of effects.values()) effect.dispose()
       effects.clear()
+      for (const finish of finishes.values()) finish.dispose()
+      finishes.clear()
       renderer?.dispose()
       renderer?.forceContextLoss()
       renderer = undefined

@@ -33,15 +33,9 @@
 // a page of it, is drawn again: every cell, once the loader holds the sheet as it now is
 // (`onWritten`), since the frames cut from the sheet before are gone.
 //
-// A change a seat asks for is drawn at once, before the server has made it. `pending(k, edits)`, with
-// `k` the number `wire.send` handed back for the message that asks for it, draws each edit,
-// `[layer, x, y, value]`, over the cells the packets bring, until a packet's `ack` reaches `k`. By
-// then the rows hold what the server did with the message: the edit, if it made it, and not, if it
-// refused, so what is drawn is the server's again with nothing to undo. A message the pipe refused
-// is numbered 0, and nothing is pending for it.
-//
-// `preview(edits)` draws edits over everything else until the next `preview`, and `preview(null)` stops:
-// what a seat would build, drawn while it drags and before it asks, as the city's own pieces.
+// `preview(edits)` draws edits, each `[layer, x, y, value]`, over the cells the packets bring until
+// the next `preview`, and `preview(null)` stops: what a seat would build, drawn while it drags and
+// before it asks, as the city's own pieces.
 //
 // `pick(x, y, height)` is the cell whose top is drawn at the canvas point [x, y], in render2d's
 // canvas pixels, or undefined when no cell is: `height(cx, cy)` is how many steps up a cell's top is;
@@ -50,9 +44,9 @@
 // from `top`, the most any cell reaches, the highest any cell is drawn at when left out, down to 0 in
 // steps of 1/16, the nearest the viewer first, and the first cell found whose top is at or above the
 // height it was found at is the one: a hill in front hides the cells behind it. `top(x, y)` is the
-// top cell [x, y] is drawn at, as `pick` reads it. `cells()` is the grid as it is drawn, the packets' cells with every pending edit and the preview
-// in them, for whatever else the page shows of it; `ahead()` is the grid as it will be once what is
-// pending has landed, without the preview, which a seat plans its next change on.
+// top cell [x, y] is drawn at, as `pick` reads it. `cells()` is the grid as it is drawn, the packets'
+// cells with the preview in them, for whatever else the page shows of it; `ahead()` is the packets'
+// cells without the preview, which a seat plans its next change on.
 import type { Plugins } from '#engine/browser.ts'
 import type { Row } from '#engine/engine.ts'
 import { cells, spec, width, type Cells, type Spec } from './grid.sim.ts'
@@ -78,7 +72,6 @@ const TIE = 1 / 1024
 
 export function grid() {
   let looker: { fn: Look; reach: number } | undefined
-  const pendings: { k: number; edits: Edit[] }[] = []
   let previewed: Edit[] = []
   // What each chunk's strings were when its cells were last drawn, by `k`.
   let seen = new Map<number, Record<string, string>>()
@@ -103,16 +96,14 @@ export function grid() {
     return name
   }
 
-  // The rows the grid is drawn from: the packet's, with each chunk a pending edit is in copied and the
-  // edit made in the copy, and the preview's edits too when `preview` is true.
+  // The rows the grid is drawn from: the packet's, and when `preview` is true and there is one, each
+  // chunk copied and the preview's edits made in the copies.
   const rowsOf = (p: Plugins, preview: boolean): Row[] => {
-    while (pendings.length && pendings[0].k <= p.wire.ack) pendings.shift()
     const chunks = p.wire.rows.filter(r => r.kind === 'grid')
-    if (!pendings.length && !(preview && previewed.length)) return chunks
+    if (!(preview && previewed.length)) return chunks
     const copies = chunks.map(r => ({ ...r, data: { ...r.data, cells: { ...r.data.cells } } }))
     const c = cells({ world: p.wire.scene.world, rows: copies })
-    for (const { edits } of pendings) for (const [layer, x, y, v] of edits) c.set(layer, x, y, v)
-    if (preview) for (const [layer, x, y, v] of previewed) c.set(layer, x, y, v)
+    for (const [layer, x, y, v] of previewed) c.set(layer, x, y, v)
     return copies
   }
 
@@ -217,12 +208,6 @@ export function grid() {
       if (!Number.isInteger(reach) || reach < 0) throw new Error(`a look's reach is a whole number of cells, not ${reach}`)
       looker = { fn, reach }
       all()
-    },
-    pending(k: number, edits: Edit[]) {
-      if (k === 0) return
-      if (!Number.isInteger(k) || k < 0) throw new Error(`a pending edit's message number is the one wire.send handed back, not ${k}`)
-      pendings.push({ k, edits: edits.map(e => [...e] as Edit) })
-      pendings.sort((a, b) => a.k - b.k)
     },
     preview(edits: Edit[] | null) { previewed = (edits ?? []).map(e => [...e] as Edit) },
     cells(): Cells | undefined { return view },

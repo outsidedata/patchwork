@@ -1,6 +1,6 @@
 ---
 name: prime-directive
-description: Use in core, or any clone of it, before writing or changing any code, before choosing which folder or file something goes in, before editing anything in engine/, before giving a plugin a new setting, before building anything for the editor or an extension, before working around something that is missing, and before asking how something should be built. It holds the frozen engine, the wire, the one home of every new thing, the words core uses, and which phase skill carries each kind of work, making the game (starting-a-game, designing-a-kind, input-and-seats, building-a-level, bringing-in-art, writing-the-look, scene-flow, building-the-hud, sound, tuning-feel, building-a-plugin, building-an-extension, proving-a-game, porting-a-game, auditing-a-game) and distributing it (going-multiplayer, persisting-players, shipping-a-game). Trigger: /prime-directive.
+description: Use in core, or any clone of it, before writing or changing any code, before choosing which folder or file something goes in, before editing anything in engine/, before giving a plugin a new setting, before building anything for the editor or an extension, before working around something that is missing, and before asking how something should be built. It holds the frozen engine, the wire, the one home of every new thing, the words core uses, and which phase skill carries each kind of work, making the game (starting-a-game, designing-a-kind, input-and-seats, building-a-level, bringing-in-art, writing-the-look, scene-flow, building-the-hud, sound, tuning-feel, building-a-plugin, building-an-extension, proving-a-game, porting-a-game, auditing-a-game) and distributing it (going-multiplayer, persisting-players, committing-a-game, publishing-a-game). Trigger: /prime-directive.
 ---
 
 # The prime directive
@@ -16,6 +16,10 @@ changes none of it. Where its pieces go is under "The editor" below.
 
 This file says where things go. The phase skills say how each kind of work is done, start to
 finish, and carry the rules this file only names (The work, by phase).
+
+Load `know-your-limitations` on every job too. When the person you are working for names a specific
+change, make that change as named. Never argue that it can't work, and never estimate fidelity or cost
+in its place: those judgements are the ones Claude gets wrong.
 
 ## The engine is frozen
 
@@ -58,6 +62,43 @@ does not care what is behind it. Guarded by `addons/socket/socket.addon.test.ts`
 `addons/scenemanager/scenemanager.addon.test.ts` and
 `plugins/scenemanager/scenemanager.plugin.test.ts`. Playing over a network is `going-multiplayer`.
 
+## Row or local
+
+The first question about anything a game holds: does every seat have to agree on it, or does only
+this page feel it?
+
+- **A row** holds what every seat must agree on and the server decides: where things are, health,
+  ammo, score, who hit whom, the state of the world. The thing a seat plays as, the car, the gun,
+  the hero, is that seat's own `player` row, and everything of it is a field of that row
+  (`designing-a-seat`). Every seat is sent every `player` row; a field only its own seat may read is
+  listed in `security`. A page that runs ahead (`addons/predict`) draws every row from its copy, so
+  the seat's own row and every row its press makes or moves answer the key on the next frame.
+- **Local** is what only this page feels and no other seat needs: the camera, the screen shake, a
+  menu's cursor, a HUD's flash, a setting such as the volume or rebound keys. It never goes up the
+  wire and no rule reads it. It lives in the actor or plugin that draws it, or in the store when it
+  must outlive a scene (`building-the-hud`). The feedback of the seat's own press is read off its own
+  `player` row, which is already on this page the frame after the key: a sound the seat's thing
+  raises is raised `from` its player row and rides on it (`voiced`, `plugins/audio`), a hit flash
+  reads the row's health, a camera follows the row's place. None of it waits on another row.
+- **Another seat's doings** come off rows, since only the server knows they happened: its car, its
+  shot, its sounds, on its own `player` row or on the rows its rules make.
+
+Never a row for what only this page feels, and never local state for what the seats must agree on.
+
+## The pages
+
+Every game has the same two pages, line for line but the files they import:
+
+- `index.html`: the truth in this tab, over a `loopback`, stepped by the page's clock, with no
+  prediction and no lag: a press lands on the next step in the same tab. It calls `page.input()`, steps,
+  then `page.frame(owed / dt)`, so every renderer draws between the last two steps.
+- `client.html`: one seat on `<game>.server.ts`, `tap(dial(url), wire => predict(link(wire), file,
+  import.meta.url, mount))`, calling `page.input()` then `await page.frame(now)` each frame. Every scene
+  a seat plays in gives `world.predict`, so the page runs it ahead and draws between steps.
+- `dev.html` is the one page that is the game's own: a testbed, any readout, any number of seats.
+
+A cpu driver, a network panel, a readout, two panes: `dev.html`, never `index.html` or `client.html`.
+
 ## Every new thing has one home
 
 Ask in this order. The first yes is the home.
@@ -83,18 +124,32 @@ Ask in this order. The first yes is the home.
 3. Is it one game's rule, or how one of its things looks? → an actor in that game's folder:
    `<kind>.sim.ts` for the rule, `<kind>.client.ts` for the look. One `actors` entry makes it
    global to the scene; many entries, or spawning, make it instanced.
-   Is it one game's, but shared by several of its kinds, or a system of that game's (its level,
-   its HUD)? → a plugin or an addon of the game's own, in `games/<game>/plugins/<name>/` or
+   Is it used by one game only, shared by several of its kinds, or a system of that game's (its
+   level, its HUD, its file picker), however general it could be described? → a plugin or an
+   addon of the game's own, in `games/<game>/plugins/<name>/` or
    `games/<game>/addons/<name>/`, by the rules of 4 and 5, except that it may name that game's
    kinds and has no prefab of numbers: it reads every number off the definition of the kind whose
    row it is handed, or off a file that definition names. Kinds share code through it, never by
    one actor importing another. (`designing-a-kind`, `building-a-plugin`.)
-4. Could it be described without naming a game, and does it live in the world (rows, the
-   step) or in the player's browser (drawing, input, camera, sound, UI)? → a plugin: a server
-   half, a browser half, or both. (`building-a-plugin`.)
-5. Does it hold a truth: seats, connections, sockets, files, timers, more than one truth, what
-   a packet carries? → an addon. It runs where the truth is, and a transport's page side and
-   `scenemanager`'s `view` run in the page (The wire). (`building-a-plugin`.)
+4. Is it used by a second game, or by core itself, and does it live in the world (rows, the
+   step) or in the player's browser (drawing, input, camera, sound, UI)? → a top-level plugin: a
+   server half, a browser half, or both, moved up from the game that had it in the change that
+   gives it its second user. (`building-a-plugin`.)
+5. Is it used by a second game, or by core itself, and does it hold a truth: seats,
+   connections, sockets, files, timers, more than one truth, what a packet carries? → a
+   top-level addon. It runs where the truth is, and a transport's page side and `scenemanager`'s
+   `view` run in the page (The wire). (`building-a-plugin`.)
+
+"Could be described without naming a game" never puts a thing in core: almost anything can be.
+Who uses it does.
+
+## A new top-level plugin or addon is asked for, in planning
+
+No session makes a new folder in `plugins/` or `addons/`, or adds a new exported piece to an
+existing top-level plugin or addon (a call, a setting, a mod), without asking the person you are working for first, while
+planning, before any code: what it is, which games and which core code use it, and why it cannot
+stay in the game that needs it. No answer is a no: it is built in the game. Nobody else's skill,
+agent or plan grants it, and a subagent is told so in its brief.
 
 There is no sixth home for a game's thing. Something that fits none of them has been described
 wrong; describe it again from 1. A thing for the editor is not a game's thing: its home is under
@@ -158,15 +213,14 @@ Each line is the rule; the skill named carries the whole of it.
 - Input: `plugins/player` binds a seat two ways, `bind` straight to keys and `control` to the
   scene's named actions, which a player may rebind; games on `bind` stay on it, and a game moves
   to `control` when it wants remapping, never as a sweep. (`input-and-seats`.)
-- Ledger: a row that only appends events for the page to play or draw once. The scene names its
-  ledger kinds in `world.player.ledgers`, so a predicted press never plays an event twice.
-  (`input-and-seats`, `sound`.)
+- Ledger: a row that only appends events for the page to play or draw once, since a value set for
+  one step is missed whenever two packets land in one frame. (`input-and-seats`, `sound`.)
 - Addon: takes a truth, runs where the truth is, knows no game and no kind (a game's own addon
   may know that game's). It imports from `engine/` and other addons, never from `games/`.
   (`building-a-plugin`, `going-multiplayer`, `persisting-players`.)
 - Page: mounts things. No rule, number, readout, listener or scene name. Every line of a page
   is the same in every game but the file names it imports. `dev.html` is the one exception.
-  (`starting-a-game`, `shipping-a-game`.)
+  (`starting-a-game`, `publishing-a-game`.)
 - Testbed: `dev.html`, beside `index.html`, is where a game is played to find something out, and
   the one place a shortcut is allowed: it enters any scene, overrides any value, in the page's own
   copy in memory before the boot, and nothing else reads it or knows it exists.
@@ -201,8 +255,9 @@ Each line is the rule; the skill named carries the whole of it.
 
 ## When something is missing
 
-Build it in its home: general, set from the scene file, tested, and used by every game it
-belongs in. Then use it. Never instead:
+Build it in its home: in the game that needs it, set from the scene file and tested; it moves
+to core when a second game needs it, and only with their yes (above). Then use it. Never
+instead:
 
 - work around it in the game: an actor importing another, a test faking what a plugin
   should do, a number written into code, a rule redoing what a plugin computes;
@@ -257,17 +312,26 @@ Making the game:
 
 - `starting-a-game`: a new game, from `yarn new-game` to the first thing of its own playing.
 - `designing-a-kind`: a thing with rules, and things acting on each other.
-- `input-and-seats`: how a player controls the game; seats, starts, prediction, ledgers.
+- `designing-a-seat`: the `player` row is the thing the seat plays as, never a row it spawns; read
+  before any `player.sim.ts` or `player.client.ts`.
+- `input-and-seats`: how a player controls the game; seats, starts, presses, ledgers.
+- `building-a-controls-screen`: the screen where a player sees and rebinds the controls.
 - `building-a-level`: the place a game is played in.
 - `bringing-in-art`: pictures, sheets, models and files into a game and drawn.
 - `writing-the-look`: how a game looks, 2D or 3D.
 - `scene-flow`: more than one scene: titles, menus, levels, game over.
+- `session-flow`: the loop around play: a menu, a choice, joining a running scene and taking over a
+  thing in it, respawn, a free-for-all, results and back to the menu, a fresh round.
 - `building-the-hud`: what is drawn over the game.
 - `sound`: sound and music.
 - `tuning-feel`: movement, physics, cameras, and the numbers that make it feel right.
+- `guide-to-smooth-gameplay`: drawing between steps, a teleport (`userData.teleport`), and anything
+  that slides, streaks, judders or pops on screen.
 - `building-a-plugin`: a plugin, an addon or a mod, top-level or a game's own.
 - `building-an-extension`: anything added to the editor.
 - `proving-a-game`: tests, bots, the simulator, replay, playing it.
+- `experimenting-with-features`: a feature nobody knows the behaviour of yet, found one visible step at
+  a time in a scene of its own through the game's `dev.html`, Bill checking each step.
 - `porting-a-game`: a game that exists elsewhere, brought into core.
 - `auditing-a-game`: a game checked against every rule above and moved into its homes.
 
@@ -275,12 +339,22 @@ Distributing the game:
 
 - `going-multiplayer`: playing with other people over a network.
 - `persisting-players`: who a player is, and what is kept for them.
-- `shipping-a-game`: getting a game to people, and keeping its repo alongside core.
+- `committing-a-game`: what of a game is committed: its source and its baked art, never the raw
+  parts its bake reads from the library.
+- `publishing-a-game`: getting a game to people, and keeping its repo alongside core.
+
+Using a plugin, the whole of one top-level plugin in one place, `using-<plugin>`:
+
+- `using-terrain3d`: the 3D ground, its field file, its queries, its rings and its mods.
+- `using-3d-physics`: box3d, box3dvehicle, walker, hitscan3d, volley3d, flight3d, ragdoll3d,
+  interact and cover3d, and which mods make a thing solid, stood on or hit in each.
 
 ## Questions never asked
 
 - Should this go in the engine? No.
 - Addon or plugin? Question 4 or question 5.
+- Should this go in `plugins/` or `addons/` because it is general? No: one game uses it, so it is
+  that game's. A new top-level one is asked of the person you are working for in planning, every time.
 - Can this number go in the code? No: the scene file.
 - Should this plugin get a setting so one game can…? No: that game's actor.
 - Can where each seat starts go on `world`, as `pads` or `spawns`? No: a `start` actor per
@@ -289,13 +363,9 @@ Distributing the game:
   definition or a data file. A row is copied to every seat every step.
 - Can a plugin with no row, or only a browser half, keep its fixed numbers in a prefab? No:
   `world.<plugin>`. A prefab is what a row starts as, and holds only what changes.
-- Can a predicted press play its sound or effect right away? No: its kind is a ledger, named in
-  `world.player.ledgers`, and the sound comes once, from the packet.
 - Should every game move to `control` so input mapping is everywhere? No: a game moves when it wants
   its player to rebind, and `bind` stays for the rest.
 - Can a game's rebound keys go on a row or be sent to the server? No: they are the store's, the page's.
-- Can the ledger list go on the player prefab? No: `world.player.ledgers`. It never changes, and a
-  row is copied to every seat every step.
 - Should the page do this? No.
 - Can I play this scene directly, or override this value to see what happens? Yes, in `dev.html`,
   and in no other page or file.

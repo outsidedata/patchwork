@@ -18,7 +18,7 @@ import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
 ;(globalThis as any).removeEventListener = () => {}
 
 // The game, written into a folder of its own as a game folder is. Each room's `player` kind is one
-// rule file beside them, where the page's player finds the rule it runs ahead.
+// rule file beside them, which both rooms' sims import.
 const DT = 1 / 60
 const TINTS = [16777215, 16744576, 8438015, 8454016]
 const SCENEMANAGER = new URL('../scenemanager/scenemanager.sim.ts', import.meta.url).pathname
@@ -45,7 +45,7 @@ writeFileSync(join(dir, 'player.sim.ts'), `export const player = {
 }
 `)
 writeFileSync(join(dir, 'player.client.ts'), `export function setup() {}
-export function tick(row, plugins) { plugins.store.set('tint', plugins.wire.scene.world.tints[row.data.seat]) }
+export function tick(row, plugins) { if (row.data.mine) plugins.store.set('tint', plugins.wire.scene.world.tints[row.data.seat]) }
 export function remove() {}
 `)
 const file: Scene = {

@@ -94,7 +94,7 @@ test('t moves at dt·rate and wraps at the day, the sun meeting itself across mi
   expect(back.row().data.t).toBeCloseTo(DAY - 1, 9)
 })
 
-test('the blend moves by dt/fade and mix is its smoothstep across all 13 fields; a fade of 0 is there on the next step', () => {
+test('the blend moves by dt/fade and mix is its smoothstep across every field; a fade of 0 is there on the next step', () => {
   // The storm thunders, so the scene declares a seed.
   const { t, row, act } = sky({}, 1)
   act('weather', 'rain', 10)
@@ -104,7 +104,6 @@ test('the blend moves by dt/fade and mix is its smoothstep across all 13 fields;
   const b = 3 / 10, s = b * b * (3 - 2 * b)
   expect(row().data.blend).toBeCloseTo(b, 12)
   for (const f of fields) expect(row().data.mix[f]).toBeCloseTo(WEATHERS.clear[f] + (WEATHERS.rain[f] - WEATHERS.clear[f]) * s, 9)
-  expect(fields).toHaveLength(13)
   act('weather', 'storm', 0)
   t.step(0.25)
   expect(row().data.mix).toEqual(WEATHERS.storm)

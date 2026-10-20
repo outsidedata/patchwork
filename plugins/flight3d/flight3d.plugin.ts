@@ -1,4 +1,5 @@
-// The browser half of flight3d: every plane of the scene drawn from the loader model its entry of
+// The browser half of flight3d: every plane of the scene, every row of a kind `world.flight3d.kinds`
+// lists (`flight3d` when it lists none), drawn from the loader model its entry of
 // `world.flight3d.planes` names (`look.model`), placed each frame by its row. It needs render3d and the
 // loader, and is listed after the loader and before render3d, so a frame draws the rows it was handed.
 // A plane is drawn from the first frame its model has landed; the model is asked for the first time a
@@ -103,8 +104,9 @@ export function flight3d() {
       last = clock
       const q = new THREE.Quaternion(), axis = new THREE.Vector3()
       const seen = new Set<number>()
+      const kinds = f.kinds ?? ['flight3d']
       for (const row of plugins.wire.rows as Row[]) {
-        if (row.kind !== 'flight3d' || !row.data.pos) continue
+        if (!kinds.includes(row.kind) || !row.data.pos) continue
         const p = row.data as Plane
         const look = modelOf(f, p.type).look
         if (!plugins.loader.ready(look.model)) {

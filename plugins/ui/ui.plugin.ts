@@ -35,7 +35,8 @@
 // big as the canvas wants. `world.ui` is read off the scene, never sent, since the UI has no row,
 // and a `world.ui` in `<game>.scene.json` is every scene's until a scene gives its own.
 // `style(name)` hands back a copy of one of its `styles`, each an options object passed as it is to
-// PixiJS or to `button`.
+// PixiJS or to `button`. A text style's `stroke` carries `"join": "round"`: the canvas mitres an
+// outline's corners by default, and at a glyph's sharp points it runs out into spikes.
 //
 // An actor puts a thing on a panel with `show(panel, key, make)`, in its `tick`, every frame it
 // wants the thing shown: `make` runs the first time, and the same object comes back every frame
@@ -113,6 +114,12 @@
 // actor that shows things is listed after `ui` in the scene's `plugins`. `mount` hides the canvas
 // and the first `afterTick` shows it, so a canvas with nothing drawn on it is never shown.
 //
+// Between steps. Each frame, just before it draws, every thing on the stage and on a panel drawn on a
+// surface is put between where the last two steps left it, as far as the frame's wire says (`steps`,
+// `engine/browser.ts`, Drawing between steps): its position in a straight line, its turn the short way
+// round, its scale; and once the frame is drawn each is put back where it was set. So a dial's hand
+// turned from a row turns as smoothly as the game's own things move under it.
+//
 // Node has no canvas to measure text on and no image to decode. So a test never reads a `Text`'s
 // size, a button is hit by its `hitArea`, and a test whose scene loads a texture for the UI stands
 // in for `PIXI.Assets.load`. No layout here or in an actor measures text: columns are numbers in the
@@ -151,7 +158,7 @@ import * as PIXI from 'pixi.js'
 // The hit test and the focus run on the stage whether or not a renderer exists, and need the
 // event mixin a renderer would otherwise load.
 import 'pixi.js/events'
-import type { Plugins } from '#engine/browser.ts'
+import { mixing, steps, type Plugins } from '#engine/browser.ts'
 import { keyOf, type Keys } from '#plugins/player/player.plugin.ts'
 
 // The point of the canvas, and of the panel, that each anchor names, as fractions of the width and
@@ -314,6 +321,19 @@ export function ui() {
   let taken: Event | undefined
   const down = new Set<string>() // the keys held on the page, each by its place on the keyboard (`keyOf`)
   let stale = new Set<string>() // the keys that were held when the modal that has the input took it
+  // Every thing's position, turn and scale after the last two steps (Between steps).
+  const between = steps<PIXI.Container>(
+    c => [c.position.x, c.position.y, c.rotation, c.scale.x, c.scale.y],
+    (c, p) => { c.position.set(p[0], p[1]); c.rotation = p[2]; c.scale.set(p[3], p[4]) },
+    mixing([2]),
+    (c, on) => { if (on !== undefined) c.visible = on; return c.visible },
+  )
+  // A container and everything on it, after what `out` holds.
+  const all = (c: PIXI.Container, out: PIXI.Container[] = []) => {
+    out.push(c)
+    for (const child of c.children) all(child, out)
+    return out
+  }
 
   const table = (): Table => {
     if (!plugins) throw new Error('ui has not ticked yet')
@@ -672,30 +692,40 @@ export function ui() {
       if (me.canvas.style.width !== `${width * s}px`) me.canvas.style.width = `${width * s}px`
       if (me.canvas.style.height !== `${height * s}px`) me.canvas.style.height = `${height * s}px`
       me.canvas.style.display = ''
-      renderer?.render(stage)
-      // The surfaces side by side along the top of their canvas, each on its own colour.
+      // The listed panels drawn on surfaces are off the stage, and are drawn between the steps too.
       const listed = Object.keys(table().panels)
       const on = [...panels.values()].filter(p => p.surfaced).sort((a, b) => listed.indexOf(a.name) - listed.indexOf(b.name))
-      if (!surfacer || !on.length) return
-      const res = renderer?.resolution ?? devicePixelRatio
-      let across = 0, tall = 0
-      for (const p of on) {
-        const [w, h] = p.spec.size!, k = p.spec.scale ?? 1
-        p.surface ??= { canvas: surfacer.canvas as HTMLCanvasElement, box: [0, 0, 0, 0] }
-        p.surface.box = [across, 0, Math.round(w * k * res), Math.round(h * k * res)]
-        across += p.surface.box[2] + 1
-        tall = Math.max(tall, p.surface.box[3])
+      if (plugins) {
+        const things = all(stage)
+        for (const p of on) all(p.box, things)
+        between.place(things, plugins.wire)
       }
-      if (surfacer.resolution !== res || surfacer.screen.width !== across / res || surfacer.screen.height !== tall / res) surfacer.resize(across / res, tall / res, res)
-      grounds.clear()
-      for (const p of on) {
-        const [x, , w, h] = p.surface!.box
-        grounds.rect(x / res, 0, w / res, h / res).fill({ color: p.spec.screen ?? 0 })
-      }
-      surfacer.render({ container: grounds, clearColor: [0, 0, 0, 1] })
-      for (const p of on) {
-        const k = p.spec.scale ?? 1
-        surfacer.render({ container: p.box, clear: false, transform: new PIXI.Matrix().scale(k, k).translate(p.surface!.box[0] / res, 0) })
+      try {
+        renderer?.render(stage)
+        // The surfaces side by side along the top of their canvas, each on its own colour.
+        if (!surfacer || !on.length) return
+        const res = renderer?.resolution ?? devicePixelRatio
+        let across = 0, tall = 0
+        for (const p of on) {
+          const [w, h] = p.spec.size!, k = p.spec.scale ?? 1
+          p.surface ??= { canvas: surfacer.canvas as HTMLCanvasElement, box: [0, 0, 0, 0] }
+          p.surface.box = [across, 0, Math.round(w * k * res), Math.round(h * k * res)]
+          across += p.surface.box[2] + 1
+          tall = Math.max(tall, p.surface.box[3])
+        }
+        if (surfacer.resolution !== res || surfacer.screen.width !== across / res || surfacer.screen.height !== tall / res) surfacer.resize(across / res, tall / res, res)
+        grounds.clear()
+        for (const p of on) {
+          const [x, , w, h] = p.surface!.box
+          grounds.rect(x / res, 0, w / res, h / res).fill({ color: p.spec.screen ?? 0 })
+        }
+        surfacer.render({ container: grounds, clearColor: [0, 0, 0, 1] })
+        for (const p of on) {
+          const k = p.spec.scale ?? 1
+          surfacer.render({ container: p.box, clear: false, transform: new PIXI.Matrix().scale(k, k).translate(p.surface!.box[0] / res, 0) })
+        }
+      } finally {
+        between.restore()
       }
     },
     close() {

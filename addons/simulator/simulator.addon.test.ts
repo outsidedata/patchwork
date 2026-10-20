@@ -1,13 +1,16 @@
 // The driver, on a scene of its own, written here into a folder as a game's is: a manager, and one
 // child, `track`, whose seats each own a `mover` that goes one unit along x a step and `v` more, `v`
-// the last `move` its seat pressed. Whole steps are predicted (`world.player.steps`), so a page's
-// `step` runs on its own clock, and the mover's `pos` says how many steps each frame drew. The seat's
-// actor binds `a` and `d` to `move` and exports `eye()`, a camera held 5 units behind its mover as
-// drawn. The manager is written too, as `lane.scene.json` and its sim, for the command line.
+// the last `move` its seat pressed. A page draws the packets as they come, so `n`, the step of the
+// packet a frame drew, says how many steps each frame moved. The seat's actor binds `a` and `d` to
+// `move` and exports `eye()`, a camera held 5 units behind its mover as drawn. The manager is written
+// too, as `lane.scene.json` and its sim, for the command line.
 //
-// The planted faults run the player plugin's own source with one fault written into it, from a copy
-// the test mocks in for the real one; each fault turns a check red that today's code keeps green.
-import { afterAll, expect, onTestFinished, test, vi } from 'vitest'
+// Where a test states how many steps each frame moved, it fixes the timing that decides it: a server
+// whose timer fires on the very millisecond owed (`grain: 0`), so step k is sent at k steps' time,
+// and a display whose vsyncs stand 8 ms past each frame's time (`phase: 8`). A packet that crosses in
+// a fixed 20 ms then arrives 3⅓ ms past each step's time, 4⅔ ms before a vsync, so no vsync falls on
+// an arrival.
+import { afterAll, expect, onTestFinished, test } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -17,7 +20,7 @@ import { boot, type Scene } from '#engine/engine.ts'
 import { accept, link, load, manager, view } from '#addons/scenemanager/scenemanager.addon.ts'
 import { loopback } from '#addons/loopback/loopback.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
-import { corrections, histogram, late, leads, packets, parse, real, report, running, simulate, standoff, summary, tap, timing, type FrameRecord, type Page, type Record_, type Run, type StepRecord } from './simulator.addon.ts'
+import { histogram, packets, parse, real, report, running, simulate, standoff, summary, tap, timing, type FrameRecord, type Page, type Record_, type Run, type StepRecord } from './simulator.addon.ts'
 
 const DT = 1 / 60
 const dir = mkdtempSync(join(tmpdir(), 'simulator-'))
@@ -25,7 +28,7 @@ afterAll(() => rmSync(dir, { recursive: true }))
 const write = (name: string, text: string) => { mkdirSync(join(dir, name, '..'), { recursive: true }); writeFileSync(join(dir, name), text) }
 
 const track: Scene = {
-  world: { player: { steps: true } },
+  world: {},
   plugins: ['scenemanager', 'player'],
   seats: 2,
   prefabs: { engine: { dt: DT, width: 10, height: 10 }, scenemanager: { out: {} }, player: { seat: 0, mover: 0 }, mover: { seat: 0, pos: [0, 0, 0], v: 0 } },
@@ -77,12 +80,18 @@ const page = (more: Partial<Page> = {}): Page => ({ display: { hz: 60 }, up: { d
 const sim = (more: Partial<Run> = {}) => simulate({ file: top, sim: { scenemanager }, base, seed: 1, ms: 3000, pages: [page()], watch: { kinds: ['mover'], fields: ['pos', 'v'], own: 'mover' }, ...more })
 const frames = (records: Record_[], p = 0) => records.filter((r): r is FrameRecord => r.type === 'frame' && r.page === p)
 const steps = (records: Record_[]) => records.filter((r): r is StepRecord => r.type === 'step')
-// How many steps each frame moved, from the page's first frame with a step on.
-const moved = (fs: FrameRecord[]) => fs.filter(f => f.step !== null).map(f => f.step!).map((s, i, a) => (i ? s - a[i - 1] : 0)).slice(1)
+// A page's frames that drew a packet, and how many steps each frame moved after the first of them.
+const drawing = (fs: FrameRecord[]) => fs.filter(f => f.n !== null)
+const moved = (fs: FrameRecord[]) => drawing(fs).map(f => f.n!).map((s, i, a) => (i ? s - a[i - 1] : 0)).slice(1)
+// The d key pressed and let go every 100 ms from 0.5 s to 2.5 s: an axis message each time, 40 in all.
+const tapping = Array.from({ length: 20 }, (_, i) => [{ at: 500 + i * 100, key: 'd' }, { at: 550 + i * 100, key: 'd', up: true }]).flat()
+// The timing that fixes how many steps each frame moves (the header).
+const exact = { server: { grain: 0 } }
+const vsynced = (hz: number) => page({ display: { hz, phase: 8 } })
 
 test('a run writes its knobs first, then every frame and step as they happen, then each packet and message', async () => {
   const lines: string[] = []
-  const records = await sim({ write: l => lines.push(l) })
+  const records = await sim({ write: l => lines.push(l), pages: [page({ presses: tapping })] })
   expect(lines).toEqual(records.map(r => JSON.stringify(r)))
   expect(records[0]).toMatchObject({ type: 'run', mode: 'sim', seed: 1, ms: 3000 })
   const types = records.map(r => r.type)
@@ -93,13 +102,10 @@ test('a run writes its knobs first, then every frame and step as they happen, th
   expect(frames(records).length).toBeGreaterThanOrEqual(179)
 })
 
-// The frames after the one that took the first round trip, which moves the page on by its lead.
-const settled = (fs: FrameRecord[]) => fs.slice(fs.findIndex(f => f.ack > 0) + 1)
-
-test('a page on a 60 Hz display against a server keeping time draws one step every frame once it has its lead', async () => {
-  const fs = frames(await sim())
-  expect(new Set(moved(settled(fs)))).toEqual(new Set([1]))
-  expect(fs[fs.length - 1].lead).toBe(3)
+test('a page on a 60 Hz display, its packets a fixed time behind a server keeping exact time, draws one step every frame', async () => {
+  const fs = frames(await sim({ ...exact, pages: [vsynced(60)] }))
+  expect(new Set(moved(fs))).toEqual(new Set([1]))
+  expect(moved(fs).length).toBeGreaterThan(170)
 })
 
 test('the same seed is the same bytes, and another seed another run', async () => {
@@ -117,8 +123,7 @@ test('a press between frames reaches the server as the key\'s message, and each 
     { type: 'press', page: 0, t: 1500, key: 'KeyD', up: true, taken: true },
     { type: 'press', page: 0, t: 2000, act: ['move', 3], taken: true },
   ])
-  const applied = steps(records).flatMap(s => s.applied).filter(a => a.action === 'move')
-  expect(applied.map(a => a.late)).toEqual([0, 0, 0])
+  expect(steps(records).flatMap(s => s.applied).filter(a => a.action === 'move').map(a => a.page)).toEqual([0, 0, 0])
   const x = (t: number) => steps(records).find(s => s.t >= t)!.rows!.track
   const v = (t: number) => Object.values(x(t))[0].v
   expect([v(900), v(1300), v(1800), v(2500)]).toEqual([0, 1, 0, 3])
@@ -129,11 +134,12 @@ test('a press before the page has a client is written down as not taken', async 
   expect(records.find(r => r.type === 'press')).toMatchObject({ taken: false })
 })
 
+// A frame of either display is shorter than a step, so it takes one packet or none.
 test('a 120 Hz display draws a step every other frame, and a 144 Hz one never two steps in a frame', async () => {
-  const at120 = moved(settled(frames(await sim({ pages: [page({ display: { hz: 120 } })] }))))
+  const at120 = moved(frames(await sim({ ...exact, pages: [vsynced(120)] })))
   expect(new Set(at120)).toEqual(new Set([0, 1]))
   expect(at120.filter(m => m === 1).length / at120.length).toBeCloseTo(0.5, 1)
-  const at144 = moved(settled(frames(await sim({ pages: [page({ display: { hz: 144 } })] }))))
+  const at144 = moved(frames(await sim({ ...exact, pages: [vsynced(144)] })))
   expect(new Set(at144)).toEqual(new Set([0, 1]))
 })
 
@@ -193,27 +199,19 @@ test('a server that pauses runs no step inside a pause and makes up the steps it
 })
 
 // Node truncates the interval to 16 ms and each firing comes a millisecond late on the mean: 17 ms a
-// step, the 58.76 steps a second a real one measured.
+// step, the 58.76 steps a second a real one measured. Fewer packets come than the display draws
+// frames, so the frames that take none outnumber those that take two by the steps lost.
 test('the setInterval server loses steps: it falls behind the scene\'s rate, and the page holds a frame each time', async () => {
   const records = await sim({ ms: 10_000, server: { loop: 'interval', late: 1 } })
   const rate = steps(records).length / 10
   expect(rate).toBeLessThan(59.5)
   expect(rate).toBeGreaterThan(58)
-  expect(moved(settled(frames(records))).filter(m => m === 0).length).toBeGreaterThan(5)
-})
-
-test('a frame the page corrects says by how much: another seat\'s press, which the page cannot have run', async () => {
-  const records = await sim({ pages: [page(), page({ presses: [{ at: 1500, act: ['move', 4] }] })] })
-  const fixed = frames(records, 0).filter(f => f.fix)
-  expect(fixed.length).toBeGreaterThan(0)
-  expect(fixed[0].fix!.rows).toBe(1)
-  expect(fixed[0].fix!.size).toBeGreaterThan(0)
-  expect(frames(records, 1).filter(f => f.fix)).toEqual([])
+  expect(moved(frames(records)).filter(m => m === 0).length).toBeGreaterThan(5)
 })
 
 test('every frame records the camera of the actor that exports eye(), and each packet and message what became of it', async () => {
-  const records = await sim({ pages: [page({ up: { delay: 20, loss: 0.2, dup: 0.2 }, down: { delay: 20, loss: 0.2, dup: 0.2 } })] })
-  const f = settled(frames(records))[10]
+  const records = await sim({ pages: [page({ up: { delay: 20, loss: 0.2, dup: 0.2 }, down: { delay: 20, loss: 0.2, dup: 0.2 }, presses: tapping })] })
+  const f = drawing(frames(records))[10]
   const x = (f.rows[f.own!].pos as number[])[0]
   expect(f.eye).toEqual({ pos: [x - 5, 0, 0], dir: [1, 0, 0], target: [x, 0, 0] })
   const packets = records.filter(r => r.type === 'packet')
@@ -257,7 +255,7 @@ export function remove() {}
 `)
   const orbit: Scene = { ...top, prefabs: { ...top.prefabs, scenemanager: { ...top.prefabs.scenemanager, scenes: { ring: { file: 'ring.scene.json', suspend: false } }, entry: 'ring' } } }
   const records = await simulate({ file: orbit, sim: { scenemanager }, base: pathToFileURL(join(dir, 'orbit') + '/').href, seed: 1, ms: 1000, pages: [page()], watch: { kinds: ['mover'], fields: ['pos'], own: 'mover' } })
-  const f = settled(frames(records))[10]
+  const f = drawing(frames(records))[10]
   const x = (f.rows[f.own!].pos as number[])[0]
   expect(Object.keys(f.eye!)).toEqual(['pos', 'dir'])
   ;[x, 1, -5].forEach((v, i) => expect(f.eye!.pos[i]).toBeCloseTo(v, 9))
@@ -314,14 +312,16 @@ test('parse reads back the lines a run wrote', async () => {
   expect(parse(lines.join('\n') + '\n')).toEqual(records)
 })
 
-test('histogram: a page keeping time moves one step a frame from its join, and the join frame moves by its lead', async () => {
-  const h = histogram(await sim(), 0)
+// Under the exact timing (the header) step 1's packet is sent at 16⅔ ms and arrives at 36⅔, which
+// the vsync at 8 + 2 × 16⅔ ms takes, so that frame is the first to draw.
+test('histogram: a page drawing a packet a frame moves one step a frame from its first packet, and says when that was', async () => {
+  const h = histogram(await sim({ ...exact, pages: [vsynced(60)] }), 0)
   expect(Object.keys(h.counts)).toEqual(['1'])
   expect(h.counts[1]).toBeGreaterThan(170)
-  expect(h.join).toBe(4)
+  expect(h.first).toBeCloseTo(8 + 2000 / 60, 6)
   const held = histogram(await sim({ ms: 10_000, server: { loop: 'interval', late: 1 } }), 0)
   expect(held.counts[0]).toBeGreaterThan(5)
-  expect(histogram([{ type: 'run', mode: 'sim', ms: 0, pages: [] }], 0)).toEqual({ join: null, counts: {} })
+  expect(histogram([{ type: 'run', mode: 'sim', ms: 0, pages: [] }], 0)).toEqual({ first: null, counts: {} })
 })
 
 test('standoff: the distance from the camera to the page\'s own row, and how much it changes frame to frame', async () => {
@@ -329,29 +329,20 @@ test('standoff: the distance from the camera to the page\'s own row, and how muc
   expect(s.frames.length).toBeGreaterThan(170)
   expect(new Set(s.frames.map(f => f.d))).toEqual(new Set([5]))
   expect(s.jitter).toEqual({ max: 0, rms: 0 })
-  const frame = (t: number, x: number, eye: number): FrameRecord => ({ type: 'frame', page: 0, t, clock: t, n: t, step: t, took: [], ack: 1, lead: 0, reruns: 0, fix: null, rows: { 1: { kind: 'mover', pos: [x, 0, 0] } }, own: 1, eye: { pos: [eye, 0, 0], dir: [1, 0, 0], target: [x, 0, 0] } })
+  const frame = (t: number, x: number, eye: number): FrameRecord => ({ type: 'frame', page: 0, t, clock: t, n: t, took: [], rows: { 1: { kind: 'mover', pos: [x, 0, 0] } }, own: 1, eye: { pos: [eye, 0, 0], dir: [1, 0, 0], target: [x, 0, 0] } })
   const judder = standoff([frame(0, 10, 5), frame(1, 11, 5), frame(2, 12, 7), frame(3, 13, 7), frame(4, 14, 9)], 0)
   expect(judder.frames.map(f => f.d)).toEqual([5, 6, 5, 6, 5])
   expect(judder.jitter).toEqual({ max: 1, rms: 1 })
 })
 
-test('leads, corrections, envelopes a frame and late presses, each a page\'s own', async () => {
-  const records = await sim({ pages: [page({ down: { delay: 20, burst: 0.5 }, presses: [{ at: 60, act: ['move', 1] }] }), page({ presses: [{ at: 1500, act: ['move', 4] }] })] })
-  expect(leads(records, 0).at(-1)!.lead).toBe(3)
-  // Each page corrects for the other's press, which it could not have run; page 1 pressed at 1500.
-  const c = corrections(records, 0), d = corrections(records, 1)
-  expect(c.count).toBe(c.each.length)
-  expect(c.each.some(x => x.t > 1500 && x.size > 0)).toBe(true)
-  expect(d.count).toBeGreaterThan(0)
-  expect(d.each.every(x => x.t < 1500)).toBe(true)
+// Page 0's envelopes come in bursts, half of them held back and handed on with the next, so its
+// frames take two or none; page 1's cross in a fixed time and its frames take one each.
+test('envelopes a frame, each a page\'s own', async () => {
+  const records = await sim({ ...exact, pages: [{ ...vsynced(60), down: { delay: 20, burst: 0.5 } }, vsynced(60)] })
   const p = packets(records, 0)
   expect(p[0]).toBeGreaterThan(10)
   expect(p[2]).toBeGreaterThan(10)
   expect(packets(records, 1)).toEqual({ 1: expect.any(Number) })
-  // Pressed before the page has measured its lead, the press is stamped for a step the server has
-  // passed by the time it arrives.
-  expect(late(records, 0).map(a => a.action)).toEqual(['move'])
-  expect(late(records, 1)).toEqual([])
 })
 
 test('summary puts every part of every page together, and report prints it', async () => {
@@ -390,25 +381,22 @@ test('the command line plays a config, writes its JSONL, and summarises any JSON
 // display that wobbles and drops frames, played again from its step and frame times alone and its
 // network's waits, draws the very steps it drew, frame for frame.
 test('a simulation given a recording\'s timing draws what the recording drew', async () => {
-  const first = await sim({ server: { late: 1.5, pause: { every: 0.5, ms: 60 } }, pages: [page({ up: { delay: 23 }, down: { delay: 31 }, display: { hz: 60, wobble: 5, drop: 0.1 } })] })
+  const first = await sim({ server: { late: 1.5, pause: { every: 0.5, ms: 60 } }, pages: [page({ up: { delay: 23 }, down: { delay: 31 }, display: { hz: 60, wobble: 5, drop: 0.1 }, presses: tapping })] })
   const t = timing(first)
   expect(t.pages[0]).toMatchObject({ up: { delay: 23 }, down: { delay: 31 } })
   expect(t.server.steps).toHaveLength(steps(first).length)
   const again = await sim({ ...t, pages: t.pages })
-  expect(frames(again).map(f => [f.t, f.step])).toEqual(frames(first).map(f => [f.t, f.step]))
+  expect(frames(again).map(f => [f.t, f.n])).toEqual(frames(first).map(f => [f.t, f.n]))
   expect(histogram(again, 0)).toEqual(histogram(first, 0))
   expect(() => timing([])).toThrow('the records have no run line')
 })
 
 // The same page on the machine's clocks, over a real socket to the manager served here, and a
 // simulation of it given the real run's timing (`timing`): the server's steps, the moments the page
-// placed its steps, the socket's handshake, and when each envelope, message and word arrived.
+// drew its frames, the socket's handshake, and when each envelope, message and word arrived.
 // Whatever the machine's timers did to the real run, late firings and a socket held under load
 // included, the simulation draws the same steps a frame, within a stated tolerance: the fraction of
-// frames that move each number of steps is within 0.02 of the real run's, for every number. It is not
-// exact where the page's lead drops as its first measurements leave the player's window, a stretch
-// the simulation comes through a frame or two apart. A simulation of the knobs alone (a 60 Hz
-// display, a server keeping time) differed by 0.48 from a run made under load.
+// frames that move each number of steps is within 0.02 of the real run's, for every number.
 test('a real run over the socket and a simulation of its timing draw the same steps a frame', async () => {
   const ms = 4000
   const records = await real({ file: top, sim: { scenemanager }, base, ms, port: 0, pages: [{ hz: 60, presses: [{ at: 2000, act: ['move', 1] }] }], watch: { kinds: ['mover'], fields: ['pos'], own: 'mover' } })
@@ -481,59 +469,4 @@ test('with ?tap every frame is a frame record, watched as the address says, sent
 
 test('a tap names its recording with letters, digits, _, . and - only', async () => {
   await expect(tapped('?tap=../x', 1)).rejects.toThrow('the tap is named "../x": letters, digits, _, . and - only')
-})
-
-// ------------------------------------------------------------------ planted faults
-
-// The player plugin's source with `plant` done to it, written where the page's client imports it
-// from for the length of `f`: a copy in the test's folder whose imports reach the repo as the real
-// file's do. A plant that no longer finds what it rewrites throws, so a fault is never planted in
-// name only.
-async function planted<T>(plant: (source: string) => string, f: () => Promise<T>): Promise<T> {
-  const real = new URL('../../plugins/player/player.plugin.ts', import.meta.url)
-  const source = readFileSync(real, 'utf8')
-  const moved = source.replaceAll("from '#", `from '${new URL('../../', import.meta.url).pathname}`).replaceAll('import.meta.url', JSON.stringify(real.href))
-  const copy = join(dir, `player.planted.${Math.random().toString(36).slice(2)}.ts`)
-  const changed = plant(moved)
-  if (changed === moved) throw new Error('the plant found nothing to rewrite')
-  writeFileSync(copy, changed)
-  vi.doMock('#plugins/player/player.plugin.ts', () => import(copy))
-  try { return await f() } finally { vi.doUnmock('#plugins/player/player.plugin.ts') }
-}
-const rewrite = (from: string, to: string) => (source: string) => {
-  if (!source.includes(from)) throw new Error(`the player plugin no longer holds ${JSON.stringify(from)}`)
-  return source.replace(from, to)
-}
-const ones = (records: Record_[]) => Object.keys(histogram(records, 0).counts).join()
-
-// The page placed its step from each packet's arrival time, as it did before its own clock: the
-// last packet's step, the lead, and the steps since that packet arrived. Packets that come 30 to
-// 40 ms after they were sent make that judder.
-test('planted: a page that places its step from each packet\'s arrival draws frames of 0 and 2 steps', async () => {
-  const knobs = { pages: [page({ down: { delay: 30, jitter: 10 } })] }
-  expect(ones(await sim(knobs))).toBe('1')
-  const records = await planted(rewrite('    low = Math.floor(want)\n', '    low = Math.floor(want)\n    { const t = taken[taken.length - 1]; return t.n + leadNow() + Math.floor((now - t.at) / ms + 1 / 4) }\n'), () => sim(knobs))
-  expect(ones(records)).not.toBe('1')
-  const h = histogram(records, 0).counts
-  expect((h[0] ?? 0) + (h[2] ?? 0)).toBeGreaterThan(10)
-})
-
-// A server stepped by setInterval of a step's milliseconds, as node runs one: 16 ms and a
-// millisecond late on the mean, 58.8 steps a second, so the page holds a frame each time the server
-// falls a step behind.
-test('planted: a setInterval server makes the page hold frames; the loop every server runs does not', async () => {
-  expect(ones(await sim({ ms: 10_000, server: { late: 1 } }))).toBe('1')
-  const records = await sim({ ms: 10_000, server: { loop: 'interval', late: 1 } })
-  expect(histogram(records, 0).counts[0]).toBeGreaterThan(5)
-})
-
-// The ack of a press dropped the press before the page had run the step it was stamped for. Only a
-// page on the server's own step shows it: with next to no network the press is acked on the packet
-// of the very step it is stamped for, and a page that has dropped it runs that step without it.
-test('planted: dropping a press on its ack before running its step corrects what the page drew', async () => {
-  const knobs = { pages: [page({ up: { delay: 0.1 }, down: { delay: 0.1 }, presses: [1000, 1300, 1600, 1900, 2200].map((at, i) => ({ at, act: ['move', i % 2] as [string, number] })) })] }
-  const today = await sim(knobs)
-  expect(corrections(today, 0).count).toBe(0)
-  const records = await planted(rewrite('      stuck = false\n', '      pending = pending.filter(p => p.seq > wire!.ack)\n      stuck = false\n'), () => sim(knobs))
-  expect(corrections(records, 0).count).toBeGreaterThan(0)
 })

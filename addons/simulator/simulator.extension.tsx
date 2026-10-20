@@ -2,12 +2,11 @@
 // `addons/simulator/runs/`, each a run the simulator wrote as JSONL: one played here, one a browser's
 // tap recorded, or one the command line was told to write there.
 //   - the recording picked, the newest unless another is: its summary, a row a page (steps a frame
-//     from its join and the join's own, its lead, its corrections and the largest, envelopes a frame,
-//     late presses, standoff jitter), a page picked by its row;
+//     from its first packet, envelopes a frame, standoff jitter), a page picked by its row;
 //   - a timeline of it in milliseconds: the server's steps, and each page's frames, the frames that
-//     moved it by other than one step after its join, the envelopes it took, its corrections and its
+//     moved the step drawn by other than one after its first packet, the envelopes it took and its
 //     presses, each a mark at its time; the playhead picks a time;
-//   - each page's lead, steps a frame and standoff over time, a chart each;
+//   - each page's steps a frame and standoff over time, a chart each;
 //   - the frame of the page picked at the time picked: its record, the envelopes it took, when each
 //     was sent and arrived, and the rows it drew, its own marked;
 //   - Run: a config, as the command line takes one, the open game's with two pages to start from,
@@ -31,7 +30,7 @@
 //             report the command line printed and the recording's path.
 import { z } from 'zod'
 import { routeOf, type Editor } from '#editor/editor.ts'
-import { histogram, NAME, parse, RUNS, standoff, summary, type FrameRecord, type PressRecord, type Record_, type Run, type StepRecord } from './simulator.addon.ts'
+import { NAME, parse, RUNS, standoff, summary, type FrameRecord, type PressRecord, type Record_, type Run, type StepRecord } from './simulator.addon.ts'
 import { Runs } from './simulator.components.tsx'
 
 // The recordings' names, in order, as the editor's files list them; none while the folder is not
@@ -76,10 +75,11 @@ export const CONFIG = z.strictObject({
     display: z.strictObject({ hz: z.number().positive(), at: z.array(at0).optional(), phase: z.number().optional(), wobble: at0.optional(), drop: fraction.optional(), long: every.optional(), hidden: z.array(z.tuple([at0, at0])).optional(), stall: at0.optional() }),
     clock: z.strictObject({ offset: z.number().optional(), ppm: z.number().optional() }).optional(),
     up: leg, down: leg,
+    predict: z.boolean().optional(),
     presses: z.array(z.strictObject({ at: at0, act: z.tuple([z.string()]).rest(z.union([z.number(), z.string(), z.boolean(), z.null()])).optional(), key: z.string().optional(), up: z.boolean().optional() })).optional(),
   })).min(1),
   server: z.strictObject({ steps: z.array(at0).optional(), loop: z.enum(['owed', 'interval']).optional(), grain: at0.optional(), late: at0.optional(), pause: every.optional(), ppm: z.number().optional() }).optional(),
-  watch: z.strictObject({ kinds: z.array(z.string()).optional(), fields: z.array(z.string()).optional(), own: z.union([z.string(), z.array(z.string())]).optional() }).optional(),
+  watch: z.strictObject({ kinds: z.array(z.string()).optional(), fields: z.array(z.string()).optional(), own: z.union([z.string(), z.array(z.string())]).optional(), drawn: z.boolean().optional() }).optional(),
   cost: z.boolean().optional(),
 })
 
@@ -114,14 +114,13 @@ export async function play(ed: Editor, name: string, config: unknown): Promise<{
   return { name: got.name, report: got.report, files: got.files }
 }
 
-// A recording's frames, each page's frames, and the frames of a page that moved it by other than one
-// step after its join.
+// A recording's frames, and each frame of a page after its first packet's with how many steps it
+// moved the step drawn.
 const framesIn = (records: Record_[]) => records.filter((r): r is FrameRecord => r.type === 'frame')
-const moved = (fs: FrameRecord[]) => fs.filter(f => f.step !== null).map((f, i, a) => ({ t: f.t, m: i ? f.step! - a[i - 1].step! : 0 })).slice(1)
-const joinOf = (records: Record_[], frames: FrameRecord[], p: number) => histogram(records, p).join === null ? Infinity : (frames.filter(f => f.page === p).find(f => f.ack > 0)?.t ?? Infinity)
+const moved = (fs: FrameRecord[]) => fs.filter(f => f.n !== null).map((f, i, a) => ({ t: f.t, m: i ? f.n! - a[i - 1].n! : 0 })).slice(1)
 
 // The timeline's lanes: the server's steps, and each page's frames, frames off a step after its
-// join, envelopes, corrections and presses, each a list of times.
+// first packet, envelopes and presses, each a list of times.
 export function lanesOf(records: Record_[], pages: number[]): { id: string; label: string; marks: { at: number }[] }[] {
   const frames = framesIn(records)
   return [
@@ -130,21 +129,19 @@ export function lanesOf(records: Record_[], pages: number[]): { id: string; labe
       const fs = frames.filter(f => f.page === p)
       return [
         { id: `frames-${p}`, label: `page ${p} frames`, marks: fs.map(f => ({ at: f.t })) },
-        { id: `off-${p}`, label: `page ${p} off a step`, marks: moved(fs).filter(x => x.t > joinOf(records, frames, p) && x.m !== 1).map(x => ({ at: x.t })) },
+        { id: `off-${p}`, label: `page ${p} off a step`, marks: moved(fs).filter(x => x.m !== 1).map(x => ({ at: x.t })) },
         { id: `took-${p}`, label: `page ${p} envelopes`, marks: fs.flatMap(f => f.took.map(k => ({ at: k.at }))).sort((a, b) => a.at - b.at) },
-        { id: `fix-${p}`, label: `page ${p} corrections`, marks: fs.filter(f => f.fix).map(f => ({ at: f.t })) },
         { id: `press-${p}`, label: `page ${p} presses`, marks: records.filter((r): r is PressRecord => r.type === 'press' && r.page === p).map(r => ({ at: r.t })) },
       ]
     }),
   ]
 }
 
-// The charts: each page's lead, steps a frame and standoff over time, as [ms, value] points.
-export function seriesOf(records: Record_[], pages: number[]): Record<'lead' | 'steps' | 'standoff', { label: string; points: [number, number][] }[]> {
+// The charts: each page's steps a frame and standoff over time, as [ms, value] points.
+export function seriesOf(records: Record_[], pages: number[]): Record<'steps' | 'standoff', { label: string; points: [number, number][] }[]> {
   const frames = framesIn(records)
   const per = (f: (p: number) => [number, number][]) => pages.map(p => ({ label: `page ${p}`, points: f(p) }))
   return {
-    lead: per(p => frames.filter(f => f.page === p).map(f => [f.t, f.lead])),
     steps: per(p => moved(frames.filter(f => f.page === p)).map(x => [x.t, x.m])),
     standoff: per(p => standoff(records, p).frames.map(x => [x.t, x.d])),
   }

@@ -1,6 +1,6 @@
 ---
 name: writing-the-look
-description: Use in core, or any clone of it, when working on how a game looks. That covers choosing render2d or render3d, switching a scene to 3D, drawing a kind in its `<kind>.client.ts` (a mesh, a box, a PIXI graphic), and the sky, sun, lights, shadows, fog, weather and rain (`skydome3d`, `environment3d`). It covers the ground's colours and detail (`terrain3d`'s field), the sea (`ocean3d`), trees and rocks on the land (`scatter3d`), particles (`particle3d`, `particle2d`), and darkness and torches in 2D (`light2d`). It covers the camera, background, shadows, bloom, AO and exposure that render3d takes from the scene, and a look setting only the page keeps, such as brightness (the store). Also use it when one look plugin needs another's knowledge (the sky's light on the sea, the land under the rain or under scatter) through `world.<p>.mods`. And use it when the sky draws black, nothing draws, a thing casts no shadow or stays dry in the rain, or a plugin throws that it is listed in the wrong order.
+description: Use in core, or any clone of it, when working on how a game looks. That covers choosing render2d or render3d, switching a scene to 3D, drawing a kind in its `<kind>.client.ts` (a mesh, a box, a PIXI graphic), turning, spinning or rotating a mesh, and the sky, sun, lights, shadows, fog, weather and rain (`skydome3d`, `environment3d`). It covers the ground's colours and detail (`terrain3d`'s field), the sea (`ocean3d`), trees and rocks on the land (`scatter3d`), particles (`particle3d`, `particle2d`), and darkness and torches in 2D (`light2d`). It covers the camera, background, shadows, bloom, AO and exposure that render3d takes from the scene, and a look setting only the page keeps, such as brightness (the store). Also use it when one look plugin needs another's knowledge (the sky's light on the sea, the land under the rain or under scatter) through `world.<p>.mods`. And use it when a thing judders, flips or spins the long way, the sky draws black, nothing draws, a thing casts no shadow or stays dry in the rain, or a plugin throws that it is listed in the wrong order.
 ---
 
 # Writing the look
@@ -18,8 +18,7 @@ It applies to what a seat sees in the game's canvas: the renderer, the camera's 
 look needs them, light, sky, weather, ground colour, sea, particles, and how each kind is drawn.
 Something else applies instead to:
 
-- how a camera moves (a follow, a chase, an orbit, a shake, smoothing): `tuning-feel` and
-  `building-3d-cameras`.
+- how a camera moves (a follow, a chase, an orbit, a shake, smoothing): `tuning-feel`.
 - the art files themselves (sprite sheets, glTF models, textures) and putting them in the loader
   catalogue: `bringing-in-art`, and `making-game-assets` for making them.
 - the shape of the land, a level's layout, a Tiled map, where scatter grows: `building-a-level`.
@@ -41,9 +40,11 @@ Something else applies instead to:
   skydome3d reads `prefabs.render3d` for render3d's tone and AO (`plugins/skydome3d/skydome3d.plugin.ts`).
   Their numbers belong in `world.render3d` and `world.environment3d`. So the job that uses render3d
   or environment3d moves their numbers there first, in one change, through `building-a-plugin`. The
-  move touches those three reads (`plugins/render3d/render3d.plugin.ts:323`,
-  `plugins/environment3d/environment3d.plugin.ts:42`, `plugins/skydome3d/skydome3d.plugin.ts:678`)
-  and the headers beside them; both plugins' extensions, `plugins/render3d/render3d.extension.tsx`
+  move touches those three reads, `plugins.wire.scene.prefabs.render3d as Prefab | undefined` in
+  `plugins/render3d/render3d.plugin.ts`, `plugins.wire.scene.prefabs.environment3d` in
+  `plugins/environment3d/environment3d.plugin.ts` and `plugins.wire.scene.prefabs.render3d ?? {}` in
+  `plugins/skydome3d/skydome3d.plugin.ts` (found with `grep -nE 'prefabs\.(render3d|environment3d)'`
+  on those files), and the headers beside them; both plugins' extensions, `plugins/render3d/render3d.extension.tsx`
   and `plugins/environment3d/environment3d.extension.tsx`, which type the prefab's fields, and their
   tests; every other test that gives either prefab, found with `grep -rlnE
   '"?(render3d|environment3d)"?: \{' plugins addons editor extensions`; every scene of every game in
@@ -110,19 +111,28 @@ Switching a scene of the generated game to 3D, in order:
    ground and the rest" says.
 3. Every `pos` that meant canvas pixels now means metres. Change the start actors' `pos` to
    [x, y, z], the definitions' speeds and sizes to metres, and the rules that move a thing to the
-   new axes. The generated `body.sim.ts` moves `pos[0]` and `pos[1]` and writes a pos of two
-   numbers. Rewrite it to `[pos[0] + x·step, pos[1], pos[2] + y·step]`, so the stick's y runs along z
-   and the up arrow walks away from a camera looking down −z. A thing that stands on the land has its
-   rule set `pos[1]` with `heightAt(w, x, z)` from `plugins/terrain3d/terrain3d.sim.ts`.
-4. Every kind's `.client.ts` redrawn against render3d (next section).
+   new axes. The generated game moves its seat's thing on a `body` row its `player` row spawns; that
+   is the editor's template, on hold, and never the model. The `body` is folded into the `player`
+   row first, its fields onto the `player` prefab, its rule into `player.sim.ts`, its look into
+   `player.client.ts`, and `body` taken out of the sim, the scene and the test
+   (`designing-a-seat`), since a page running the scene ahead draws only the seat's own `player` row
+   on the frame after the key. Then the `player` row's `tick`, which moves `pos[0]` and `pos[1]` and
+   writes a pos of two numbers, is rewritten to `[pos[0] + x·step, pos[1], pos[2] + y·step]`, so the
+   stick's y runs along z and the up arrow walks away from a camera looking down −z. A thing that
+   stands on the land has its rule set `pos[1]` with `heightAt(w, x, z)` from
+   `plugins/terrain3d/terrain3d.sim.ts`.
+4. Every kind's `.client.ts` redrawn against render3d (next section), `player.client.ts` among them:
+   it draws the thing for every seat's `player` row, and moves the camera and binds keys only for the
+   row that is `mine`.
 5. The tests beside each changed file, and the game's `<game>.sim.test.ts`, changed to the new
    meaning and run (How it is proven).
 
 ## A kind's look
 
 `games/<game>/<kind>.client.ts` exports `setup(row, plugins)`, `tick(row, plugins)` and
-`remove(plugins)`. The page imports it once per row, as `<kind>.client.ts?row=<id>`
-(`engine/browser.ts`), so a variable at the top of the file holds that row's drawing alone. It is
+`remove(plugins)`. The page imports it once per row of each client, as
+`<kind>.client.ts?row=<id>&client=<c>` (`engine/browser.ts`), so a variable at the top of the file
+holds that row's drawing alone, never another seat's in the same tab. It is
 set in `setup`. A kind with no `.client.ts` is not drawn by itself.
 
 It draws through the plugins the scene lists and builds nothing a plugin builds. A thing drawn
@@ -133,7 +143,9 @@ effect.
 Such a kind needs no `.client.ts` for that drawing. What no plugin draws, a kind draws itself:
 
 ```ts
-// One seat's body: a box of its definition's `size` and `colour`, its bottom on the row's `pos`.
+// player.client.ts: a seat's thing, a box of its definition's `size` and `colour`, its bottom on the
+// row's `pos`, drawn for every seat's `player` row (its keys and camera, for the row that is `mine`,
+// are `input-and-seats`' and `tuning-feel`'s).
 import type * as THREE from 'three'
 import type { Row } from '#engine/engine.ts'
 import type { Plugins } from '#engine/browser.ts'
@@ -174,6 +186,14 @@ export function remove(plugins: Plugins) {
   environment3d's `sun.shadow`), and `castShadow` and `receiveShadow` on each mesh.
 - Every number comes off the definition or the row. `size / 2` is arithmetic on the definition,
   not a number of its own.
+- A turn is set whole, as a quaternion: `mesh.quaternion.setFromAxisAngle(up, row.data.turn)` for a
+  turn about one axis, `quaternion.fromArray` for a row that carries one. Never one Euler angle
+  alone (`mesh.rotation.y = turn`). After every draw render3d puts each object back by writing its
+  quaternion (Between steps, `render3d.plugin.ts`), and three works the Euler angles out again from
+  it: past 90° of y it gives x = π, y = π − turn, z = π. The next `rotation.y =` keeps that x and z,
+  a mirrored orientation, and the blend between it and the true one turns the long way round every
+  frame. A turning cube did exactly that, and three hours went on the engine before one measurement
+  found it.
 - `remove` takes off and disposes what `setup` made. The page runs it when the row ends and when the
   client closes.
 - On the first packet, `setup` runs before any plugin has ticked. render3d has no camera yet,
@@ -217,7 +237,7 @@ each:
   `texture` entries), and the colours of the `surfaces` the brush paints. A change to the bands'
   colours, amounts and edges, the surfaces' colours, covers and edges, or the detail but for its
   record rules, rebuilds the material and no ring. Every ring takes shadows, and a ring within `shadowReach`
-  casts them.
+  casts them. The whole of it is `using-terrain3d`.
 - `ocean3d` (`plugins/ocean3d/ocean3d.plugin.ts`, `ocean3d.sim.ts`): the sea. It is a row whose
   prefab is `t` and nothing else, `{ "t": 0 }`, the sim lists `ocean3d` from
   `#plugins/ocean3d/ocean3d.sim.ts`, and the rest is `world.ocean3d`. It is lit by a `light` mod or
@@ -227,12 +247,25 @@ each:
 - `particle3d` and `particle2d`: a ledger row (prefab `{ "next": 1, "live": [] }`, the sim listing
   `particle3d` or `particle2d` from its `.sim.ts`, one actor) and `world.particle3d` or
   `world.particle2d`, `{ effects, hold }`, with `effects` a catalogue entry of the effects file. A rule spawns an effect with `emit(w, effect, at, spawn)` from
-  `particle3d.sim.ts` or `particle2d.sim.ts`, and a page with the browser half's own `emit`. The
-  scene names the ledger's kind in `world.player.ledgers`. A particle with `gain` above 1 is
-  brighter than white and blooms under render3d's `bloom`.
+  `particle3d.sim.ts` or `particle2d.sim.ts`, and a page with the browser half's own `emit`. A
+  particle with `gain` above 1 is brighter than white and blooms under render3d's `bloom`.
 - render3d's own look: `shadows`, `background`, `ao`, `bloom`, `pixelRatio`, and `tone` and
-  `exposure`. A plugin adds to every frame through `splice` and `dress`, `pass` for an effect pass,
-  and `overlay` for a cockpit or a held tool (its header).
+  `exposure`. A plugin adds to every frame through `splice` and `dress`, `pass` for an effect pass
+  on the light before the tone mapping, `finish` for a pass on the screen's colours after it,
+  `ratio` to draw at another resolution live, shown as hard blocks or smoothed, and `overlay` for a
+  cockpit or a held tool (its header).
+- `dither3d` (`plugins/dither3d/dither3d.plugin.ts`): the PlayStation's look, a 4×4 ordered dither
+  over colour cut to `bits` a channel, drawn at `ratio` as hard blocks. `world.dither3d` is
+  `{ on, bits, matrix, ratio }`; it hands render3d nothing until it is first on, and `on`, `bits`
+  and `ratio` are set live on `plugins.dither3d`.
+- `cull3d` (`plugins/cull3d/cull3d.plugin.ts`): what render3d's scene holds many copies of, drawn
+  only where the camera sees it. Three culls an InstancedMesh whole, so a city's lots or a forest's
+  trees standing all round the camera are drawn whole, behind it too, and far ones shaded under near
+  ones. A look or a plugin hands cull3d its copies, `crowd({ matrices, colours?, levels })`, each level
+  `{ meshes, within }`, and cull3d writes the meshes' instances as the scene is drawn: each copy in
+  the view of the camera drawn through (or, at a level that casts, in a shadow's view), at the level
+  its distance picks, nearest first. A mesh all round the course, a ground or a road, is cut into
+  tiles three culls one by one with `split(geometry)`. `world.cull3d` is `{ cell, tile }`, metres.
 - `light2d` (`plugins/light2d/light2d.plugin.ts`): darkness over render2d's world and the lights
   that cut it. `world.light2d` holds `layer`, `ambient`, `kinds`, `budget`, `falloff` and
   `flicker`. A row of a listed kind gives its kind's light, and carries its own `light` field only
@@ -240,7 +273,7 @@ each:
   for the next draw with `plugins.light2d.ambient(a)` in its `tick`.
 - render2d's own look: `world.render2d.background`. In an actor's `tick`, `background(colour)`,
   `parallax(name, fx, fy)` and `mosaic(size, names)`.
-- `cover3d` draws nothing: it answers a rule's question of where a body can hide.
+- `cover3d` draws nothing: it answers a rule's question of where a mover can hide.
 
 ## The order the scene lists them in
 
@@ -261,6 +294,9 @@ reads another's work of the same frame is listed after that one.
   their order (How it is proven).
 - A plugin that asks a mod `ahead` throws unless the provider is listed before it, as skydome3d
   does for terrain3d's land.
+- cull3d is listed before whatever hands it a crowd or a split in its `tick` (`shipped`, for a
+  game's own plugin), which throws `cull3d has not ticked yet` otherwise. An actor's look uses it
+  from its `tick`, never its `setup`, which runs before any plugin has ticked.
 
 A scene of the generated game with a sky over terrain lists
 `["loader", "scenemanager", "player", "terrain3d", "skydome3d", "render3d"]`.
@@ -268,7 +304,8 @@ A scene of the generated game with a sky over terrain lists
 ## Mods, as a scene names them
 
 When one look plugin needs what another knows, the scene switches it on with one value:
-`world.<p>.mods: { <function>: '<a>' }`. The file is `plugins/<a>/<a>.<p>.ts`. Before the first
+`world.<p>.mods: { <function>: '<a>' }`, or a list, `['<a>', '<b>']`, for a function `p` takes from
+several plugins (`addons/scenemanager`'s Mods header). The file is `plugins/<a>/<a>.<p>.ts`. Before the first
 step, on the server and on the page alike, the scenemanager imports every mod a scene names, and
 it throws when the file does not export the function. The mods of the look:
 
@@ -345,6 +382,16 @@ that owns the exposure.
   weathers file missing one of its 13 numbers, which throws where it is read; the prefab's `from`
   and `mix` are each a whole Weather of the same 13 (`skydome3d.sim.ts`). A weathers or field file
   not in the catalogue with `preload`.
+- A thing that judders, flips or turns the long way. The cause is the new look's own code until a
+  measurement says otherwise: render3d's blending draws every moving thing in every game, and it
+  draws them smoothly. Before reading render3d or the engine, and before changing how the thing is
+  driven (page clock, row, shader), open the page and record what is drawn for that thing every
+  frame with `render3d.drew(f)`, with `wire.n` beside it: its position and quaternion, and the row's
+  value it came from. The frame where the drawn value leaves the row's is the bug. A single Euler
+  angle set alone (A kind's look) is the first thing to look for.
+- A camera or a mesh seen sliding across the level for a frame when it is put somewhere new (a
+  teleport, a respawn, a door to elsewhere): its `userData.teleport` was not raised on the frame it was
+  put there (`guide-to-smooth-gameplay`).
 - A camera, `place` or the store read in `setup` on the first packet, before the plugins ticked.
 - A colour, size or light written in a `.client.ts` or a plugin. It goes in the definition, the
   plugin's table or the prefab.
@@ -371,7 +418,7 @@ boots the game's manager as `index.html` does, makes a page on it with
 `truth.step(DT)` then `await page.frame()`. The mount mounts nothing, so render3d makes no renderer
 and the test reads the scene graph the plugins and actors build. A scene that lists `player` sets
 `globalThis.addEventListener` and `removeEventListener` to functions that do nothing, since the
-player plugin listens on the page and node has none. Three more things hold in node:
+player plugin listens on the page and node has none. Two more things hold in node:
 
 - An image decoded for render3d comes back as a 1×1 white texture in node
   (`plugins/loader/loader.plugin.ts`). For render2d it goes through `PIXI.Assets.load`, which a 2D
@@ -380,9 +427,6 @@ player plugin listens on the page and node has none. Three more things hold in n
 - Two pages on one manager in one node process share each row's `.client.ts` module, because the
   row's id, and so the url it is imported at, is the same on both. The second page's `setup` writes
   over the first's top-level variables. A test reads a drawing off one page.
-- A test that drives a seat through the player plugin holds the page's clock with
-  `vi.spyOn(performance, 'now')`, since the player plugin counts the steps between packets on it
-  (`plugins/player/player.plugin.test.ts`).
 
 - `games/<game>/<kind>.client.test.ts`, beside each drawn kind's look. It checks what the look
   built from the row and the definition: one drawing per row on `render3d.scene` (or render2d's
@@ -405,7 +449,8 @@ player plugin listens on the page and node has none. Three more things hold in n
   sky in rain by writing its row's `to`, `from`, `blend` and `fade` as the `weather` act does, and
   every splash stands at the ground's height plus `precip.lift`.
 - The game's `<game>.sim.test.ts` and each kind's `<kind>.sim.test.ts`, changed when a switch to 3D
-  changed what `pos` means, such as a body's height read against `landOf(field).height(x, z)`.
+  changed what `pos` means, such as the `player` row's height read against
+  `landOf(field).height(x, z)`.
 - `yarn tsc`.
 
 Then the pixels are looked at in Chrome. Run `yarn editor <game>`, or `PORT=<n> yarn editor <game>`

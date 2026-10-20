@@ -86,9 +86,15 @@ const actor: Kind = {
   },
 }
 
-// Starts the cutscene from its `before` on the step its `now` is set, as a game's rule does.
+// Starts the cutscene from its `before` on the step its `now` is set, as a game's rule does; with `again`
+// set, resets it and starts it in the one step, as a game that plays it before every round does.
 const starter: Kind = {
   before(me, _dt, w) {
+    if (me.data.again) {
+      me.data.again = false
+      w.call(w.find('cutscene'), 'reset', -1)
+      w.call(w.find('cutscene'), 'start', -1)
+    }
     if (!me.data.now) return
     me.data.now = false
     w.call(w.find('cutscene'), 'start', -1)
@@ -704,6 +710,38 @@ test('start is closed: a seat\'s start is refused, the game\'s call starts it, a
   row(t, 'starter').data.now = true
   t.step(DT)
   expect(cs(t)).toMatchObject({ running: false, done: true, e: ended })
+})
+
+test('reset is closed and puts the row back as it stood before it started: a done scene plays again from its first cue, and one running stops with its cast let go', () => {
+  const file = base([sound(0, 'begun'), sound(0.5, 'half')], { auto: false, end: 1 })
+  const t = stage(file)
+  const seat = t.open()
+  row(t, 'starter').data.now = true
+  t.step(DT)
+  toEnd(t)
+  expect(cs(t)).toMatchObject({ running: false, done: true })
+  const id = row(t, 'cutscene').id
+  t.inbox(seat, { seq: 1, n: t.n, id, action: 'reset', args: [] })
+  t.step(DT)
+  expect(cs(t).done).toBe(true)
+  // The starter is listed after the cutscene row, so the scene it starts plays from the next step.
+  row(t, 'starter').data.again = true
+  t.step(DT)
+  expect(cs(t)).toMatchObject({ running: true, done: false, fired: 0, e: 0, t: 0 })
+  expect(row(t, 'actor', 'paladin').data.direct).toEqual({})
+  t.step(DT)
+  expect(cs(t).fired).toBe(1)
+  expect(cs(t).e).toBeCloseTo(DT, 12)
+  for (let n = 0; n < 40; n++) t.step(DT)
+  expect(cs(t).fired).toBe(2)
+  row(t, 'starter').data.again = true
+  t.step(DT)
+  expect(cs(t)).toMatchObject({ running: true, done: false, fired: 0, e: 0, t: 0, shot: null })
+  t.step(DT)
+  expect(cs(t).fired).toBe(1)
+  toEnd(t)
+  expect(cs(t)).toMatchObject({ running: false, done: true })
+  expect(row(t, 'actor', 'paladin').data.direct).toBeNull()
 })
 
 // The scene every run below plays: shots, a dolly through waits, walks, faces, plays, a gesture, a

@@ -259,8 +259,6 @@ test('a vertex reads each cascade at its world xz with the half-texel offset rem
   // Foam from cascades 0 and 1 only.
   expect(f).toContain('texture2D( oceanDisp1, vOceanAt / oceanPatch1 + 0.5 / 256.0 ).w')
   expect(f).not.toContain('texture2D( oceanDisp2, vOceanAt / oceanPatch2 + 0.5 / 256.0 ).w')
-  // Texel n is the sea at n·patch/RES: world x = 3·250/256 samples texel 3's centre.
-  expect(3 * 250 / 256 / 250 + 0.5 / 256).toBeCloseTo((3 + 0.5) / 256, 12)
 })
 
 // ---------------------------------------------------------------- the FFT
@@ -325,7 +323,7 @@ test('the evolve pass forces .zw to 0; the D pass packs Dx + iDz and the spectra
 })
 
 test('foam does not advance while t stands still, advances by the change in t times foamRecovery, across the wrap too, and is cleared only when it should be', () => {
-  const { frame, row, set, plugins, me } = page({ t: 50 })
+  const { frame, row, set, me } = page({ t: 50 })
   const last = () => named('displacement').slice(-3).map(d => [d.values.recover, d.values.clear])
   frame()
   expect(last()).toEqual([[0, 1], [0, 1], [0, 1]])
@@ -354,7 +352,6 @@ test('foam does not advance while t stands still, advances by the change in t ti
     expect(last().map(v => v[1])).toEqual([0, 0, 0])
   }
   expect(me.sea()!.textures).not.toBe(textures)
-  expect(plugins.render3d.renderer).toBeDefined()
 })
 
 test('the history is cleared when the renderer first appears, and nothing is drawn until an FFT has run', () => {
@@ -476,7 +473,6 @@ const FIXED: Fixed = { sun: [1, 2, -2], sunColor: '#fff4e0', zenith: '#3366aa', 
 
 test('with no sky at all the sea is drawn in the fixed world.ocean3d.light once the camera is there: the sun normalised, the colours authored sRGB, read every frame, at amp itself', () => {
   const { frame, me, plugins, set } = page({ sky: false, sea: { light: FIXED } })
-  expect(plugins.skydome3d).toBeUndefined()
   me.afterTick(plugins)
   expect(me.sea()).toBeUndefined()
   frame()

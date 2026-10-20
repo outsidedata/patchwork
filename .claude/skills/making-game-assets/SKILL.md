@@ -26,7 +26,7 @@ viewer: any glb from four turntable angles, top and eye level, beside a 1.8 m fi
 size printed and checked against the registry:
 
 ```bash
-Blender -b --python tools/look.py -- ~/troupe-collection/props/shrub/shrub.glb /tmp/look 1.35
+Blender -b --python tools/look.py -- $PATCHWORK_LIBRARY/props/shrub/shrub.glb /tmp/look 1.35
 #   SIZE want=1.350 got=11.695 FAIL      ← the shrub is authored 10× over; caught in ten seconds
 Blender -b --python tools/look.py -- field /tmp/look        # a zone: spawn eye-lines, portals,
                                                            # the ground boundary with the cube
@@ -57,11 +57,12 @@ rails, and the normals fix changed nothing.
 
 ## The pipeline, in order
 
-1. **Textures**: real PBR sets at real scale (`cc0-textures` skill; `~/troupe-collection/textures`).
+1. **Textures**: real PBR sets at real scale (`cc0-textures` skill; the library's `textures/`,
+   `$PATCHWORK_LIBRARY`).
    A material is `(set, size_m)`; the size is metres per repeat and it is measured, not guessed
    (a brick course is 0.09 m, a cobble 0.10 m, a plain roof tile 0.28 × 0.09 m). Non-square
    maps keep their aspect. Every image ≤ 1024 px in the export.
-2. **Props**: from the collection (`~/troupe-collection/props`, look at `_thumbs` first), highest
+2. **Props**: from the library (`$PATCHWORK_LIBRARY/props`, look at `_thumbs` first), highest
    LOD under ~4 000 tris, registry unit fix applied, bbox collider. A 0.5 m prop never wears a
    3 m tile — a prop gets its own material size ≤ its extent. Never a cone, sphere, 16-gon or
    box where a real prop exists (rocks, mushrooms, logs, trees, shrubs are all in the collection).
@@ -85,7 +86,13 @@ rails, and the normals fix changed nothing.
    portal, npc, den) is ≥ 1.5 m from every footprint.
 6. **Export**: glb (visual) + `{v, i}` collider json (y-up, floors +y, no ceiling in it) +
    landmarks json (spawns, portals, npcs, dens, lights, bounds). Reproducible: build twice,
-   `cmp` all three.
+   `cmp` all three. The script exports a plain glb; the game never ships it. Its bake,
+   `games/<game>/assets/<game>.bake.ts` run by `yarn bake <game>`, runs the script into a scratch
+   file and packs it with gltfpack into the game (meshopt geometry, WebP textures, names, extras and
+   float positions kept: `-cc -kn -km -ke -vpf -tw`), and cuts each loose texture to WebP. The raw
+   inputs stay in the library; the game commits the built files and the scripts
+   (`committing-a-game`). `yarn health`
+   checks Blender, the library, gltfpack and ImageMagick first.
 
 ## The asserts every build must print
 

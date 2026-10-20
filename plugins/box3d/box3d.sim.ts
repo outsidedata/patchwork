@@ -25,10 +25,13 @@
 //   joints             kind to Joint: the kinds whose rows are joints.
 //   chunk              `{ count, cell }`: the ground's chunks, each `count` heights a side `cell`
 //                      metres apart, for the `ground` mod (below).
-//   mods               `{ ground: '<a>', kinds: '<a>' }`, each the plugin whose mod gives box3d that
-//                      function (`addons/scenemanager`'s mods): `ground(w, [i, j])` hands back
-//                      chunk [i, j] of the ground as a Static; `kinds(w)` hands back the kinds that
-//                      plugin makes out of numbers of its own, `{ bodies: { <kind>: row => Body },
+//   mods               `{ ground: '<a>', props: ['<a>', …], kinds: ['<a>', …] }`, the plugins whose mods give
+//                      box3d those functions (`addons/scenemanager`'s mods): `ground(w, [i, j])` hands
+//                      back chunk [i, j] of the ground as a Static; `props(w, [i, j])`, from every
+//                      plugin `props` names, the fixed things of that plugin's standing in chunk
+//                      [i, j] (each one's middle in the chunk's square), as a Static, or undefined
+//                      where there are none, streamed with the ground; `kinds(w)`, from every plugin
+//                      `kinds` names, hands back the kinds that plugin makes out of numbers of its own, `{ bodies: { <kind>: row => Body },
 //                      joints: { <kind>: row => Joint } }`, each asked for a row's entry when box3d
 //                      makes its body or joint, so two rows of one kind may differ, as two wheels of
 //                      one car of different sizes do. A kind `kinds` or `joints` lists is its entry.
@@ -88,9 +91,10 @@
 //            maskBits)`, an act, blows the world apart on the next step (b3World_Explode).
 //            `ground`, a list of keys `[i, j]`, is the chunks of the ground the world holds. At the
 //            start of each step box3d builds each listed key it lacks by calling the scene's `ground`
-//            mod and drops each key it holds that is no longer listed; a key listed step after step is
-//            built once. It knows nothing of what the chunks are for: a rule writes the list. A body or
-//            a query's answer names every chunk 0.
+//            mod, and each `props` mod the scene names, and drops each key it holds that is no longer
+//            listed, ground and props together; a key listed step after step is built once. It knows
+//            nothing of what the chunks are for: a rule writes the list. A body or a query's answer
+//            names every chunk 0, its props too.
 //   a body   `pos`, `rot` (a quaternion, x y z w), `vel`, `spin` (the angular velocity) and `awake`,
 //            which box3d writes after every step. A rule may write any of them, and a body whose
 //            row was written since box3d last wrote it is moved so and woken, unless the rule wrote
@@ -154,7 +158,9 @@ import Box3D, {
 import type { Kind, Row, W } from '#engine/engine.ts'
 import type { Wire } from '#engine/browser.ts'
 import { json } from '#plugins/loader/loader.sim.ts'
-import { mod } from '#addons/scenemanager/scenemanager.addon.ts'
+import * as math from '#plugins/math/math.sim.ts'
+import { mod, modsOf } from '#addons/scenemanager/scenemanager.addon.ts'
+import type { Memory } from '#addons/rewind/rewind.addon.ts'
 
 export const b3 = await Box3D()
 
@@ -283,12 +289,12 @@ export function staticAt(world: Pick<World, 'static'>, point: number[]): boolean
     // The point in the body's frame: moved by -pos, then turned by the inverse of rot.
     const p = unturn(b.rot, point.map((c, k) => c - b.pos[k]))
     if ('box' in shape) return p.every((c, k) => Math.abs(c) < shape.box[k])
-    if ('sphere' in shape) return Math.hypot(...p.map((c, k) => c - shape.sphere.center[k])) < shape.sphere.radius
+    if ('sphere' in shape) return math.hypot(...p.map((c, k) => c - shape.sphere.center[k])) < shape.sphere.radius
     const { center1: a, center2: e, radius } = shape.capsule
     const ab = e.map((c, k) => c - a[k]), ap = p.map((c, k) => c - a[k])
     const len = ab.reduce((sum, c) => sum + c * c, 0)
     const t = len === 0 ? 0 : Math.max(0, Math.min(1, ab.reduce((sum, c, k) => sum + c * ap[k], 0) / len))
-    return Math.hypot(...ap.map((c, k) => c - ab[k] * t)) < radius
+    return math.hypot(...ap.map((c, k) => c - ab[k] * t)) < radius
   }))
 }
 
@@ -389,7 +395,7 @@ type Made = {
   joints: Map<number, Tied>
   owner: Map<string, number> // a body's or a shape's key to the row, or -(i + 1) for static body i
   oneWay: Map<string, Vec3>
-  chunks: Map<string, { id: b3BodyId; keep: Keep }> // the ground's chunks the world holds, by key
+  chunks: Map<string, { ids: b3BodyId[]; keep: Keep }> // the ground's chunks the world holds, by key: the ground's body, then each of its props'
   live: Record<string, unknown>
   keep: Keep
   events: ReturnType<typeof b3.createEventsBuffer>
@@ -556,7 +562,80 @@ function make(me: Row, w: W): Made {
     return true
   })
   made.set(me, m)
-  unmade.register(me, { world, keep: m.keep, events: m.events })
+  unmade.register(me, { world, keep: m.keep, events: m.events }, m)
+  return m
+}
+
+// What a truth's snapshot does not carry of box3d (`Memory` in the scenemanager addon): the whole
+// Box3D world as Box3D's own snapshot image (bodies, shapes, contacts with their warm starting
+// impulses, islands, sleep, the broad phase), and box3d's tables beside it, which row each body,
+// shape and joint is and what box3d last pushed from each row. The image is the bytes Box3D wrote, a
+// `Uint8Array`, kept as they are from step to step and carried as they are across the socket; the
+// tables are plain JSON.
+type Memo = {
+  image: Uint8Array
+  statics: b3BodyId[]
+  bodies: [number, Omit<Held, 'touching' | 'visitors'> & { touching: [number, number][]; visitors: [number, number][] }][]
+  joints: [number, Tied][]
+  owner: [string, number][]
+  oneWay: [string, Vec3][]
+  chunks: [string, b3BodyId[]][]
+  live: Record<string, unknown>
+}
+// A memo handed to a box3d row of a truth loaded from a snapshot, for its next step to restore.
+const taken = new WeakMap<Row, Memo>()
+
+// The world of the row a truth held before it loaded a snapshot, moved to the row of the same id
+// that the load put in its place, so the restore puts the image into the world there is rather than
+// a new one: a server that rewinds every few steps, or a page that takes the server's truth back,
+// would otherwise make a world each time, and Box3D holds a fixed number of worlds.
+function move(was: Row, me: Row) {
+  const m = made.get(was)
+  if (!m) return
+  made.delete(was)
+  made.set(me, m)
+  unmade.unregister(m)
+  unmade.register(me, { world: m.world, keep: m.keep, events: m.events }, m)
+}
+
+// The image is Box3D's own copy, made for this call (b3World_GetSnapshot hands back a fresh array),
+// so only the tables are cloned off the live ones.
+function hold(me: Row): Memo | undefined {
+  const m = made.get(me)
+  if (!m) return undefined
+  const image = b3.b3World_GetSnapshot(m.world)
+  if (!image.length) throw new Error('box3d: the world is mid step and cannot be saved')
+  return { image, ...structuredClone({
+    statics: m.statics,
+    bodies: [...m.bodies].map(([id, h]) => [id, { ...h, touching: [...h.touching], visitors: [...h.visitors] }]),
+    joints: [...m.joints],
+    owner: [...m.owner],
+    oneWay: [...m.oneWay],
+    chunks: [...m.chunks].map(([key, c]) => [key, c.ids]),
+    live: m.live,
+  }) as Omit<Memo, 'image'> }
+}
+
+// The row's world, or one made for it, put back to the memo's image, and box3d's tables taken from
+// the memo, every id re-pointed at this world, since a body's id names the world it is in. The statics
+// and ground chunks the image holds point at geometry the image carried, which Box3D keeps for the
+// world, so a chunk taken here has nothing of its own to free, and the geometry box3d made for the
+// world before, which no shape points at any more, is let go.
+function restore(me: Row, w: W): Made {
+  const memo = taken.get(me)!
+  taken.delete(me)
+  const m = made.get(me) ?? make(me, w)
+  if (!b3.b3World_Restore(m.world, memo.image)) throw new Error('box3d: the snapshot image would not restore')
+  for (const c of m.chunks.values()) for (const k of c.keep) k.destroy()
+  for (const k of m.keep.splice(0)) k.destroy()
+  const here = <T extends { world0: number }>(id: T): T => ({ ...id, world0: m.world.index1 - 1 })
+  m.statics = memo.statics.map(here)
+  m.bodies = new Map(memo.bodies.map(([id, h]) => [id, { ...h, id: here(h.id), touching: new Map(h.touching), visitors: new Map(h.visitors) }]))
+  m.joints = new Map(memo.joints.map(([id, j]) => [id, { ...j, id: here(j.id) }]))
+  m.owner = new Map(memo.owner)
+  m.oneWay = new Map(memo.oneWay)
+  m.chunks = new Map(memo.chunks.map(([key, ids]) => [key, { ids: ids.map(here), keep: [] }]))
+  m.live = memo.live
   return m
 }
 
@@ -576,22 +655,29 @@ function place(m: Made, s: Static, as: number, keep: Keep, w: W): b3BodyId {
 }
 
 // The ground's chunks to what the box3d row lists: each listed key it lacks built by the scene's
-// `ground` mod, each it holds that is not listed dropped, and the data its shapes pointed at freed.
+// `ground` mod and each of its `props` mods, each it holds that is not listed dropped, every body of
+// it, and the data its shapes pointed at freed.
 function chunks(m: Made, listed: number[][], w: W) {
   const want = new Map(listed.map(k => [`${k[0]},${k[1]}`, k]))
   for (const [k, c] of m.chunks) {
     if (want.has(k)) continue
-    unplace(m, c.id)
+    for (const id of c.ids) unplace(m, id)
     for (const f of c.keep) f.destroy()
     m.chunks.delete(k)
   }
   if (![...want.keys()].some(k => !m.chunks.has(k))) return
   const ground = mod<(w: W, key: number[]) => Static>(w.world, 'box3d', 'ground')
   if (!ground) throw new Error('the box3d row lists ground chunks, and the scene gives box3d no ground mod (world.box3d.mods.ground)')
+  const props = modsOf<(w: W, key: number[]) => Static | undefined>(w.world, 'box3d', 'props')
   for (const [k, at] of want) {
     if (m.chunks.has(k)) continue
     const keep: Keep = []
-    m.chunks.set(k, { id: place(m, ground(w, at), 0, keep, w), keep })
+    const ids = [place(m, ground(w, at), 0, keep, w)]
+    for (const prop of props) {
+      const s = prop(w, at)
+      if (s) ids.push(place(m, s, 0, keep, w))
+    }
+    m.chunks.set(k, { ids, keep })
   }
 }
 
@@ -978,18 +1064,27 @@ function events(m: Made, rows: Map<number, Row>, joints: Map<number, Row>) {
 
 // ---------------------------------------------------------------- the step
 
-export const box3d: Kind = {
+export const box3d: Kind & Memory = {
+  // The world and box3d's tables handed out as they stand, the world untouched: for a page that runs
+  // the scene ahead, and for every step a server that rewinds keeps (`addons/rewind`).
+  hold(me) { return hold(me) },
+  // On a truth loaded from a snapshot, the page's copy or a server rewinding: restored from on its
+  // next step, into the world the row it replaced had, when it had one.
+  take(me, memo, was) {
+    if (was) move(was, me)
+    taken.set(me, memo as Memo)
+  },
   tick(me, dt, w) {
     const d: World = w.world.box3d
-    const m = made.get(me) ?? make(me, w)
+    const m = taken.has(me) ? restore(me, w) : made.get(me) ?? make(me, w)
     for (const [fields, set] of WORLD_LIVE) {
       if (!fields.some(f => f in me.data && !equal(me.data[f], m.live[f]))) continue
       set(m.world, ...fields.map(f => me.data[f] ?? (d as any)[f] ?? (b3.b3DefaultWorldDef() as any)[f]))
       for (const f of fields) if (f in me.data) m.live[f] = structuredClone(me.data[f])
     }
-    const them = mod<(w: W) => Kinds>(w.world, 'box3d', 'kinds')?.(w)
-    const bodyOf: Record<string, (row: Row) => Body> = { ...them?.bodies, ...Object.fromEntries(Object.entries(d.kinds).map(([k, b]) => [k, () => b])) }
-    const jointOf: Record<string, (row: Row) => Joint> = { ...them?.joints, ...Object.fromEntries(Object.entries(d.joints ?? {}).map(([k, j]) => [k, () => j])) }
+    const them = modsOf<(w: W) => Kinds>(w.world, 'box3d', 'kinds').map(f => f(w))
+    const bodyOf: Record<string, (row: Row) => Body> = { ...Object.assign({}, ...them.map(t => t.bodies)), ...Object.fromEntries(Object.entries(d.kinds).map(([k, b]) => [k, () => b])) }
+    const jointOf: Record<string, (row: Row) => Joint> = { ...Object.assign({}, ...them.map(t => t.joints)), ...Object.fromEntries(Object.entries(d.joints ?? {}).map(([k, j]) => [k, () => j])) }
     const bodies = new Map(Object.keys(bodyOf).flatMap(k => w.all(k)).map(r => [r.id, r]))
     const joints = new Map(Object.keys(jointOf).flatMap(k => w.all(k)).map(r => [r.id, r]))
     // A joint goes before its bodies: Box3D takes a body's joints with it, and a joint of a body

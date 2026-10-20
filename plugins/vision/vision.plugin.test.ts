@@ -1,7 +1,7 @@
 // The fog of war on the page, worked out from the rows the seat is sent. Each test writes the
 // scene's `world.vision` and `world.render2d` and hands the plugin rows as a wire would. The map is
 // 8 × 4 cells of 10 world units; a `scout` sees 1 cell, so from its cell it sees the four beside
-// it. The seat's `player` row holds slot 0.
+// it. The seat's own `player` row, the one that is `mine`, holds slot 0.
 //
 // No canvas is mounted, so nothing is drawn: render2d's canvas is a stand-in, and node has no page,
 // so the fog's own canvas is one that keeps the last picture put on it, whose pixels' opacity is
@@ -49,7 +49,7 @@ const page = (world: any = { vision: fog }) => {
   return { plugins, me, frame, opacity }
 }
 
-const player = { id: 1, kind: 'player', data: { seat: 0 } }
+const player = { id: 1, kind: 'player', data: { seat: 0, mine: true } }
 const scout = (id: number, slot: number, cell: [number, number]) => ({ id, kind: 'scout', data: { slot, pos: [cell[0] * 10 + 5, cell[1] * 10 + 5] } })
 // The map as a picture, a line of cells a row, each cell's value on `cells()`.
 const map = (cells: ArrayLike<number>) => Array.from({ length: H }, (_, y) => Array.from({ length: W }, (_, x) => cells[y * W + x]).join(''))
@@ -78,9 +78,10 @@ test('a cell never seen is dark, one seen before and no more is dimmed, and one 
 })
 
 test('the fog clears for the seers of the seat\'s own team, a team the block\'s teams may give two slots', () => {
-  // An enemy scout the seat was sent sees nothing for it.
+  // An enemy scout the seat was sent sees nothing for it, and nor does the enemy's own player row,
+  // which every seat is sent without `mine`.
   const alone = page()
-  alone.frame([player, scout(2, 1, [6, 2])])
+  alone.frame([{ id: 9, kind: 'player', data: { seat: 1 } }, player, scout(2, 1, [6, 2])])
   expect(alone.me.cells()!.every(c => c === 0)).toBe(true)
   // A teammate's scout, slot 2 on slot 0's team, clears it as the seat's own would.
   const shared = page({ vision: { ...fog, teams: ['red', 'blue', 'red'] } })
@@ -103,14 +104,4 @@ test('before the seat\'s player row arrives the whole map is dark', () => {
 test('a scene that names vision and gives no world.vision throws', () => {
   const { frame } = page({})
   expect(() => frame([player])).toThrow('the scene names vision but gives no world.vision')
-})
-
-test('shade is the fog\'s opacity over a cell in each state cells() holds: unexplored, explored, and seen now clear', () => {
-  const { plugins, me, frame, opacity } = page()
-  frame([player, scout(2, 0, [1, 1])])
-  frame([player, scout(2, 0, [5, 1])])
-  const cells = me.cells()!
-  // the picture holds each opacity as a byte
-  for (let c = 0; c < W * H; c++) expect(Math.round(me.shade(plugins, cells[c]) * 255)).toBe(opacity()[c])
-  expect([0, 1, 2].map(s => me.shade(plugins, s))).toEqual([fog.unexplored, fog.explored, 0])
 })

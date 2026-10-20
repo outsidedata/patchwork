@@ -601,15 +601,16 @@ test('a rig of other roles on a body of other fields plays as the rig and `world
   expect(rolling.d).toEqual(before)
 })
 
-test('a moment the rig names no role for throws when a body comes to it, and a kind whose reads name no field throws', () => {
+test('a moment the rig names no role for changes no clip when a body comes to it, and a kind whose reads name no field throws', () => {
   const { roles: _, ...bare } = OTHER
   const flat: Rig = { ...bare, roles: { still: 'rest' } }
   const b = world({ vel: [0, 0, 1.5] }, flat)
   b.step()
   expect(b.d.clip).toBe('walk')
   b.d.grounded = false
-  b.d.vel = [0, 6, 0]
-  expect(() => b.step()).toThrow('anim: the rig\'s roles name no role for jump')
+  b.d.vel = [0, 6, 1.5]
+  b.step()
+  expect([b.d.state, b.d.clip]).toEqual(['loco', 'walk'])
   const { limp: __, ...partial } = READS
   const blind = world({}, RIG, { ...ANIM, kinds: { body: { ...ANIM.kinds.body, reads: partial as typeof READS } } })
   expect(() => blind.step()).toThrow('anim kinds.body.reads names no limp')

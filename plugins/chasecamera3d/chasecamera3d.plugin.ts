@@ -3,13 +3,13 @@
 //
 // The game names the row with `follow(id)`, from the setup of the seat's own actor, which the client
 // runs before the ticks of the frame the row first arrives in. The row carries `pos`, `lift` and
-// `look { yaw, pitch, dist, side? }`, and the camera is placed from them as this frame's rows hold
-// them: the pivot is `pos` raised by `lift`, and moved `side` metres to the right of the way `yaw`
-// looks, (−cos yaw, 0, sin yaw), when the row gives a `side`, so the body stands off the middle of
-// the view and a reticle there looks past its shoulder; the eye is the pivot plus `dist` times
+// `look { yaw, pitch, dist, side? }`, and the camera is placed from them as this frame's rows
+// hold them: the pivot is `pos` raised by `lift`, and moved `side` metres to the right of the way
+// `yaw` looks, (−cos yaw, 0, sin yaw), when the row gives a `side`, so the body stands off the middle
+// of the view and a reticle there looks past its shoulder; the eye is the pivot plus `dist` times
 // (−sin yaw·cos pitch, sin pitch, −cos yaw·cos pitch); the camera's up is world up, set again every
-// frame because something else may have turned it, and it looks at the pivot. That is the whole of
-// it. The camera moves exactly as the row does: it adds no speed of the body's, no easing from where
+// frame because something else may have turned it, and it looks at the pivot. That is the whole of it. The
+// camera moves exactly as the row does: it adds no speed of the body's, no easing from where
 // it was, no floor under it, no jump past a distance, no chance and no count of frames or steps.
 // Whatever has to turn or rise gradually, a lock-on's yaw or a crouch's pivot, is a field of the row
 // that its rule moves at a rate, and the camera sits on that field. A camera that shakes on a body
@@ -19,9 +19,8 @@
 // `afterTick`, and render3d draws, and every plugin that builds round the camera reads it, in
 // `afterTick`, so each of them sees this frame's camera, the first frame's too. It is listed after
 // render3d, whose first tick makes the camera from its own prefab (`at`, `look`) and would put that
-// over a camera placed before it; and after `player` when the scene lists one, whose tick swaps the
-// rows it predicts into the frame's rows, so the camera follows the row the seat is drawn at. Listed
-// otherwise, or in a scene with no render3d camera, its tick throws.
+// over a camera placed before it. Listed otherwise, or in a scene with no render3d camera, its tick
+// throws.
 //
 // The camera has one driver at a time: this places it only while `render3d.claimed()` is empty, and
 // never claims it, so a cutscene or the editor's orbit keeps it while they hold it, and the frame
@@ -48,7 +47,6 @@ export function chasecamera3d() {
       const me = order.indexOf('chasecamera3d')
       if (!order.includes('render3d')) throw new Error('chasecamera3d places render3d\'s camera, and the scene does not list render3d')
       if (order.indexOf('render3d') > me) throw new Error('chasecamera3d is listed before render3d, whose first tick would put its prefab camera over the one placed')
-      if (order.includes('player') && order.indexOf('player') > me) throw new Error('chasecamera3d is listed before player, so it would place the camera on the row before player predicts it')
       render3d = plugins.render3d
       const camera = render3d.camera as THREE.PerspectiveCamera | undefined
       if (!camera) throw new Error('chasecamera3d places render3d\'s camera, and the scene gives no render3d prefab to make one')

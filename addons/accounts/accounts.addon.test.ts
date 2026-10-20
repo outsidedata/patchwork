@@ -15,8 +15,10 @@ import { pathToFileURL } from 'node:url'
 import { boot, type Row, type Scene, type Truth } from '#engine/engine.ts'
 import { accept, link, load, manager, scenes, type Down, type Link } from '#addons/scenemanager/scenemanager.addon.ts'
 import { loopback } from '#addons/loopback/loopback.addon.ts'
+import { heard } from '#addons/heard/heard.addon.ts'
 import { sqlite, type Store } from '#addons/persist/persist.addon.ts'
 import { scenemanager } from '#plugins/scenemanager/scenemanager.sim.ts'
+import { possessed } from '#addons/player/player.addon.ts'
 import { account, accounts, local, LOCAL, login, register, relogin, signin, who, type Keep, type Rules } from './accounts.addon.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'accounts-'))
@@ -94,13 +96,14 @@ const page = (l: Link) => {
   l.hear(d => heard.push(d))
   let seq = 0
   const last = () => heard[heard.length - 1]
-  const mine = (): Row | undefined => last()?.packet.rows.find(r => r.kind === 'player')
+  const mine = (): Row | undefined => (last() ? possessed(last()!.packet.rows) : undefined)
   return {
     link: l,
     heard,
     mine,
     say(kind: string, action: string, ...args: any[]) {
-      const target = last().packet.rows.find(r => r.kind === kind)
+      // A seat is sent every player row, and speaks to its own, the one that is `mine`.
+      const target = kind === 'player' ? possessed(last().packet.rows) : last().packet.rows.find(r => r.kind === kind)
       if (!target) throw new Error(`no ${kind} row in this seat's packet`)
       l.send({ scene: last().scene, seat: last().seat, msg: { seq: ++seq, n: last().packet.n, id: target.id, action, args } })
     },
@@ -382,10 +385,11 @@ test('a store that fails is answered down, and its log names what failed, never 
   expect(lines).toEqual(['accounts could not answer a register: disk full'])
 })
 
-test('the secret is in no row of any truth, no log, no record, no store file and no console line', async () => {
+test('the secret is in no row of any truth, no message a truth answered, no record, no store file and no console line', async () => {
   const lines: string[] = []
   for (const m of ['log', 'info', 'warn', 'error', 'debug'] as const) vi.spyOn(console, m).mockImplementation((...a) => { lines.push(a.map(String).join(' ')) })
   const g = await start()
+  const answered = [g.truth, ...scenes(g.row).values()].map(t => heard(t))
   const keep = kept()
   const a = open(g, keep), b = open(g)
   step(g.truth, 3)
@@ -410,7 +414,7 @@ test('the secret is in no row of any truth, no log, no record, no store file and
   const disk = [g.path, g.path + '-wal'].filter(existsSync).map(f => readFileSync(f).toString('latin1'))
   const everything = [
     ...truths.map(t => JSON.stringify(t.rows)),
-    ...truths.map(t => JSON.stringify(t.log)),
+    ...answered.map(list => JSON.stringify(list)),
     JSON.stringify(records),
     ...disk,
     ...lines,
@@ -421,7 +425,7 @@ test('the secret is in no row of any truth, no log, no record, no store file and
   // The haystack is real: the account and its two live sessions, b's and the relogin's, the
   // seats' rows and the messages they sent are all in it.
   expect(records.length).toBe(3)
-  expect(truths.some(t => t.log.length > 0)).toBe(true)
+  expect(answered.some(list => list.length > 0)).toBe(true)
   for (const hay of everything) expect(hay).not.toContain(SECRET)
 })
 

@@ -1,7 +1,9 @@
 // Area of interest: a piece on a truth that sends each seat only the rows near it. A row is sent
 // when its `pos` is within `radius` of the seat's centre row, measured on x and y. A row whose kind
 // the block lists in `always` is sent to every seat wherever it is, and so is a row with no `pos`:
-// a manager, a tilemap, a player row, anything that is not a thing on the ground. A row that walks
+// a manager, a tilemap, anything that is not a thing on the ground. A `player` row is the thing its
+// seat plays as and is sent by its `pos` like any other row; without `at`, the seat's centre is its
+// own `player` row. A row that walks
 // out of the radius is in the seat's next packet's `ended`, and one that walks back in is in its
 // `born`, as if it had been spawned again.
 //
