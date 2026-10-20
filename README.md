@@ -303,7 +303,7 @@ it.
 | `yarn new-game <name>` | `games/<name>/`: a game of one scene and a seat. |
 | `yarn vite` | Serves the repo, so `games/<name>/index.html` plays. |
 | `yarn bake <game>` | The game's art made again from the library: every glb its scripts build, packed, and its texture maps cut. |
-| `yarn produce_static_site <game> [--base /<path>/]` | The game as a static site in `dist/`, its page at the site's root. `--base` is the path the host serves it under: `/<repo>/` on GitHub Pages. |
+| `yarn produce_static_site <game> [--base /<path>/]` | The game as a static site in `dist/`, its page at the site's root. `--base` is the path the host serves it under: `/<repo>/` on GitHub Pages. In a repo whose `games/` holds that game alone, it also copies the game's `README.md` over the repo's. |
 | `yarn test` | Every test but the ones that draw a game in a page. |
 | `yarn test:view [<file>]` | The tests that draw a game in a page (`.view.test.tsx`). |
 | `yarn vitest run <file>` | One test file. |
