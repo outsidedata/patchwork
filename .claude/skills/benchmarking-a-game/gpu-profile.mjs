@@ -37,7 +37,7 @@
 // The GPU's own timer (WebGL2's EXT_disjoint_timer_query_webgl2) is not used: on Chrome's ANGLE Metal on
 // an M1 it read 204 ms of GPU a frame on a page making 27 frames a second, and 35 ms for one line.
 //   node gpu-profile.mjs <server base url> <game> <scene> [--each <s>] [--runs <n>] [--press <key>]…
-//        [--settle <s>] [--loading] [--ready <page expression>] [--after <steps>] [--out <folder>]
+//        [--settle <s>] [--loading] [--ready <page expression>] [--after <steps>] [--still] [--out <folder>]
 import { open, testbedFlags, usage } from './testbed.mjs'
 
 const args = process.argv.slice(2)

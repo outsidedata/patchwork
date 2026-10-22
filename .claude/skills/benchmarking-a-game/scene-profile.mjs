@@ -17,7 +17,7 @@
 // Every exception and console.error while it is timed is counted and the first printed above the
 // numbers: a frame that throws stops part way, so its work reads less than it is.
 //   node scene-profile.mjs <server base url> <game> <scene> <seconds> [--press <key>]… [--settle <s>]
-//        [--loading] [--ready <page expression>] [--after <steps>] [--out <folder>]
+//        [--loading] [--ready <page expression>] [--after <steps>] [--still] [--out <folder>]
 import { open, testbedFlags, usage } from './testbed.mjs'
 
 const args = process.argv.slice(2)

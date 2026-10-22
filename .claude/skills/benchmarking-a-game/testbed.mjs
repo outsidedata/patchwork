@@ -17,6 +17,13 @@
 // A stage still waited on after three minutes stops the profiler and names what it was waiting on (no
 // `window.__page`, the bakes left, ...) and the first error the page threw. Then the page is clicked in its
 // middle, each `--press` key is pressed for real, and it settles `--settle` seconds.
+// Time stops with `stop()` and goes again with `go()`, both handed back by `open`, and `--still` stops it
+// once the page has settled, before anything is measured. Stopped, the client the page holds now drops
+// every packet it is handed, so its rows stay as the last one left them, and the page draws every frame
+// at the newest step (`between` 1), so nothing is drawn between two steps that no longer move. The sea,
+// the clouds and the sky are moved by the rows' clock, so they stand still with the rows; the truth in
+// the tab goes on stepping, and only the page stops taking its steps. Two screenshots of a stopped page
+// differ only by what was changed between them.
 // The page is a 1280 by 800 screen of `--dpr` device pixels a pixel (1 when left out). render3d's
 // `pixelRatio` is a cap on the screen's, so a scene asking for 2 draws at 1 unless `--dpr 2` makes the
 // screen a Retina one: the line the measuring starts on prints the ratio drawn at and the buffer.
@@ -31,7 +38,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-export const usage = '[--dpr <n>] [--press <key>]… [--settle <s>] [--loading] [--ready <page expression>] [--after <steps>] [--out <folder>]'
+export const usage = '[--dpr <n>] [--press <key>]… [--settle <s>] [--loading] [--ready <page expression>] [--after <steps>] [--still] [--out <folder>]'
 
 // Takes the testbed's flags out of `args`, leaving the rest.
 export function testbedFlags(args, name) {
@@ -42,6 +49,8 @@ export function testbedFlags(args, name) {
   }
   const loading = args.includes('--loading')
   if (loading) args.splice(args.indexOf('--loading'), 1)
+  const still = args.includes('--still')
+  if (still) args.splice(args.indexOf('--still'), 1)
   const after = flag('--after')
   return {
     presses: flag('--press', true),
@@ -50,6 +59,7 @@ export function testbedFlags(args, name) {
     after: after === undefined ? undefined : Number(after),
     dpr: Number(flag('--dpr') ?? 1),
     loading,
+    still,
     out: flag('--out') ?? fs.mkdtempSync(path.join(os.tmpdir(), name + '-')),
   }
 }
@@ -70,7 +80,7 @@ const warn = (port, when) => {
   if (o.length) console.log(`${o.length} other Chrome${o.length > 1 ? 's' : ''} driven over a debugging port ${when}; each shares this GPU with the page measured:\n${o.map(f => '  ' + f).join('\n')}`)
 }
 
-export async function open({ base, game, scene, presses, settle, ready, after, dpr, loading, out, scenes = false, render = false, init }) {
+export async function open({ base, game, scene, presses, settle, ready, after, dpr, loading, still = false, out, scenes = false, render = false, init }) {
   const PORT = 9340 + Math.floor(Math.random() * 600)
   warn(PORT, 'before the page was opened')
   const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', [
@@ -168,10 +178,40 @@ export async function open({ base, game, scene, presses, settle, ready, after, d
     await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk })
   }
   await wait(settle * 1000)
+
+  // Time stopped and started again (above): the client's packets dropped, and the page drawn at the newest step.
+  const stop = async () => {
+    await evaluate(`(() => {
+      const page = window.__page, sm = page.client.plugins.scenemanager
+      const t = window.__still ??= { frame: page.frame, client: undefined, hand: undefined }
+      if (t.client) return true
+      t.client = page.client
+      t.hand = sm.hand
+      sm.hand = () => {}
+      page.frame = () => t.frame.call(page, 1)
+      return true
+    })()`)
+    // a frame drawn at the newest step before anything is measured or shot
+    await wait(500)
+    console.log(`time stopped at step ${await step()}`)
+  }
+  const go = async () => {
+    await evaluate(`(() => {
+      const t = window.__still
+      if (!t || !t.client) return true
+      t.client.plugins.scenemanager.hand = t.hand
+      window.__page.frame = t.frame
+      t.client = undefined
+      return true
+    })()`)
+    console.log(`time going again from step ${await step()}`)
+  }
+  if (still) await stop()
+
   warn(PORT, 'as the page is measured')
   const before = take()
   if (before.length) console.log(`the page threw ${before.length} times while it loaded and settled; the first: ${before[0].split('\n')[0]}`)
   const drawn = await evaluate(`(() => { const r = window.__page.client.plugins.render3d; if (!r || !r.renderer) return ''; const s = r.renderer.getDrawingBufferSize(new r.THREE.Vector2()); return ', drawn at pixel ratio ' + r.renderer.getPixelRatio() + ', ' + s.x + 'x' + s.y })()`)
   console.log(`measured from ${((Date.now() - opened) / 1000).toFixed(1)} s, step ${await step()}, the screen's devicePixelRatio ${dpr}${drawn}\n`)
-  return { send, evaluate, wait, done, take }
+  return { send, evaluate, wait, done, take, stop, go }
 }

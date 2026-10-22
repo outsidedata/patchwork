@@ -97,6 +97,14 @@ autopilot) and settles `--settle` seconds (4 when left out). A stage still waite
 minutes stops the run and names what it waits on (`no window.__page: the testbed keeps its page there`,
 `terrain3d: bakes, 4, 16, 16 left`) and the first error the page threw.
 
+**Stopping time.** `--still` stops time once the page has settled, before anything is measured; `open`
+hands back `stop()` and `go()` for a script that stops and starts it itself. Stopped, the client the
+page holds drops every packet it is handed, so its rows stay as the last one left them, and the page
+draws every frame at the newest step, with nothing drawn between steps. The sea, the clouds and the
+sky move by the rows' clock, so they stand still with the rows. The truth in the tab goes on stepping;
+only the page stops taking its steps. Two screenshots of a stopped page differ only by what was changed
+between them: the AO pass switched off, a material made flat, a ring hidden.
+
 Every exception and `console.error` from the moment the page opens is caught: those while it loaded
 and settled are counted and the first printed before the numbers, and each profiler counts its own
 (below). Any other Chrome driven over a debugging port is named, by its profile folder, before the page
@@ -109,7 +117,7 @@ so a timed-out run leaves nothing drawing.
 
 ```
 node .claude/skills/benchmarking-a-game/scene-profile.mjs <server base url> <game> <scene> <seconds> \
-  [--press <key>]… [--settle <s>] [--loading] [--ready "<page expression>"] [--after <steps>] [--out <folder>]
+  [--press <key>]… [--settle <s>] [--loading] [--ready "<page expression>"] [--after <steps>] [--still] [--out <folder>]
 ```
 
 The page, opened, loaded, pressed and settled by `testbed.mjs`, timed for `seconds`:
@@ -168,7 +176,7 @@ after 1 has named a system, to find the function inside it.
 ```
 node .claude/skills/benchmarking-a-game/gpu-profile.mjs <server base url> <game> <scene> \
   [--each <s>] [--runs <n>] [--press <key>]… [--settle <s>] [--loading] [--ready "<page expression>"] \
-  [--after <steps>] [--out <folder>]
+  [--after <steps>] [--still] [--out <folder>]
 ```
 
 The same page, opened, loaded, pressed and settled by `testbed.mjs`. It counts the frames over `--each`
