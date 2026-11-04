@@ -60,8 +60,11 @@ Open `http://localhost:5173/games/mygame/index.html`.
 - [`terrain3d`](plugins/terrain3d/): infinite procedural terrain from a field of noise nodes with
   domain warp, biomes, texture layers placed by rules, sea and flooding, geometry rings that follow
   the camera, baked ground textures and web workers. Server and client compute identical heights.
-- [`scatter3d`](plugins/scatter3d/): procedural forests, grass and boulders as instanced meshes,
-  streamed round the camera, trunks and rocks solid to bodies and bullets.
+- [`lod3d`](plugins/lod3d/): procedural forests, grass and boulders placed in tiles round the camera
+  by level of detail, in layers that stand on the land, on shapes or round each other, worked in web
+  workers, trunks and rocks solid to bodies, cars and bullets.
+- [`instances3d`](plugins/instances3d/): many copies of one model or lumpy boulder as instanced
+  meshes, by level of detail, cut-out cards and billboards; what lod3d places is drawn here.
 - [`skydome3d`](plugins/skydome3d/): a day-night cycle, sun and moon, clouds and their shadows, fog,
   rain, snow, dust, wind and lightning, the same on every seat.
 - [`ocean3d`](plugins/ocean3d/): an FFT ocean from a JONSWAP spectrum with foam and shoaling,
@@ -180,12 +183,12 @@ for walker gives walker the height of the ground. "for" lists the plugins this o
 | [`audio`](plugins/audio/) | Web Audio | for box3dvehicle, cutscene |
 | [`audiodaw`](plugins/audiodaw/) | Tone.js | |
 | [`box2d`](plugins/box2d/) | box2d.js, loader, rewind | from tilemap |
-| [`box3d`](plugins/box3d/) | box3d.js, loader, rewind | for box3dvehicle · from box3dvehicle, ragdoll3d, scatter3d, terrain3d |
-| [`box3dvehicle`](plugins/box3dvehicle/) | box3d, three.js, particle3d, scatter3d | for box3d, interact, scatter3d · from audio, box3d, dismember3d, hitscan3d, terrain3d |
+| [`box3d`](plugins/box3d/) | box3d.js, loader, rewind | for box3dvehicle, instances3d · from box3dvehicle, lod3d, ragdoll3d, terrain3d |
+| [`box3dvehicle`](plugins/box3dvehicle/) | box3d, three.js, particle3d, lod3d | for box3d, interact, lod3d · from audio, box3d, dismember3d, hitscan3d, terrain3d |
 | [`cel3d`](plugins/cel3d/) | three.js, render3d | |
 | [`chasecamera3d`](plugins/chasecamera3d/) | three.js, render3d | |
 | [`chat`](plugins/chat/) | PixiJS, ui | for party |
-| [`cover3d`](plugins/cover3d/) | | from scatter3d |
+| [`cover3d`](plugins/cover3d/) | | from lod3d |
 | [`cull3d`](plugins/cull3d/) | three.js, render3d | |
 | [`cutscene`](plugins/cutscene/) | PixiJS, three.js, loader, ui | from audio, terrain3d |
 | [`dismember3d`](plugins/dismember3d/) | three.js, anim, hitscan3d, ragdoll3d, particle3d | for box3dvehicle, hitscan3d · from terrain3d |
@@ -193,12 +196,14 @@ for walker gives walker the height of the ground. "for" lists the plugins this o
 | [`environment3d`](plugins/environment3d/) | three.js, render3d | |
 | [`flight3d`](plugins/flight3d/) | render3d, loader | from terrain3d |
 | [`grid`](plugins/grid/) | render2d, loader | |
-| [`hitscan3d`](plugins/hitscan3d/) | rewind | for box3dvehicle, volley3d · from dismember3d, ragdoll3d, scatter3d, terrain3d, walker |
+| [`hitscan3d`](plugins/hitscan3d/) | rewind | for box3dvehicle, volley3d · from dismember3d, lod3d, ragdoll3d, terrain3d, walker |
 | [`ik3d`](plugins/ik3d/) | three.js | from anim, interact |
+| [`instances3d`](plugins/instances3d/) | three.js, render3d, loader | for lod3d · from box3d, shapes3d |
 | [`interact`](plugins/interact/) | three.js, anim, loader | for ik3d · from anim, box3dvehicle |
 | [`light2d`](plugins/light2d/) | render2d | |
 | [`lights3d`](plugins/lights3d/) | three.js, render3d | |
 | [`loader`](plugins/loader/) | three.js, fflate, fzstd | |
+| [`lod3d`](plugins/lod3d/) | render3d, math | for box3d, cover3d, hitscan3d, ragdoll3d, terrain3d, walker · from box3dvehicle, instances3d, particle3d, shapes3d, terrain3d |
 | [`local`](plugins/local/) | | |
 | [`mapgen`](plugins/mapgen/) | math | |
 | [`math`](plugins/math/) | | |
@@ -206,17 +211,16 @@ for walker gives walker the height of the ground. "for" lists the plugins this o
 | [`ocean3d`](plugins/ocean3d/) | three.js, render3d | from skydome3d, terrain3d |
 | [`pancamera`](plugins/pancamera/) | render2d | |
 | [`particle2d`](plugins/particle2d/) | render2d, loader | |
-| [`particle3d`](plugins/particle3d/) | render3d, loader | |
+| [`particle3d`](plugins/particle3d/) | render3d, loader | for lod3d |
 | [`party`](plugins/party/) | PixiJS, ui | from chat |
 | [`persist`](plugins/persist/) | persist addon | |
 | [`player`](plugins/player/) | player addon | |
 | [`playtester`](plugins/playtester/) | player | |
-| [`ragdoll3d`](plugins/ragdoll3d/) | three.js, anim, box3d, hitscan3d | for box3d, hitscan3d · from anim, scatter3d, terrain3d, walker |
+| [`ragdoll3d`](plugins/ragdoll3d/) | three.js, anim, box3d, hitscan3d | for box3d, hitscan3d · from anim, lod3d, terrain3d, walker |
 | [`render2d`](plugins/render2d/) | PixiJS | |
 | [`render3d`](plugins/render3d/) | three.js | |
 | [`renderdom`](plugins/renderdom/) | | |
 | [`roomcamera`](plugins/roomcamera/) | render2d | |
-| [`scatter3d`](plugins/scatter3d/) | three.js, box3d | for box3d, cover3d, hitscan3d, ragdoll3d, terrain3d, walker · from box3dvehicle, terrain3d |
 | [`scenemanager`](plugins/scenemanager/) | scenemanager addon | |
 | [`shipped`](plugins/shipped/) | | |
 | [`skydome3d`](plugins/skydome3d/) | three.js, loader, render3d | for ocean3d · from terrain3d |
@@ -226,13 +230,13 @@ for walker gives walker the height of the ground. "for" lists the plugins this o
 | [`stats`](plugins/stats/) | three.js | |
 | [`store`](plugins/store/) | | |
 | [`synthaudio`](plugins/synthaudio/) | Tone.js, loader | |
-| [`terrain3d`](plugins/terrain3d/) | three.js, loader, box3d, scatter3d | for box3d, box3dvehicle, cutscene, dismember3d, flight3d, hitscan3d, ocean3d, ragdoll3d, scatter3d, skydome3d, solids, walker · from scatter3d |
+| [`terrain3d`](plugins/terrain3d/) | three.js, loader, box3d, lod3d | for box3d, box3dvehicle, cutscene, dismember3d, flight3d, hitscan3d, lod3d, ocean3d, ragdoll3d, skydome3d, solids, walker · from lod3d |
 | [`tilemap`](plugins/tilemap/) | render2d, loader, box2d | for box2d |
 | [`ui`](plugins/ui/) | PixiJS, player | |
 | [`vision`](plugins/vision/) | render2d, vision addon | |
 | [`volley2d`](plugins/volley2d/) | render2d, loader | |
 | [`volley3d`](plugins/volley3d/) | loader, particle3d | from hitscan3d |
-| [`walker`](plugins/walker/) | hitscan3d | for hitscan3d, ragdoll3d · from scatter3d, terrain3d |
+| [`walker`](plugins/walker/) | hitscan3d | for hitscan3d, ragdoll3d · from lod3d, terrain3d |
 
 An addon holds a truth (seats, connections, sockets, files, timers, more than one truth) and runs
 where the truth is.
