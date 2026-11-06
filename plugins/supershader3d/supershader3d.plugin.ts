@@ -27,7 +27,7 @@
 // flat colour for the debug view. `calls` holds each call's shader, `{ ids, fragmentPars, features }`,
 // or null where no material is drawn by it, and `all`, every material behind one switch, for a
 // program that draws any of them (the ground's). `vertexPars` and `vertexMain` are the vertex side:
-// the attributes `lookId`, `lookInfo`, `wT`, `wB`, `wall` and `wfix`, copied to varyings, and the
+// the attributes `lookId`, `lookInfo` and the slots `s0`, `s1`, `s2` and `s3`, copied to varyings, and the
 // world position and normal. `uniforms` is every material's settings, `L<id>_<name>`, with its value;
 // `needs` which shared textures the looks read (`noise`, `random`, `courses`); `pictures` the stack's
 // layers in order, each `{ asset, file, set, source, colour }`, `asset` the catalogue name of the
@@ -60,13 +60,13 @@
 //
 // A geometry drawn by a call's material carries, on each vertex, `lookId` (its material's number),
 // `lookInfo` (three numbers a look seeds itself from: its material, its thing's row and its part,
-// so no two parts are alike), `uv` in metres, and on a wall `wT`, `wB`, `wall` and `wfix` (zeros
-// elsewhere; a vertex without them reads zeros).
+// so no two parts are alike), `uv` in metres, and the slots `s0` (3 numbers), `s1` (3), `s2` (4) and
+// `s3` (2), which any look may read for what its geometry hands it (a vertex without one reads zeros).
 //
 // It hands out `material(call)`, the call's material or undefined while the file has not landed or
 // the call draws nothing; `idOf(name)` and `callOf(name)`, a material's number and call by its name,
 // undefined for a name the file does not hold; `looks()`, the file; `glsl()`, the `all` call's
-// preamble with its varyings declared as plain globals, for a program of another plugin's that has no
+// preamble with the varyings its vertex side declares made plain globals, for a program of another plugin's that has no
 // tagged vertices and sets `vLookUv`, `vLookWorld`, `vLookWN`, `vLookInfo`, `vLookId`, `lookGx` and
 // `lookGy` itself before calling `lookRun` (the ground's, `supershader3d.terrain3d.ts`); `uniforms`,
 // the one set every material and such a program binds, `lookView` (0 shaded, 1 each piece its own
@@ -102,8 +102,12 @@ const CALLS: Call[] = ['solid', 'relief', 'seeThrough']
 // The uniform each shared texture is bound as.
 const BOUND: Record<string, string> = { noise: 'csNoise', random: 'cbRand', courses: 'csCourses' }
 
-// A preamble's varyings as plain globals, for a program that sets them itself.
-export const free = (fragmentPars: string) => fragmentPars.replace(/^(?:flat )?varying (\S+) (v(?:Look|Cs)\w+);/gm, '$1 $2;')
+// A preamble's varyings as plain globals, for a program that sets them itself: each varying the file's
+// vertex side declares, whatever its name, and no other (another plugin's spliced in stays a varying).
+export const free = (fragmentPars: string, vertexPars: string) => {
+  const own = new Set([...vertexPars.matchAll(/^(?:flat )?varying \S+ (\w+);/gm)].map(m => m[1]))
+  return fragmentPars.replace(/^(?:flat )?varying (\S+) (\w+);/gm, (line, type, name) => (own.has(name) ? `${type} ${name};` : line))
+}
 
 // A small fast random, seeded, as the library's install.js seeds its textures.
 export function mulberry(a: number) {
@@ -375,7 +379,7 @@ export function supershader3d() {
     material: (call: Call) => materials[call],
     idOf: (name: string) => ids.get(name),
     callOf: (name: string): Call | undefined => { const id = ids.get(name); return id === undefined ? undefined : looks!.materials[id].call },
-    glsl: () => (looks?.calls.all ? free(looks.calls.all.fragmentPars) : undefined),
+    glsl: () => (looks?.calls.all ? free(looks.calls.all.fragmentPars, looks.vertexPars) : undefined),
     ready: () => !!looks && landed,
     close() {
       for (const call of CALLS) { materials[call]?.dispose(); delete materials[call] }

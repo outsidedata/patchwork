@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-06-b6183dd
+
+- supershader3d — any material can read the extra numbers its model carries on each vertex, not only a wall's.
+- yarn workshop — a new command: opens the asset, UI or particle workshop for a game, or the pose lab.
+
 ## 2026-11-04-d3098a9
 
 - lod3d — a new plugin: fills a landscape with thousands of trees, grass, rocks and anything else, round the camera, solid to walk, shoot and drive against.

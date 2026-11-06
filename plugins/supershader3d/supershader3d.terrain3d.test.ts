@@ -30,7 +30,9 @@ const DT = 1 / 60
 let clock = 0
 vi.spyOn(performance, 'now').mockImplementation(() => clock)
 
-const BASE = 'flat varying float vLookId;\nvarying vec3 vLookInfo;\nvarying vec2 vLookUv;\nvarying vec3 vLookWorld;\nvarying vec3 vLookWN;\nvec2 lookGx, lookGy;\n' +
+// the varyings compose.js writes, on both sides
+const VARYINGS = 'flat varying float vLookId;\nvarying vec3 vLookInfo;\nvarying vec2 vLookUv;\nvarying vec3 vLookWorld;\nvarying vec3 vLookWN;\nvarying vec3 vS0;\nvarying vec3 vS1;\nvarying vec4 vS2;\nvarying vec2 vS3;\n'
+const BASE = `${VARYINGS}#define s0 vS0\n#define s1 vS1\n#define s2 vS2\n#define s3 vS3\nvec2 lookGx, lookGy;\n` +
   'struct Look { vec3 colour; float rough; float height; vec3 nts; vec3 normal; bool ownNormal; float ao; };\nLook lookStart() { Look k; k.colour = vec3(0.5); k.rough = 0.8; k.ao = 1.0; return k; }\n' +
   'vec3 kitBump(vec3 pos, vec3 n, float h, float fd) { return n; }\nvec3 lookPerturb(vec3 n, vec3 nts, float fd) { return n; }\n'
 const shaderOf = (ids: number[], shadows: number[]) => ({
@@ -43,7 +45,7 @@ const shaderOf = (ids: number[], shadows: number[]) => ({
 const LOOKS: Looks = {
   about: 'a test', picture: 64,
   materials: [{ name: 'stone', look: 'rock', call: 'solid', colour: [0.5, 0.5, 0.5] }, { name: 'path', look: 'cobble', call: 'relief', colour: [0.4, 0.4, 0.4] }],
-  vertexPars: 'attribute float lookId;\n', vertexMain: 'vLookId = lookId;\n',
+  vertexPars: `attribute float lookId;\nattribute vec3 s0;\n${VARYINGS}`, vertexMain: 'vLookId = lookId;\nvS0 = s0;\n',
   calls: { solid: shaderOf([0], []), relief: shaderOf([1], [1]), seeThrough: null, all: shaderOf([0, 1], [1]) },
   uniforms: { L1_size: { type: 'float', value: 0.15 } }, needs: [], pictures: [],
 }
@@ -127,8 +129,9 @@ test('the ground\'s program holds the one shader, each look layer read by its lo
   const shader = { vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader, uniforms: {} as Record<string, unknown> }
   material.onBeforeCompile(shader as any, undefined as any)
   const f = shader.fragmentShader
-  expect(f).not.toMatch(/varying \S+ vLook/)
+  expect(f).not.toMatch(/varying \S+ v(Look|S[0-3])/)
   expect(f).toContain('float vLookId;')
+  expect(f).toContain('vec2 vS3;')
   expect(f.indexOf('Look lookRun(int id)')).toBeGreaterThan(f.indexOf('#include <clipping_planes_pars_fragment>'))
   expect(f.indexOf('Look lookRun(int id)')).toBeLessThan(f.indexOf('void main() {'))
   // layer 0 reads stone, layer 2 reads path and leaves its weight; layer 1 reads its map

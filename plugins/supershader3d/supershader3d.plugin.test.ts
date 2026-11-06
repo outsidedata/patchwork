@@ -28,7 +28,7 @@ let clock = 0
 vi.spyOn(performance, 'now').mockImplementation(() => clock)
 
 // A preamble of the shape compose.js writes, for the looks `ids`, with a shadow for those in `shadows`.
-const BASE = 'flat varying float vLookId;\nvarying vec3 vLookInfo;\nvarying vec2 vLookUv;\nvarying vec3 vLookWorld;\nvarying vec3 vLookWN;\nvarying vec3 vCsT;\nuniform float lookView;\nuniform float lookDebug;\nvec2 lookGx, lookGy;\n' +
+const BASE = 'flat varying float vLookId;\nvarying vec3 vLookInfo;\nvarying vec2 vLookUv;\nvarying vec3 vLookWorld;\nvarying vec3 vLookWN;\nvarying vec3 vS0;\nvarying vec3 vS1;\nvarying vec4 vS2;\nvarying vec2 vS3;\n#define s0 vS0\n#define s1 vS1\n#define s2 vS2\n#define s3 vS3\nuniform float lookView;\nuniform float lookDebug;\nvec2 lookGx, lookGy;\n' +
   'struct Look { vec3 colour; float rough; float metal; float height; vec3 nts; vec3 normal; bool ownNormal; float ao; float aoDirect; float alpha; vec3 glow; float clearcoat; float clearcoatRough; vec3 sheen; float sheenRough; float iridescence; float iridIor; float iridThick; float transmission; float thickness; vec3 attColour; float attDist; float ior; float dispersion; };\n' +
   'Look lookStart() { Look k; k.colour = vec3(0.5); k.rough = 0.8; return k; }\n' +
   'vec3 kitBump(vec3 pos, vec3 n, float h, float fd) { return n; }\nvec3 lookPerturb(vec3 n, vec3 nts, float fd) { return n; }\n'
@@ -48,8 +48,8 @@ const LOOKS: Looks = {
     { name: 'path', look: 'cobble', call: 'relief', colour: [0.4, 0.4, 0.4] },
     { name: 'pane', look: 'glass', call: 'seeThrough', colour: [0.9, 0.9, 1] },
   ],
-  vertexPars: 'attribute float lookId;\nattribute vec3 lookInfo;\nflat varying float vLookId;\nvarying vec3 vLookInfo;\nvarying vec2 vLookUv;\nvarying vec3 vLookWorld;\nvarying vec3 vLookWN;\nvarying vec3 vCsT;\n',
-  vertexMain: 'vLookId = lookId;\nvLookInfo = lookInfo;\nvLookUv = uv;\nvLookWorld = (modelMatrix * vec4(position, 1.0)).xyz;\nvLookWN = normalize(mat3(modelMatrix) * normal);\nvCsT = vec3(0.0);\n',
+  vertexPars: 'attribute float lookId;\nattribute vec3 lookInfo;\nattribute vec3 s0;\nattribute vec3 s1;\nattribute vec4 s2;\nattribute vec2 s3;\nflat varying float vLookId;\nvarying vec3 vLookInfo;\nvarying vec2 vLookUv;\nvarying vec3 vLookWorld;\nvarying vec3 vLookWN;\nvarying vec3 vS0;\nvarying vec3 vS1;\nvarying vec4 vS2;\nvarying vec2 vS3;\n',
+  vertexMain: 'vLookId = lookId;\nvLookInfo = lookInfo;\nvLookUv = uv;\nvLookWorld = (modelMatrix * vec4(position, 1.0)).xyz;\nvLookWN = normalize(mat3(modelMatrix) * normal);\nvS0 = s0;\nvS1 = s1;\nvS2 = s2;\nvS3 = s3;\n',
   calls: {
     solid: shaderOf([0], []),
     relief: shaderOf([1], [1]),
@@ -138,6 +138,7 @@ test('once the file lands, one material a call, dressed and keyed by its call, e
   expect(all).not.toMatch(/varying/)
   expect(all).toContain('float vLookId;')
   expect(all).toContain('vec2 vLookUv;')
+  expect(all).toContain('vec4 vS2;\nvec2 vS3;\n#define s0 vS0')
   expect(all).toContain('case 2: look_2(k); break;')
   expect(all).toContain('case 1: return lookShadow_1(Lview);')
   // the picture asked of the loader, and ready once it has landed; no renderer, so no stack
@@ -181,7 +182,8 @@ test('the shared textures are the library\'s: the noise grey and tiling, the ran
   const random = randomBytes()
   expect(random).toHaveLength(RAND * RAND * 4)
   expect(new Set(random).size).toBeGreaterThan(200)
-  expect(free('flat varying float vLookId;\nvarying vec2 vLookUv;\nvarying vec3 vDressWorld;')).toBe('float vLookId;\nvec2 vLookUv;\nvarying vec3 vDressWorld;')
+  expect(free('flat varying float vLookId;\nvarying vec2 vS3;\nvarying vec3 vDressWorld;', 'flat varying float vLookId;\nvarying vec2 vS3;\n'))
+    .toBe('float vLookId;\nvec2 vS3;\nvarying vec3 vDressWorld;')
 })
 
 test('a file whose looks read the course table throws naming the word nothing delivers, and a picture that is no texture entry throws naming it', async () => {
