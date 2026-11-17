@@ -42,9 +42,12 @@ Open `http://localhost:5173/games/mygame/index.html`.
 ### 3D rendering
 
 - [`render3d`](plugins/render3d/): three.js with shadow maps, GTAO ambient occlusion, bloom, neutral
-  tone mapping and exposure.
-- [`lights3d`](plugins/lights3d/): clustered Forward+ shading, as many point lights as a scene
-  likes, each pixel lit only by the lights that reach it.
+  tone mapping and exposure, screen-space reflections and live mirrors.
+- [`lights3d`](plugins/lights3d/): clustered Forward+ shading, as many point and spot lights as a
+  scene likes, each pixel lit only by the lights that reach it, every one that casts a shadow
+  shadowed from a still atlas drawn once and a moving atlas drawn each frame of what anim and crowd3d
+  move, air lit by every lamp, reflection probes, and area lights: rectangles of light that shine a
+  picture, and every glowing material of supershader3d's lighting the scene by being drawn.
 - [`cel3d`](plugins/cel3d/): toon shading on every material, stepped light bands and ink outlines.
 - [`dither3d`](plugins/dither3d/): the PS1 look, 15-bit colour, 4×4 ordered dithering and chunky
   low-resolution pixels.
@@ -200,7 +203,7 @@ for walker gives walker the height of the ground. "for" lists the plugins this o
 | [`ik3d`](plugins/ik3d/) | three.js | from anim, interact |
 | [`instances3d`](plugins/instances3d/) | three.js, render3d, loader | for lod3d · from box3d, shapes3d |
 | [`interact`](plugins/interact/) | three.js, anim, loader | for ik3d · from anim, box3dvehicle |
-| [`light2d`](plugins/light2d/) | render2d | |
+| [`light2d`](plugins/light2d/) | render2d | from particle2d |
 | [`lights3d`](plugins/lights3d/) | three.js, render3d | |
 | [`loader`](plugins/loader/) | three.js, fflate, fzstd | |
 | [`lod3d`](plugins/lod3d/) | render3d, math | for box3d, cover3d, hitscan3d, ragdoll3d, terrain3d, walker · from box3dvehicle, instances3d, particle3d, shapes3d, terrain3d |
@@ -210,7 +213,7 @@ for walker gives walker the height of the ground. "for" lists the plugins this o
 | [`nav`](plugins/nav/) | math | |
 | [`ocean3d`](plugins/ocean3d/) | three.js, render3d | from skydome3d, terrain3d |
 | [`pancamera`](plugins/pancamera/) | render2d | |
-| [`particle2d`](plugins/particle2d/) | render2d, loader | |
+| [`particle2d`](plugins/particle2d/) | render2d, loader | for light2d · from tilemap |
 | [`particle3d`](plugins/particle3d/) | render3d, loader | for lod3d |
 | [`party`](plugins/party/) | PixiJS, ui | from chat |
 | [`persist`](plugins/persist/) | persist addon | |
@@ -231,7 +234,7 @@ for walker gives walker the height of the ground. "for" lists the plugins this o
 | [`store`](plugins/store/) | | |
 | [`synthaudio`](plugins/synthaudio/) | Tone.js, loader | |
 | [`terrain3d`](plugins/terrain3d/) | three.js, loader, box3d, lod3d | for box3d, box3dvehicle, cutscene, dismember3d, flight3d, hitscan3d, lod3d, ocean3d, ragdoll3d, skydome3d, solids, walker · from lod3d |
-| [`tilemap`](plugins/tilemap/) | render2d, loader, box2d | for box2d |
+| [`tilemap`](plugins/tilemap/) | render2d, loader, box2d | for box2d, particle2d |
 | [`ui`](plugins/ui/) | PixiJS, player | |
 | [`vision`](plugins/vision/) | render2d, vision addon | |
 | [`volley2d`](plugins/volley2d/) | render2d, loader | |
