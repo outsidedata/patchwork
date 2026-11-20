@@ -63,9 +63,12 @@ Open `http://localhost:5173/games/mygame/index.html`.
 - [`terrain3d`](plugins/terrain3d/): infinite procedural terrain from a field of noise nodes with
   domain warp, biomes, texture layers placed by rules, sea and flooding, geometry rings that follow
   the camera, baked ground textures and web workers. Server and client compute identical heights.
-- [`lod3d`](plugins/lod3d/): procedural forests, grass and boulders placed in tiles round the camera
+- [`lod3d`](plugins/lod3d/): procedural forests, clumps and boulders placed in tiles round the camera
   by level of detail, in layers that stand on the land, on shapes or round each other, worked in web
   workers, trunks and rocks solid to bodies, cars and bullets.
+- [`grass3d`](plugins/grass3d/): a meadow of grass made blade by blade on the GPU every frame round
+  the camera, thinning out with distance blade by blade so it never pops, swaying in the weather's
+  wind and gusts, bending away from cars and bodies and lying down in their tracks.
 - [`instances3d`](plugins/instances3d/): many copies of one model or lumpy boulder as instanced
   meshes, by level of detail, cut-out cards and billboards; what lod3d places is drawn here.
 - [`skydome3d`](plugins/skydome3d/): a day-night cycle, sun and moon, clouds and their shadows, fog,
@@ -152,6 +155,9 @@ Open `http://localhost:5173/games/mygame/index.html`.
 
 - [`ui`](plugins/ui/): HUD and menus on PixiJS, anchored panels, buttons, bars, modals, keyboard and
   gamepad focus.
+- [`ui3d`](plugins/ui3d/): menus of 3D things in render3d's overlay, placed in the camera's frame,
+  picked by pointer ray and keys, grown, glowing and dimmed by words, and words from mods; a scene's
+  looks file shown by name, and particle3d's effects on a thing driven by its state.
 - [`renderdom`](plugins/renderdom/): an HTML and CSS layer scaled over the game canvas.
 - [`player`](plugins/player/): keyboard, mouse, drag and gamepad input, rebindable actions, and
   getting in and out of vehicles, mounts and turrets.
@@ -182,12 +188,12 @@ for walker gives walker the height of the ground. "for" lists the plugins this o
 
 | plugin | built on | mods |
 |---|---|---|
-| [`anim`](plugins/anim/) | three.js, loader | for ik3d, interact, ragdoll3d |
+| [`anim`](plugins/anim/) | three.js, loader | for gpgpu3d, ik3d, interact, ragdoll3d |
 | [`audio`](plugins/audio/) | Web Audio | for box3dvehicle, cutscene |
 | [`audiodaw`](plugins/audiodaw/) | Tone.js | |
 | [`box2d`](plugins/box2d/) | box2d.js, loader, rewind | from tilemap |
 | [`box3d`](plugins/box3d/) | box3d.js, loader, rewind | for box3dvehicle, instances3d · from box3dvehicle, lod3d, ragdoll3d, terrain3d |
-| [`box3dvehicle`](plugins/box3dvehicle/) | box3d, three.js, particle3d, lod3d | for box3d, interact, lod3d · from audio, box3d, dismember3d, hitscan3d, terrain3d |
+| [`box3dvehicle`](plugins/box3dvehicle/) | box3d, three.js, particle3d, lod3d | for box3d, gpgpu3d, grass3d, interact, lod3d · from audio, box3d, dismember3d, hitscan3d, terrain3d |
 | [`cel3d`](plugins/cel3d/) | three.js, render3d | |
 | [`chasecamera3d`](plugins/chasecamera3d/) | three.js, render3d | |
 | [`chat`](plugins/chat/) | PixiJS, ui | for party |
@@ -197,7 +203,11 @@ for walker gives walker the height of the ground. "for" lists the plugins this o
 | [`dismember3d`](plugins/dismember3d/) | three.js, anim, hitscan3d, ragdoll3d, particle3d | for box3dvehicle, hitscan3d · from terrain3d |
 | [`dither3d`](plugins/dither3d/) | three.js, render3d | |
 | [`environment3d`](plugins/environment3d/) | three.js, render3d | |
+| [`fabric3d`](plugins/fabric3d/) | three.js, render3d, loader | from anim, gpgpu3d, loader, motion3d, shapes3d, solids, weather3d |
 | [`flight3d`](plugins/flight3d/) | render3d, loader | from terrain3d |
+| [`gpgpu3d`](plugins/gpgpu3d/) | three.js, render3d | for fabric3d, gpuparticle3d, grass3d, hair3d · from anim, box3dvehicle, motion3d, shapes3d, terrain3d, walker |
+| [`gpuparticle3d`](plugins/gpuparticle3d/) | three.js, render3d, loader | from box3dvehicle, gpgpu3d, instances3d |
+| [`grass3d`](plugins/grass3d/) | three.js, render3d | for terrain3d · from box3dvehicle, gpgpu3d, terrain3d, walker, weather3d |
 | [`grid`](plugins/grid/) | render2d, loader | |
 | [`hitscan3d`](plugins/hitscan3d/) | rewind | for box3dvehicle, volley3d · from dismember3d, lod3d, ragdoll3d, terrain3d, walker |
 | [`ik3d`](plugins/ik3d/) | three.js | from anim, interact |
@@ -205,7 +215,7 @@ for walker gives walker the height of the ground. "for" lists the plugins this o
 | [`interact`](plugins/interact/) | three.js, anim, loader | for ik3d · from anim, box3dvehicle |
 | [`light2d`](plugins/light2d/) | render2d | from particle2d |
 | [`lights3d`](plugins/lights3d/) | three.js, render3d | |
-| [`loader`](plugins/loader/) | three.js, fflate, fzstd | |
+| [`loader`](plugins/loader/) | three.js, fflate, fzstd | for fabric3d |
 | [`lod3d`](plugins/lod3d/) | render3d, math | for box3d, cover3d, hitscan3d, ragdoll3d, terrain3d, walker · from box3dvehicle, instances3d, particle3d, shapes3d, terrain3d |
 | [`local`](plugins/local/) | | |
 | [`mapgen`](plugins/mapgen/) | math | |
@@ -233,13 +243,14 @@ for walker gives walker the height of the ground. "for" lists the plugins this o
 | [`stats`](plugins/stats/) | three.js | |
 | [`store`](plugins/store/) | | |
 | [`synthaudio`](plugins/synthaudio/) | Tone.js, loader | |
-| [`terrain3d`](plugins/terrain3d/) | three.js, loader, box3d, lod3d | for box3d, box3dvehicle, cutscene, dismember3d, flight3d, hitscan3d, lod3d, ocean3d, ragdoll3d, skydome3d, solids, walker · from lod3d |
+| [`terrain3d`](plugins/terrain3d/) | three.js, loader, box3d, lod3d | for box3d, box3dvehicle, cutscene, dismember3d, flight3d, gpgpu3d, grass3d, hitscan3d, lod3d, ocean3d, ragdoll3d, skydome3d, solids, walker · from grass3d, lod3d |
 | [`tilemap`](plugins/tilemap/) | render2d, loader, box2d | for box2d, particle2d |
 | [`ui`](plugins/ui/) | PixiJS, player | |
+| [`ui3d`](plugins/ui3d/) | three.js, render3d, player | |
 | [`vision`](plugins/vision/) | render2d, vision addon | |
 | [`volley2d`](plugins/volley2d/) | render2d, loader | |
 | [`volley3d`](plugins/volley3d/) | loader, particle3d | from hitscan3d |
-| [`walker`](plugins/walker/) | hitscan3d | for hitscan3d, ragdoll3d · from lod3d, terrain3d |
+| [`walker`](plugins/walker/) | hitscan3d | for gpgpu3d, grass3d, hitscan3d, ragdoll3d · from lod3d, terrain3d |
 
 An addon holds a truth (seats, connections, sockets, files, timers, more than one truth) and runs
 where the truth is.
@@ -305,6 +316,7 @@ git clone https://github.com/outsidedata/patchwork-games.git games
 | `PATCHWORK_CLIPS` | The clip collection the bakes and the asset workshop read Mixamo clips from: its packs are `packs/<pack>/` in it. | `~/troupe-collection` |
 | `GLTFPACK` | gltfpack, the native build. | `gltfpack` on the PATH |
 | `MAGICK` | ImageMagick's `magick`, built with libwebp. | `magick` on the PATH |
+| `GARMENT_DRAPER` | The garment shop's draper, on a machine with an NVIDIA GPU, which a bake's `garment` tool drapes by: `http://<host>:8180`. | a garment is draped on this machine, which takes minutes |
 
 `yarn health` checks Node, the packages, `BLENDER`, `PATCHWORK_LIBRARY`, `GLTFPACK` and `MAGICK`, and
 for each game in `games/` that draws cc0-textures maps, whether its maps are baked: it runs each tool
@@ -318,6 +330,7 @@ and prints what passes, what fails and how to fix it.
 | `yarn new-game <name>` | `games/<name>/`: a game of one scene and a seat. |
 | `yarn dev` | Serves the repo, so `games/<name>/index.html` plays. `localhost:5173` lists every game with a link to each of its pages, and beside its `dev` page a link to each of its scenes, `dev.html?scene=<scene>`. |
 | `yarn serve <game>` | `yarn dev`, and `games/<game>/<game>.server.ts` on Node, so `games/<game>/client.html` plays against it. It prints the client page's address, and every line the server prints after the game's name. A change to a file the server runs starts it again, one that had stopped too. The home page shows the server running and its port. Ctrl-C stops both. |
+| `yarn dev <folder>`, `yarn serve <folder>` | The same, for a game that lives outside the repo (another repo's game, say): the folder is mounted as `games/<its name>/`, its pages served at `/games/<name>/`, its files watched. Its `#engine/*`, `#plugins/*`, `#addons/*`, `#games/*` and `#scripts/*` and its packages (`three`) are this repo's, for its pages and its server alike, whatever package.json its own folder has (`scripts/mounts.ts`). Its name may not be one of `games/`. `yarn dev` takes Vite's `--port`, `--host` and `--strictPort` too. |
 | `yarn preview_loading` | The loading screen alone, at `http://localhost:8000/loading.html` (needs `python3`). |
 | `yarn bake <game>` | The game's art made again from the library: every glb its scripts build, packed, and its texture maps cut. |
 | `yarn publish_gh_pages_game <game> [--owner <owner>]` | The game published to GitHub Pages as `<owner>/patchwork-<game>`, or its published repo brought up to date. |
