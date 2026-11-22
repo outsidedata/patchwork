@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-22-d1ff3e5
+
+- box3dvehicle — cars are drawn from the library's vehicle models, with moving suspension, steering and lit lamps, and motorcycles can be driven too.
+- supershader3d — a vehicle model's suspension, steering and lamps move and light up as the car drives.
+- committing-a-game skill — a game's baked car and bike models are committed like any other baked art.
+- asset-workshop skill — fitting props now covers the library's vehicle models.
+- making-3d-assets-in-blender skill — making a vehicle follows the library's vehicle kit.
+
 ## 2026-11-21-774a6eb
 
 - particle3d — particles dim at night with the sky's light.
