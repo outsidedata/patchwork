@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-22-471eaf5
+
+- audiodaw — clips can loop for any length, and a song can be played as launchable scenes and slots, like Ableton's Session View.
+- using-audiodaw skill — explains looping clips and the session's scenes and launching.
+- loader — a loading screen can show a picture beside its bar and words.
+- using-the-loader skill — explains putting a picture on a loading screen.
+
 ## 2026-11-22-d1ff3e5
 
 - box3dvehicle — cars are drawn from the library's vehicle models, with moving suspension, steering and lit lamps, and motorcycles can be driven too.
